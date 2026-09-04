@@ -1,11 +1,13 @@
-"""Sub-paquete de generación del sistema Contexto Z.ai.
+"""Paquete de generación del sistema Contexto Z.ai (v3.2).
 
-Contiene los módulos encargados de generar los archivos de
-recuperación de contexto: estado actual, índice, decisiones clave
-y bloques temáticos.
+Contiene los generadores de los 4 tipos de archivo de recuperación:
+- 00_estado_actual.md (8 secciones D1-D4 + A1-A4)
+- 01_indice_recuperacion.md (tabla tema → archivo)
+- 02_decisiones_clave.md (delegador a subagente LLM)
+- bloque_XX.md (uno por bloque temático)
+
+RecoveryGenerator orquesta los 4 generadores.
 """
-
-from __future__ import annotations
 
 from contexto_zai.generation.bloque_generator import BloqueGenerator
 from contexto_zai.generation.decisiones_generator import DecisionesGenerator

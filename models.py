@@ -151,23 +151,22 @@ class Exchange(BaseModel):
 
 
 class ThematicBlock(BaseModel):
-    """Bloque de exchanges agrupados por tema.
+    """Bloque de exchanges agrupados por tamaño (v3.2).
+
+    Un bloque puede contener exchanges de varios temas diferentes,
+    siempre que la suma de sus tokens no supere MAX_TOKENS_BLOQUE.
 
     Attributes:
-        name: Nombre del tema.
-        display_name: Nombre legible.
         filename: Nombre del archivo de salida.
+        exchanges: Lista de exchanges en este bloque.
+        temas: Lista de temas contenidos en este bloque.
         description: Descripción del contenido.
-        exchanges: Lista de exchanges clasificados en este bloque.
-        part_number: Número de parte (1 si no se subdividió).
     """
 
-    name: str
-    display_name: str
     filename: str
-    description: str = ""
     exchanges: list[Exchange] = Field(default_factory=list)
-    part_number: int = 1
+    temas: list[str] = Field(default_factory=list)
+    description: str = ""
 
     @property
     def total_chars(self) -> int:
@@ -199,10 +198,18 @@ class ThematicBlock(BaseModel):
 
     @property
     def full_filename(self) -> str:
-        if self.part_number > 1:
-            stem = self.filename.replace(".md", "")
-            return f"{stem}_parte{self.part_number}.md"
         return self.filename
+
+    def add_exchange(self, exchange: Exchange) -> None:
+        """Añade un exchange al bloque y registra su tema si no existe."""
+        self.exchanges.append(exchange)
+        if exchange.topic not in self.temas:
+            self.temas.append(exchange.topic)
+
+    def would_exceed_limit(self, exchange: Exchange, max_tokens: int) -> bool:
+        """Verifica si añadir el exchange superaría el límite de tokens."""
+        new_chars = self.total_chars + exchange.total_chars
+        return (new_chars / 3.5) > max_tokens
 
 
 # ── Archivos de recuperación ───────────────────────────────────────
@@ -296,7 +303,7 @@ class VerificationReport(BaseModel):
 
     files: list[FileVerification] = Field(default_factory=list)
     total_main_load: float = 0.0
-    main_load_limit: int = 23_000
+    main_load_limit: int = 40_000
     main_load_ok: bool = True
     overall_verdict: Verdict = Verdict.OK
 
@@ -336,3 +343,166 @@ class PipelineResult(BaseModel):
     verification: VerificationReport | None = None
     output_dir: str = ""
     error: str = ""
+
+
+# ── Modelos v3.2: Metadata, Decisiones, Detección ─────────────────
+
+
+class Decision(BaseModel):
+    """Una decisión operativa extraída de la conversación.
+
+    Attributes:
+        id: Identificador (D01, D02, ...).
+        timestamp: Cuándo se tomó.
+        title: Título breve.
+        decision: Qué se decidió.
+        reason: Por qué.
+        impact: Qué afecta.
+        tema: Tema al que pertenece.
+    """
+
+    id: str = ""
+    timestamp: float = 0.0
+    title: str = ""
+    decision: str = ""
+    reason: str = ""
+    impact: str = ""
+    tema: str = ""
+
+
+class RecoveryMetadata(BaseModel):
+    """Metadata de recuperación (archivo _metadata.json).
+
+    Attributes:
+        chat_id: UUID interno del chat.
+        share_id: UUID del share.
+        ultimo_timestamp: Último mensaje procesado (para incremental).
+        total_exchanges: Total de exchanges procesados.
+        tema_a_archivo: Mapeo tema → archivo (unicidad garantizada).
+        subtemas_derivados: Registro de subtemas creados al subdividir.
+        ultima_activacion: ISO timestamp de la última activación.
+    """
+
+    chat_id: str = ""
+    share_id: str = ""
+    ultimo_timestamp: float = 0.0
+    total_exchanges: int = 0
+    tema_a_archivo: dict[str, str] = Field(default_factory=dict)
+    subtemas_derivados: dict[str, list[str]] = Field(default_factory=dict)
+    ultima_activacion: str = ""
+
+    def archivo_para_tema(self, tema: str) -> str | None:
+        """Devuelve el archivo que contiene el tema, o None si no existe."""
+        return self.tema_a_archivo.get(tema)
+
+    def tiene_tema(self, tema: str) -> bool:
+        """Verifica si un tema ya está registrado."""
+        return tema in self.tema_a_archivo
+
+    def registrar_tema(self, tema: str, archivo: str) -> None:
+        """Registra un tema en un archivo. Falla si el tema ya existe en otro archivo."""
+        if tema in self.tema_a_archivo and self.tema_a_archivo[tema] != archivo:
+            raise ValueError(
+                f"Violación de unicidad: tema '{tema}' ya está en "
+                f"'{self.tema_a_archivo[tema]}', no puede registrarse en '{archivo}'"
+            )
+        self.tema_a_archivo[tema] = archivo
+
+    def registrar_subtema(self, tema_padre: str, subtema: str, archivo: str) -> None:
+        """Registra un subtema derivado de una subdivisión."""
+        self.registrar_tema(subtema, archivo)
+        if tema_padre not in self.subtemas_derivados:
+            self.subtemas_derivados[tema_padre] = []
+        if subtema not in self.subtemas_derivados[tema_padre]:
+            self.subtemas_derivados[tema_padre].append(subtema)
+
+
+class DetectionTrigger(str, Enum):
+    """Tipos de disparador de la recuperación de contexto."""
+
+    LEXICO = "lexico"
+    CONTADOR = "contador"
+    AUTO_PREGUNTAS = "auto_preguntas"
+    EXPLICITO = "explicito"
+
+
+class DetectionEvent(BaseModel):
+    """Evento de detección de pérdida de contexto.
+
+    Attributes:
+        trigger: Tipo de disparador que lo activó.
+        reason: Descripción legible del motivo.
+        timestamp: Cuándo se detectó.
+        tokens_estimados: Tokens consumidos al momento (si aplica).
+    """
+
+    trigger: DetectionTrigger
+    reason: str = ""
+    timestamp: float = 0.0
+    tokens_estimados: int = 0
+
+
+if __name__ == "__main__":
+    # ── Validación interna de models.py (atómico standalone) ─────────
+    print("=== Validación de models.py ===\n")
+
+    # Test 1: Message básico
+    m = Message(seq=1, role=MessageRole.USER, timestamp=1788482829, content="hola")
+    assert m.is_user and not m.is_assistant
+    assert m.estimated_tokens > 0
+    print(f"✓ Message: role={m.role.value}, datetime={m.datetime_str}")
+
+    # Test 2: Exchange
+    ex = Exchange(
+        id=1,
+        director_msg=m,
+        agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=1788482830, content="respuesta")],
+        topic="general",
+        start_timestamp=1788482829,
+        end_timestamp=1788482830,
+    )
+    assert ex.director_count == 1
+    assert ex.agent_count == 1
+    assert ex.estimated_tokens > 0
+    print(f"✓ Exchange: id={ex.id}, tema={ex.topic}, tokens={ex.estimated_tokens:.0f}")
+
+    # Test 3: ThematicBlock v3.2 (varios temas por archivo)
+    bloque = ThematicBlock(filename="bloque_01.md")
+    ex2 = Exchange(id=2, director_msg=m, topic="validaciones", start_timestamp=1788482830, end_timestamp=1788482831)
+    bloque.add_exchange(ex)
+    bloque.add_exchange(ex2)
+    assert set(bloque.temas) == {"general", "validaciones"}
+    assert not bloque.would_exceed_limit(ex, max_tokens=100_000)
+    print(f"✓ ThematicBlock v3.2: {bloque.exchange_count} exchanges, {len(bloque.temas)} temas en 1 archivo")
+
+    # Test 4: RecoveryMetadata con unicidad
+    meta = RecoveryMetadata(chat_id="abc", share_id="def")
+    meta.registrar_tema("validaciones", "bloque_01.md")
+    meta.registrar_tema("configuracion", "bloque_01.md")  # mismo archivo, OK
+    assert meta.archivo_para_tema("validaciones") == "bloque_01.md"
+    assert meta.tiene_tema("validaciones")
+    # Violación de unicidad debe fallar
+    try:
+        meta.registrar_tema("validaciones", "bloque_02.md")
+        assert False, "Debería haber lanzado ValueError"
+    except ValueError as e:
+        print(f"✓ Unicidad temática: violación detectada correctamente")
+    meta.registrar_subtema("validaciones", "validaciones_server", "bloque_02.md")
+    assert "validaciones_server" in meta.subtemas_derivados["validaciones"]
+    print(f"✓ Subtema derivado: 'validaciones_server' registrado en bloque_02.md")
+
+    # Test 5: Decision
+    d = Decision(id="D01", timestamp=1788482829, title="Test", decision="X", reason="Y", impact="Z")
+    assert d.id == "D01"
+    print(f"✓ Decision: {d.id} - {d.title}")
+
+    # Test 6: DetectionEvent
+    de = DetectionEvent(trigger=DetectionTrigger.LEXICO, reason="ya te dije")
+    assert de.trigger == DetectionTrigger.LEXICO
+    print(f"✓ DetectionEvent: trigger={de.trigger.value}")
+
+    # Test 7: límites actualizados
+    assert VerificationReport().main_load_limit == 40_000
+    print(f"✓ VerificationReport: main_load_limit=40K (v3.2)")
+
+    print("\n✅ models.py: todos los tests pasaron")

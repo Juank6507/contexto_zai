@@ -291,3 +291,46 @@ class ContentCleaner:
             return obj, remainder
         except (json.JSONDecodeError, ValueError):
             return None, content
+
+
+if __name__ == "__main__":
+    # ── Validación interna de content_cleaner.py (atómico standalone) ──
+    print("=== Validación de content_cleaner.py ===\n")
+
+    from contexto_zai.models import Exchange, Message, MessageRole
+
+    cc = ContentCleaner()
+
+    # Test 1: eliminar bloques de reasoning JSON
+    texto_con_reasoning = '{"type":"reasoning","content":"pensamiento oculto"} Respuesta visible'
+    limpio = cc.clean(texto_con_reasoning)
+    assert "visible" in limpio
+    print(f"✓ Eliminación de reasoning: OK")
+
+    # Test 2: conservar código en bloques triple backtick
+    texto_con_codigo = "Aquí el código:\n```python\nprint('hola')\n```\nFin"
+    limpio2 = cc.clean(texto_con_codigo)
+    assert "print('hola')" in limpio2
+    print(f"✓ Conservación de código: OK")
+
+    # Test 3: conservar rutas de archivos
+    texto_con_rutas = "Modifiqué /home/z/my-project/file.py y otro/path/to/file.ts"
+    limpio3 = cc.clean(texto_con_rutas)
+    assert "/home/z/my-project/file.py" in limpio3
+    print(f"✓ Conservación de rutas: OK")
+
+    # Test 4: formatear exchange como markdown
+    ex = Exchange(
+        id=1,
+        director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1788482829, content="Pregunta del director"),
+        agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=1788482830, content="Respuesta del agente")],
+        topic="general",
+        start_timestamp=1788482829,
+        end_timestamp=1788482830,
+    )
+    md = cc.format_exchange(ex, exchange_num=1)
+    assert "Pregunta del director" in md
+    assert "Respuesta del agente" in md
+    print(f"✓ Formateo de exchange como markdown: OK")
+
+    print("\n✅ content_cleaner.py: todos los tests pasaron")

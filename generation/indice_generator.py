@@ -1,430 +1,261 @@
+# Destino: /home/z/my-project/contexto_zai/generation/indice_generator.py
+"""Generador del archivo 01_indice_recuperacion.md (v3.2).
+
+Produce el índice con el mapeo explícito `tema → archivo`, no
+solo una lista de bloques por descripción como en v1.0.
+
+Diferencia crítica respecto a v1.0:
+- v1.0: lista de bloques por descripción.
+- v3.2: tabla `tema → archivo` consultable, incluyendo subtemas
+  derivados de subdivisiones.
+
+Tamaño máximo: 8K tokens (~28KB chars).
+"""
+
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING, Optional
 
-from typing import TYPE_CHECKING
+from contexto_zai.config import TOKEN_LIMITS
+from contexto_zai.models import RecoveryMetadata
 
 if TYPE_CHECKING:
     from contexto_zai.models import ThematicBlock
 
 logger = logging.getLogger(__name__)
 
-# Tasa de conversión caracteres → tokens.
-_CHARS_PER_TOKEN: float = 3.5
-
 
 class IndiceGenerator:
-    """Generador del archivo ``01_indice_recuperacion.md``.
-
-    Produce un índice de todos los bloques temáticos disponibles,
-    con instrucciones de recuperación, el protocolo a seguir y
-    un resumen de las decisiones clave. Este archivo es el punto
-    de entrada cuando el agente pierde contexto.
+    """Genera el archivo 01_indice_recuperacion.md con mapeo tema→archivo.
 
     Args:
-        max_chars: Número máximo de caracteres del contenido generado.
-            Por defecto 28_000 (8 000 tokens × 3,5 chars/token).
+        max_chars: Límite máximo de caracteres (por defecto 28K).
+
+    Usage:
+        >>> gen = IndiceGenerator()
+        >>> content = gen.generate(blocks=[...], metadata=meta, chat_label="CZAI")
     """
 
-    def __init__(self, max_chars: int = 28_000) -> None:
-        """Inicializa el generador del índice de recuperación.
+    def __init__(
+        self,
+        max_chars: int = TOKEN_LIMITS.max_chars_indice,
+    ) -> None:
+        self._max_chars = max_chars
+        logger.debug("IndiceGenerator inicializado: max_chars=%d", max_chars)
 
-        Args:
-            max_chars: Límite de caracteres para el contenido generado.
-                Valor por defecto calculado como 8 000 tokens × 3,5.
-        """
-        self.max_chars = max_chars
-        logger.debug(
-            "IndiceGenerator inicializado con max_chars=%d",
-            self.max_chars,
-        )
+    # ── API pública ────────────────────────────────────────────────
 
     def generate(
         self,
-        blocks: list[ThematicBlock],
-        decisiones_summary: str,
+        blocks: list["ThematicBlock"],
         chat_label: str = "",
+        metadata: Optional[RecoveryMetadata] = None,
+        decisiones_summary: str = "",
     ) -> str:
-        """Genera el contenido de ``01_indice_recuperacion.md``.
-
-        Estructura el documento con instrucción de uso, protocolo
-        de recuperación de 5 pasos, lista de bloques temáticos
-        con metadatos y el resumen de decisiones clave.
-
-        Si el contenido excede ``max_chars``, se truncan las
-        descripciones de los bloques y, en último caso, el resumen
-        de decisiones.
+        """Genera el contenido markdown del índice de recuperación.
 
         Args:
-            blocks: Lista de bloques temáticos clasificados.
-            decisiones_summary: Resumen compacto de las decisiones
-                clave (generado por :class:`DecisionesGenerator`).
-            chat_label: Etiqueta descriptiva del chat.
+            blocks: Lista de ThematicBlock generados.
+            chat_label: Etiqueta del chat.
+            metadata: Metadata con el mapeo tema→archivo (opcional).
+                Si se proporciona, se usa para construir la tabla.
+                Si no, se construye a partir de los blocks.
+            decisiones_summary: Resumen de decisiones (opcional).
 
         Returns:
-            Contenido markdown del índice de recuperación.
+            Contenido markdown del índice.
         """
+        # Construir mapeo tema → archivo
+        tema_a_archivo = self._build_tema_a_archivo(blocks, metadata)
+
+        # Construir contenido
+        lines: list[str] = [
+            f"# Índice de Recuperación — {chat_label or 'Chat'}",
+            "",
+            "## Instrucción",
+            "",
+            "Si detectas que has perdido contexto, este archivo es tu punto de entrada.",
+            "Identifica qué tema necesitas y delega a un subagente para que lea el archivo",
+            "correspondiente.",
+            "",
+            "## Protocolo de recuperación",
+            "",
+            "1. Lee este archivo (ya lo estás leyendo).",
+            "2. Lee `00_estado_actual.md` para saber dónde quedaste (contexto del tema activo).",
+            "3. Si necesitas otro tema, identifica aquí en qué archivo está.",
+            "4. Lanza un subagente con una **pregunta concreta** sobre ese tema.",
+            "5. El subagente devolverá una respuesta concisa.",
+            "6. Si necesitas otro tema, repite desde el paso 3.",
+            "",
+            "## Mapeo tema → archivo",
+            "",
+            "| Tema | Archivo | Tokens aprox. |",
+            "|------|---------|---------------|",
+        ]
+
+        # Filas de la tabla
+        for tema, archivo in sorted(tema_a_archivo.items()):
+            # Buscar el bloque que contiene este tema para obtener tokens
+            tokens_str = self._find_tokens_for_tema(tema, blocks)
+            lines.append(f"| `{tema}` | `{archivo}` | ~{tokens_str} |")
+
+        lines.extend([
+            "",
+            "## Resumen de bloques",
+            "",
+        ])
+
+        for b in blocks:
+            temas_str = ", ".join(f"`{t}`" for t in b.temas)
+            lines.append(
+                f"### `{b.filename}` (~{b.estimated_tokens / 1000:.1f}K tokens)"
+            )
+            lines.append(f"- **Temas:** {temas_str}")
+            lines.append(f"- **Intercambios:** {b.exchange_count}")
+            lines.append(f"- **Período:** {b.period_str}")
+            lines.append("")
+
+        # Resumen de decisiones (si se proporciona)
+        if decisiones_summary:
+            lines.extend([
+                "## Decisiones clave (resumen)",
+                "",
+                decisiones_summary.strip(),
+                "",
+            ])
+
+        # Subtemas derivados (si hay en metadata)
+        if metadata and metadata.subtemas_derivados:
+            lines.extend([
+                "## Subtemas derivados (subdivisiones)",
+                "",
+            ])
+            for padre, subtemas in metadata.subtemas_derivados.items():
+                lines.append(f"- **{padre}** se subdividió en: {', '.join(f'`{s}`' for s in subtemas)}")
+            lines.append("")
+
+        content = "\n".join(lines)
+
+        # Truncar si excede el límite
+        if len(content) > self._max_chars:
+            logger.warning(
+                "Índice excede límite (%d > %d chars), truncando",
+                len(content), self._max_chars,
+            )
+            content = content[:self._max_chars - 50] + "\n\n... (truncado por límite)\n"
+
         logger.info(
-            "Generando índice de recuperación para %d bloques "
-            "(chat_label=%r)",
-            len(blocks),
-            chat_label,
-        )
-
-        # Construir las secciones del documento.
-        instruction = self._build_instruction()
-        protocol = self._build_protocol()
-        blocks_section = self._build_blocks_section(blocks)
-
-        # Ensamblar el documento completo.
-        content = self._assemble(
-            chat_label=chat_label,
-            instruction=instruction,
-            protocol=protocol,
-            blocks_section=blocks_section,
-            decisiones_summary=decisiones_summary,
-        )
-
-        # Aplicar truncamiento si es necesario.
-        content = self._enforce_char_limit(
-            content=content,
-            chat_label=chat_label,
-            instruction=instruction,
-            protocol=protocol,
-            blocks_section=blocks_section,
-            decisiones_summary=decisiones_summary,
-            blocks=blocks,
-        )
-
-        logger.info(
-            "Índice generado: %d caracteres (%.0f tokens estimados)",
-            len(content),
-            len(content) / _CHARS_PER_TOKEN,
+            "Índice generado: %d chars (%.0f tokens), %d temas mapeados",
+            len(content), len(content) / 3.5, len(tema_a_archivo),
         )
         return content
 
-    # ── Construcción de secciones ────────────────────────────────
+    @property
+    def max_chars(self) -> int:
+        return self._max_chars
 
-    @staticmethod
-    def _build_instruction() -> str:
-        """Construye la sección de instrucción del índice.
+    def __repr__(self) -> str:
+        return f"IndiceGenerator(max_chars={self._max_chars})"
 
-        Returns:
-            Texto de la sección de instrucción.
-        """
-        logger.debug("Construyendo sección de instrucción")
-        return (
-            "Si detectas que has perdido contexto de esta sesión, "
-            "este archivo\nes tu punto de entrada. Identifica qué tema "
-            "necesitas y delega\na un subagente para que lea el bloque "
-            "correspondiente."
-        )
+    # ── Métodos privados ───────────────────────────────────────────
 
-    @staticmethod
-    def _build_protocol() -> str:
-        """Construye la sección del protocolo de recuperación.
-
-        Returns:
-            Texto del protocolo de recuperación en 5 pasos.
-        """
-        logger.debug("Construyendo sección de protocolo")
-        steps: list[str] = [
-            "Lee este archivo (ya lo estás leyendo)",
-            "Identifica el bloque relevante para tu tarea actual",
-            "Lanza un subagente: Task(prompt=\"Lee {ruta_bloque} y responde: {tu pregunta específica}\")",
-            "El subagente devolverá una respuesta concisa (~3-5K tokens)",
-            "Si necesitas otro bloque, repite desde el paso 3",
-        ]
-        lines: list[str] = []
-        for i, step in enumerate(steps, start=1):
-            lines.append(f"{i}. {step}")
-        return "\n".join(lines)
-
-    def _build_blocks_section(
-        self, blocks: list[ThematicBlock]
-    ) -> str:
-        """Construye la sección de bloques disponibles.
-
-        Genera una entrada para cada bloque temático con su nombre
-        de archivo, tamaño estimado en tokens, descripción, período
-        y conteo de exchanges.
-
-        Args:
-            blocks: Lista de bloques temáticos.
-
-        Returns:
-            Sección markdown con la lista de bloques.
-        """
-        logger.debug("Construyendo sección de bloques (%d bloques)", len(blocks))
-
-        if not blocks:
-            return "No hay bloques temáticos disponibles."
-
-        entries: list[str] = []
-        for block in blocks:
-            tokens_k = block.estimated_tokens / 1000
-            entry = self._format_block_entry(block, tokens_k)
-            entries.append(entry)
-
-        return "\n".join(entries)
-
-    @staticmethod
-    def _format_block_entry(
-        block: ThematicBlock, tokens_k: float
-    ) -> str:
-        """Formatea una entrada individual de bloque temático.
-
-        Args:
-            block: Bloque temático a formatear.
-            tokens_k: Tamaño estimado en miles de tokens.
-
-        Returns:
-            Cadena markdown con la entrada del bloque.
-        """
-        return (
-            f"### {block.full_filename} (~{tokens_k:.1f}K tokens)\n"
-            f"{block.description}\n"
-            f"Período: {block.period_str}\n"
-            f"Exchanges: {block.exchange_count} "
-            f"({block.director_count} del Director, "
-            f"{block.agent_count} del agente)"
-        )
-
-    # ── Ensamblaje ───────────────────────────────────────────────
-
-    def _assemble(
+    def _build_tema_a_archivo(
         self,
-        chat_label: str,
-        instruction: str,
-        protocol: str,
-        blocks_section: str,
-        decisiones_summary: str,
-    ) -> str:
-        """Ensambla todas las secciones en el documento markdown final.
+        blocks: list["ThematicBlock"],
+        metadata: Optional[RecoveryMetadata],
+    ) -> dict[str, str]:
+        """Construye el mapeo tema → archivo.
 
-        Args:
-            chat_label: Etiqueta del chat.
-            instruction: Texto de la sección de instrucción.
-            protocol: Texto del protocolo de recuperación.
-            blocks_section: Sección de bloques temáticos.
-            decisiones_summary: Resumen de decisiones clave.
-
-        Returns:
-            Documento markdown completo del índice.
+        Prioriza la metadata si se proporciona (es la fuente de verdad).
+        Si no, lo construye a partir de los bloques.
         """
-        lines: list[str] = [
-            f"# Índice de Recuperación — {chat_label}",
-            "",
-            "## Instrucción",
-            instruction,
-            "",
-            "## Protocolo de recuperación",
-            protocol,
-            "",
-            "## Bloques disponibles",
-            blocks_section,
-            "",
-            "## Decisiones clave (resumen)",
-            decisiones_summary,
-            "",
-        ]
-        return "\n".join(lines)
+        if metadata and metadata.tema_a_archivo:
+            return dict(metadata.tema_a_archivo)
 
-    # ── Truncamiento ─────────────────────────────────────────────
-
-    def _enforce_char_limit(
-        self,
-        content: str,
-        chat_label: str,
-        instruction: str,
-        protocol: str,
-        blocks_section: str,
-        decisiones_summary: str,
-        blocks: list[ThematicBlock],
-    ) -> str:
-        """Aplica truncamiento si el contenido excede ``max_chars``.
-
-        Estrategia de truncamiento por orden de prioridad:
-
-        1. Acortar el resumen de decisiones clave.
-        2. Acortar las descripciones de los bloques.
-        3. Eliminar el resumen de decisiones si aún no cabe.
-        4. Corte duro como último recurso.
-
-        Args:
-            content: Contenido completo ya ensamblado.
-            chat_label: Etiqueta del chat.
-            instruction: Texto de la sección de instrucción.
-            protocol: Texto del protocolo de recuperación.
-            blocks_section: Sección de bloques temáticos.
-            decisiones_summary: Resumen de decisiones clave.
-            blocks: Lista de bloques temáticos.
-
-        Returns:
-            Contenido dentro del límite de caracteres.
-        """
-        if len(content) <= self.max_chars:
-            return content
-
-        logger.warning(
-            "Contenido excede max_chars (%d > %d), aplicando truncamiento",
-            len(content),
-            self.max_chars,
-        )
-
-        # Calcular el espacio que ocupan las partes fijas.
-        fixed_template = self._assemble(
-            chat_label=chat_label,
-            instruction=instruction,
-            protocol=protocol,
-            blocks_section="",
-            decisiones_summary="",
-        )
-        available = self.max_chars - len(fixed_template)
-
-        if available <= 0:
-            logger.error(
-                "Las secciones fijas exceden max_chars, "
-                "aplicando corte duro"
-            )
-            return content[: self.max_chars]
-
-        # Paso 1: Truncar el resumen de decisiones.
-        truncated_summary = self._truncate_summary(
-            decisiones_summary, available * 0.4
-        )
-
-        remaining = available - len(truncated_summary)
-
-        # Paso 2: Truncar las descripciones de los bloques si es necesario.
-        truncated_blocks = self._truncate_blocks_descriptions(
-            blocks, max(0, remaining)
-        )
-
-        result = self._assemble(
-            chat_label=chat_label,
-            instruction=instruction,
-            protocol=protocol,
-            blocks_section=truncated_blocks,
-            decisiones_summary=truncated_summary,
-        )
-
-        # Paso 3: Si aún excede, eliminar el resumen de decisiones.
-        if len(result) > self.max_chars:
-            logger.warning(
-                "Aún excede tras truncar decisiones, "
-                "eliminando resumen de decisiones"
-            )
-            result = self._assemble(
-                chat_label=chat_label,
-                instruction=instruction,
-                protocol=protocol,
-                blocks_section=truncated_blocks,
-                decisiones_summary="(resumen truncado por límite de espacio)",
-            )
-
-        # Paso 4: Corte duro de seguridad.
-        if len(result) > self.max_chars:
-            logger.error(
-                "Contenido aún excede tras eliminación de decisiones, "
-                "aplicando corte duro"
-            )
-            result = result[: self.max_chars]
-
-        logger.debug(
-            "Índice truncado a %d caracteres", len(result)
-        )
-        return result
-
-    @staticmethod
-    def _truncate_summary(summary: str, max_chars: float) -> str:
-        """Trunca el resumen de decisiones al tamaño indicado.
-
-        Busca el último salto de línea antes del límite para no
-        cortar a mitad de entrada.
-
-        Args:
-            summary: Resumen de decisiones clave.
-            max_chars: Número máximo de caracteres permitidos.
-
-        Returns:
-            Resumen truncado.
-        """
-        limit = int(max_chars)
-        if len(summary) <= limit:
-            return summary
-
-        truncated = summary[:limit]
-        last_newline = truncated.rfind("\n")
-        if last_newline > limit * 0.5:
-            truncated = truncated[:last_newline]
-        return truncated.rstrip() + "\n- ... (truncado)"
-
-    @staticmethod
-    def _truncate_blocks_descriptions(
-        blocks: list[ThematicBlock], max_chars: int
-    ) -> str:
-        """Genera la sección de bloques con descripciones truncadas.
-
-        Si el espacio disponible es muy reducido, se acortan las
-        descripciones de cada bloque o se omiten para maximizar
-        la información de metadatos.
-
-        Args:
-            blocks: Lista de bloques temáticos.
-            max_chars: Espacio máximo disponible para la sección.
-
-        Returns:
-            Sección de bloques formateada y truncada.
-        """
-        if not blocks:
-            return ""
-
-        # Si no hay espacio, generar entradas mínimas.
-        if max_chars <= 0:
-            entries: list[str] = []
-            for block in blocks:
-                tokens_k = block.estimated_tokens / 1000
-                entries.append(
-                    f"### {block.full_filename} (~{tokens_k:.1f}K tokens)\n"
-                    f"Período: {block.period_str}"
-                )
-            return "\n".join(entries)
-
-        # Generar entradas completas y truncar la última si excede.
-        entries: list[str] = []
-        total_len = 0
-
-        for block in blocks:
-            tokens_k = block.estimated_tokens / 1000
-            entry = (
-                f"### {block.full_filename} (~{tokens_k:.1f}K tokens)\n"
-                f"{block.description}\n"
-                f"Período: {block.period_str}\n"
-                f"Exchanges: {block.exchange_count} "
-                f"({block.director_count} del Director, "
-                f"{block.agent_count} del agente)"
-            )
-
-            # Separador entre entradas.
-            separator_len = 1 if entries else 0
-            needed = len(entry) + separator_len
-
-            if total_len + needed > max_chars and entries:
-                # Truncar la descripción del bloque actual.
-                remaining = max_chars - total_len - separator_len
-                if remaining > 30:
-                    tokens_k = block.estimated_tokens / 1000
-                    short_entry = (
-                        f"### {block.full_filename} (~{tokens_k:.1f}K tokens)\n"
-                        f"Período: {block.period_str}"
+        # Construir desde los bloques
+        mapping: dict[str, str] = {}
+        for b in blocks:
+            for tema in b.temas:
+                if tema in mapping and mapping[tema] != b.filename:
+                    logger.warning(
+                        "Tema '%s' aparece en múltiples archivos: %s y %s "
+                        "(violación de unicidad)",
+                        tema, mapping[tema], b.filename,
                     )
-                    if len(short_entry) + separator_len <= max_chars - total_len:
-                        entries.append(short_entry)
-                # No caben más bloques, detenerse.
-                break
+                mapping[tema] = b.filename
+        return mapping
 
-            entries.append(entry)
-            total_len += needed
+    def _find_tokens_for_tema(
+        self,
+        tema: str,
+        blocks: list["ThematicBlock"],
+    ) -> str:
+        """Encuentra los tokens aproximados del archivo que contiene el tema."""
+        for b in blocks:
+            if tema in b.temas:
+                return f"{b.estimated_tokens / 1000:.1f}K"
+        return "?"
 
-        return "\n".join(entries)
+
+if __name__ == "__main__":
+    # ── Validación interna de indice_generator.py ──
+    print("=== Validación de indice_generator.py ===\n")
+
+    from contexto_zai.models import Exchange, Message, MessageRole, ThematicBlock
+
+    gen = IndiceGenerator()
+
+    # Test 1: tabla tema → archivo presente
+    ex1 = Exchange(id=1, director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="test"), topic="validaciones", start_timestamp=1, end_timestamp=2)
+    ex2 = Exchange(id=2, director_msg=Message(seq=2, role=MessageRole.USER, timestamp=3, content="worklog"), topic="configuracion_proyecto", start_timestamp=3, end_timestamp=4)
+    b1 = ThematicBlock(filename="bloque_01.md")
+    b1.add_exchange(ex1)
+    b1.add_exchange(ex2)
+    b2 = ThematicBlock(filename="bloque_02.md")
+    b2.add_exchange(Exchange(id=3, director_msg=Message(seq=3, role=MessageRole.USER, timestamp=5, content="x"), topic="general", start_timestamp=5, end_timestamp=6))
+
+    content = gen.generate([b1, b2], chat_label="Test")
+
+    # Verificar tabla mapeo
+    assert "Mapeo tema → archivo" in content
+    assert "| Tema | Archivo |" in content
+    assert "`validaciones`" in content
+    assert "`bloque_01.md`" in content
+    assert "`configuracion_proyecto`" in content
+    assert "`general`" in content
+    assert "`bloque_02.md`" in content
+    print(f"✓ Tabla tema → archivo con todos los temas")
+
+    # Test 2: protocolo de recuperación presente
+    assert "Protocolo de recuperación" in content
+    assert "00_estado_actual.md" in content
+    assert "subagente" in content.lower()
+    print(f"✓ Protocolo de recuperación documentado")
+
+    # Test 3: resumen de bloques
+    assert "Resumen de bloques" in content
+    assert "bloque_01.md" in content
+    assert "Temas:" in content
+    print(f"✓ Resumen de bloques con temas listados")
+
+    # Test 4: con metadata
+    from contexto_zai.models import RecoveryMetadata
+    meta = RecoveryMetadata(chat_id="abc", share_id="def")
+    meta.registrar_tema("validaciones", "bloque_01.md")
+    meta.registrar_tema("configuracion_proyecto", "bloque_01.md")
+    meta.registrar_tema("general", "bloque_02.md")
+    meta.registrar_subtema("validaciones", "validaciones_server", "bloque_03.md")
+
+    content2 = gen.generate([b1, b2], chat_label="Test", metadata=meta)
+    assert "Subtemas derivados" in content2
+    assert "validaciones_server" in content2
+    print(f"✓ Subtemas derivados documentados desde metadata")
+
+    # Test 5: con resumen de decisiones
+    content3 = gen.generate([b1, b2], chat_label="Test", decisiones_summary="- D01: usar X\n- D02: descartar Y")
+    assert "Decisiones clave (resumen)" in content3
+    assert "D01: usar X" in content3
+    print(f"✓ Resumen de decisiones incluido")
+
+    print("\n✅ indice_generator.py: todos los tests pasaron")

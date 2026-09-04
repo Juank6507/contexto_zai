@@ -36,11 +36,12 @@ class TokenLimits:
     ventana_agente: int = 128_000
     margen_seguridad_pct: float = 0.20
     max_tokens_bloque: int = 70_000
-    max_tokens_estado: int = 3_000
+    max_tokens_estado: int = 20_000
     max_tokens_indice: int = 8_000
     max_tokens_decisiones: int = 12_000
-    carga_principal_max: int = 23_000
+    carga_principal_max: int = 40_000
     conversion_rate: float = 3.5
+    umbral_compresion_pct: float = 0.90
 
     @property
     def margen_seguridad(self) -> int:
@@ -66,6 +67,11 @@ class TokenLimits:
     def max_chars_bloque(self) -> int:
         return int(self.max_tokens_bloque * self.conversion_rate)
 
+    @property
+    def umbral_disparo_tokens(self) -> int:
+        """Tokens consumidos a partir de los cuales se dispara la recuperación preventiva."""
+        return int(self.capacidad_util * self.umbral_compresion_pct)
+
 
 TOKEN_LIMITS = TokenLimits()
 
@@ -74,7 +80,11 @@ TOKEN_LIMITS = TokenLimits()
 
 @dataclass(frozen=True)
 class APIConfig:
-    """Configuración de los endpoints de chat.z.ai."""
+    """Configuración de los endpoints de chat.z.ai.
+
+    Nota v3.2: El batch endpoint usa chat_id con autenticación, NO share_id
+    como invitado. La plataforma cambió desde v2.2.
+    """
 
     base_url: str = "https://chat.z.ai"
     timeout_seconds: float = 30.0
@@ -86,7 +96,13 @@ class APIConfig:
 
     @property
     def share_messages_batch_url(self) -> str:
+        """Deprecated v3.2: la plataforma cambió. Usar messages_batch_by_chat_url."""
         return f"{self.base_url}/api/v1/chats/share/{{share_id}}/messages/batch"
+
+    @property
+    def messages_batch_by_chat_url(self) -> str:
+        """Endpoint de batch autenticado por chat_id (v3.2)."""
+        return f"{self.base_url}/api/v1/chats/{{chat_id}}/messages/batch"
 
     @property
     def create_share_url(self) -> str:
@@ -215,5 +231,67 @@ DEFAULT_THEME_RULES: list[ThemeRule] = [
 ESTADO_ACTUAL_FILENAME = "00_estado_actual.md"
 INDICE_RECUPERACION_FILENAME = "01_indice_recuperacion.md"
 DECISIONES_CLAVE_FILENAME = "02_decisiones_clave.md"
+METADATA_FILENAME = "_metadata.json"
 
 SUPPORTED_MESSAGES_FORMATS = {".json"}
+
+
+# ── Rutas del workspace v3.2 ──────────────────────────────────────
+
+WORKSPACE_OUTPUT_DIR = Path("/home/z/my-project/contexto_recuperacion")
+DOWNLOAD_OUTPUT_DIR = Path("/home/z/my-project/download/contexto_recuperacion")
+BROWSER_AUTH_STATE_PATH = Path("/home/z/my-project/.browser_auth_state.json")
+
+
+# ── Detección de pérdida de contexto (Sección 6 del spec v3.2) ────
+
+LEXIC_TRIGGER_PHRASES: list[str] = [
+    "ya te dije", "lo hablamos", "no repitas", "otra vez lo mismo",
+    "estás olvidando", "ya no recuerdas", "por qué respondes eso si ya acordamos",
+    "olvidaste", "no recuerdas que", "ya acordamos",
+]
+
+SELF_QUESTIONS: list[str] = [
+    "¿Sé en qué archivo estoy trabajando?",
+    "¿Sé qué decidimos sobre esto?",
+    "¿Sé qué sigue?",
+]
+
+
+if __name__ == "__main__":
+    # ── Validación interna de config.py (atómico standalone) ────────
+    print("=== Validación de config.py ===\n")
+
+    # Test 1: límites v3.2 actualizados
+    assert TOKEN_LIMITS.max_tokens_estado == 20_000, "max_tokens_estado debe ser 20K (v3.2)"
+    assert TOKEN_LIMITS.carga_principal_max == 40_000, "carga_principal_max debe ser 40K (v3.2)"
+    assert TOKEN_LIMITS.max_tokens_estado == 20_000
+    print(f"✓ Límites v3.2: estado={TOKEN_LIMITS.max_tokens_estado}, carga={TOKEN_LIMITS.carga_principal_max}")
+
+    # Test 2: umbral de disparo
+    expected_umbral = int(TOKEN_LIMITS.capacidad_util * 0.90)
+    assert TOKEN_LIMITS.umbral_disparo_tokens == expected_umbral
+    print(f"✓ Umbral disparo: {TOKEN_LIMITS.umbral_disparo_tokens} tokens (90% de {TOKEN_LIMITS.capacidad_util})")
+
+    # Test 3: API config con batch por chat_id (v3.2)
+    assert "chat_id" in API_CONFIG.messages_batch_by_chat_url
+    assert "share_id" not in API_CONFIG.messages_batch_by_chat_url
+    print(f"✓ Batch endpoint v3.2: {API_CONFIG.messages_batch_by_chat_url}")
+
+    # Test 4: conversiones chars
+    assert TOKEN_LIMITS.max_chars_estado == int(20_000 * 3.5)
+    assert TOKEN_LIMITS.max_chars_bloque == int(70_000 * 3.5)
+    print(f"✓ Chars: estado={TOKEN_LIMITS.max_chars_estado}, bloque={TOKEN_LIMITS.max_chars_bloque}")
+
+    # Test 5: reglas temáticas cargadas
+    assert len(DEFAULT_THEME_RULES) >= 7
+    assert any(r.name == "general" for r in DEFAULT_THEME_RULES)
+    print(f"✓ Reglas temáticas: {len(DEFAULT_THEME_RULES)} reglas cargadas")
+
+    # Test 6: disparadores léxicos y auto-preguntas
+    assert len(LEXIC_TRIGGER_PHRASES) >= 5
+    assert len(SELF_QUESTIONS) == 3
+    print(f"✓ Disparadores léxicos: {len(LEXIC_TRIGGER_PHRASES)} frases")
+    print(f"✓ Auto-preguntas: {len(SELF_QUESTIONS)} preguntas")
+
+    print("\n✅ config.py: todos los tests pasaron")

@@ -221,3 +221,52 @@ class Verifier:
         lines.append(sep)
 
         return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    # ── Validación interna de verifier.py (atómico standalone) ──
+    print("=== Validación de verifier.py ===\n")
+
+    from contexto_zai.config import TOKEN_LIMITS
+    from contexto_zai.models import FileCategory, RecoveryFile, Verdict
+
+    v = Verifier()
+
+    # Test 1: archivo dentro del límite → OK
+    f_ok = RecoveryFile(
+        filename="00_estado_actual.md",
+        category=FileCategory.ESTADO,
+        content="x" * 1000,
+        token_limit=TOKEN_LIMITS.max_tokens_estado,
+    )
+    report = v.verify([f_ok])
+    assert report.overall_verdict == Verdict.OK
+    assert not report.has_errors
+    print(f"✓ Archivo dentro del límite: veredicto OK")
+
+    # Test 2: archivo que excede el límite por >1.1× → ERROR
+    contenido_excedente = "x" * int(TOKEN_LIMITS.max_tokens_bloque * 3.5 * 1.2)  # 120% del límite
+    f_err = RecoveryFile(
+        filename="bloque_x.md",
+        category=FileCategory.BLOQUE,
+        content=contenido_excedente,
+        token_limit=TOKEN_LIMITS.max_tokens_bloque,
+    )
+    report2 = v.verify([f_err])
+    assert report2.has_errors, f"Esperaba errores, obtuve verdict={report2.overall_verdict}"
+    print(f"✓ Bloque que excede 70K tokens (1.2x): detectado como ERROR")
+
+    # Test 3: carga principal total (estado + indice + decisiones)
+    f_estado = RecoveryFile(filename="00_estado_actual.md", category=FileCategory.ESTADO, content="x" * 1000, token_limit=TOKEN_LIMITS.max_tokens_estado)
+    f_indice = RecoveryFile(filename="01_indice_recuperacion.md", category=FileCategory.INDICE, content="x" * 1000, token_limit=TOKEN_LIMITS.max_tokens_indice)
+    f_dec = RecoveryFile(filename="02_decisiones_clave.md", category=FileCategory.DECISIONES, content="x" * 1000, token_limit=TOKEN_LIMITS.max_tokens_decisiones)
+    report3 = v.verify([f_estado, f_indice, f_dec])
+    assert report3.main_load_limit == 40_000  # v3.2
+    print(f"✓ Carga principal con límite v3.2 (40K): OK")
+
+    # Test 4: reporte formateado
+    formatted = v.format_report(report3)
+    assert "Resultado" in formatted or "resultado" in formatted.lower()
+    print(f"✓ Formateo de reporte: OK")
+
+    print("\n✅ verifier.py: todos los tests pasaron")

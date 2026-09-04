@@ -143,3 +143,49 @@ class ExchangeBuilder:
             exchange.start_timestamp,
             exchange.end_timestamp,
         )
+
+
+if __name__ == "__main__":
+    # ── Validación interna de exchange_builder.py (atómico standalone) ──
+    print("=== Validación de exchange_builder.py ===\n")
+
+    from contexto_zai.models import Message, MessageRole
+
+    # Test 1: dos intercambios user → assistant
+    msgs = [
+        Message(seq=1, role=MessageRole.USER, timestamp=1.0, content="hola"),
+        Message(seq=2, role=MessageRole.ASSISTANT, timestamp=2.0, content="respuesta1"),
+        Message(seq=3, role=MessageRole.USER, timestamp=3.0, content="otra"),
+        Message(seq=4, role=MessageRole.ASSISTANT, timestamp=4.0, content="respuesta2"),
+    ]
+    eb = ExchangeBuilder()
+    exchanges = eb.build(msgs)
+    assert len(exchanges) == 2, f"Esperaba 2 exchanges, obtuve {len(exchanges)}"
+    assert exchanges[0].director_msg.content == "hola"
+    assert exchanges[1].director_msg.content == "otra"
+    print(f"✓ 2 exchanges construidos correctamente")
+
+    # Test 2: assistant con múltiples respuestas en un exchange
+    msgs2 = [
+        Message(seq=1, role=MessageRole.USER, timestamp=1.0, content="pregunta"),
+        Message(seq=2, role=MessageRole.ASSISTANT, timestamp=2.0, content="r1"),
+        Message(seq=3, role=MessageRole.ASSISTANT, timestamp=3.0, content="r2"),
+        Message(seq=4, role=MessageRole.ASSISTANT, timestamp=4.0, content="r3"),
+    ]
+    exchanges2 = eb.build(msgs2)
+    assert len(exchanges2) == 1
+    assert len(exchanges2[0].agent_msgs) == 3
+    print(f"✓ 1 exchange con 3 respuestas del agente")
+
+    # Test 3: lista vacía
+    assert eb.build([]) == []
+    print(f"✓ Lista vacía manejada correctamente")
+
+    # Test 4: solo user (sin respuesta del agente)
+    msgs3 = [Message(seq=1, role=MessageRole.USER, timestamp=1.0, content="solo")]
+    exchanges3 = eb.build(msgs3)
+    assert len(exchanges3) == 1
+    assert exchanges3[0].agent_msgs == []
+    print(f"✓ Exchange sin respuesta del agente manejado")
+
+    print("\n✅ exchange_builder.py: todos los tests pasaron")

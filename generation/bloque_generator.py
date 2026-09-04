@@ -1,186 +1,143 @@
+# Destino: /home/z/my-project/contexto_zai/generation/bloque_generator.py
+"""Generador de bloques temáticos (v3.2).
+
+Formatea un ThematicBlock (que puede contener varios temas) como
+archivo markdown. Cada intercambio se presenta con su cabecera y
+contenido limpio (sin reasoning).
+
+Diferencia respecto a v1.0:
+- v1.0 usaba block.name y block.display_name (un bloque = un tema).
+- v3.2 usa block.temas (lista de temas en el bloque).
+"""
+
 from __future__ import annotations
 
 import logging
-
 from typing import TYPE_CHECKING
+
+from contexto_zai.processing.content_cleaner import ContentCleaner
 
 if TYPE_CHECKING:
     from contexto_zai.models import ThematicBlock
 
-    from contexto_zai.processing.content_cleaner import ContentCleaner
-
 logger = logging.getLogger(__name__)
-
-# Tasa de conversión caracteres → tokens.
-_CHARS_PER_TOKEN: float = 3.5
 
 
 class BloqueGenerator:
-    """Generador de contenido markdown para un bloque temático.
+    """Genera el contenido markdown de un bloque temático.
 
-    Toma un :class:`ThematicBlock` y un :class:`ContentCleaner` y
-    produce el documento markdown completo del bloque, incluyendo
-    el encabezado con metadatos y todos los exchanges formateados.
-
-    La generación delega el formateo de cada exchange individual
-    al ``ContentCleaner`` proporcionado.
+    Usage:
+        >>> gen = BloqueGenerator()
+        >>> content = gen.generate(block, cleaner=ContentCleaner())
     """
 
     def __init__(self) -> None:
-        """Inicializa el generador de bloques temáticos.
-
-        No requiere parámetros de configuración. El tamaño
-        máximo de cada bloque está controlado por el
-        :class:`BlockManager` durante la fase de procesamiento.
-        """
         logger.debug("BloqueGenerator inicializado")
 
     def generate(
         self,
-        block: ThematicBlock,
+        block: "ThematicBlock",
         cleaner: ContentCleaner,
     ) -> str:
-        """Genera el contenido markdown de un bloque temático.
-
-        Produce un documento con:
-
-        - Título del bloque (``# {display_name}``).
-        - Metadatos: período, número de exchanges, tamaño estimado.
-        - Separador horizontal.
-        - Cada exchange formateado por ``cleaner.format_exchange()``.
+        """Genera el contenido markdown de un bloque.
 
         Args:
-            block: Bloque temático con sus exchanges.
-            cleaner: Instancia de :class:`ContentCleaner` para
-                formatear los exchanges individuales.
+            block: ThematicBlock con intercambios (puede tener varios temas).
+            cleaner: ContentCleaner para formatear cada intercambio.
 
         Returns:
-            Contenido markdown completo del bloque temático.
+            Contenido markdown del bloque.
         """
-        logger.info(
-            "Generando bloque '%s' (%d exchanges, %d chars)",
-            block.display_name,
-            block.exchange_count,
-            block.total_chars,
-        )
+        if not block.exchanges:
+            logger.warning("Bloque %s sin intercambios", block.filename)
+            return f"# Bloque vacío\n\n(Sin intercambios)\n"
 
-        # Construir el encabezado con metadatos.
-        header = self._build_header(block)
+        # Cabecera: lista de temas en el bloque
+        temas_str = ", ".join(block.temas) if block.temas else "general"
+        lines: list[str] = [
+            f"# Bloque temático: {temas_str}",
+            "",
+            f"**Período:** {block.period_str}",
+            f"**Intercambios:** {block.exchange_count} "
+            f"({block.director_count} del Director, {block.agent_count} del agente)",
+            f"**Temas en este archivo:** {len(block.temas)} ({temas_str})",
+            f"**Tamaño estimado:** ~{block.estimated_tokens / 1000:.1f}K tokens",
+            "",
+            "---",
+            "",
+        ]
 
-        # Formatear cada exchange.
-        exchanges_content = self._format_all_exchanges(block, cleaner)
+        # Cada intercambio formateado
+        for i, exchange in enumerate(block.exchanges, start=1):
+            formatted = cleaner.format_exchange(exchange, exchange_num=i)
+            lines.append(formatted)
+            lines.append("")
 
-        # Ensamblar el documento.
-        content = self._assemble(header, exchanges_content)
-
-        logger.info(
-            "Bloque '%s' generado: %d caracteres (%.0f tokens estimados)",
-            block.display_name,
+        content = "\n".join(lines)
+        logger.debug(
+            "Bloque '%s' generado: %d chars (%.0f tokens), %d intercambios, %d temas",
+            block.filename,
             len(content),
-            len(content) / _CHARS_PER_TOKEN,
+            len(content) / 3.5,
+            block.exchange_count,
+            len(block.temas),
         )
         return content
 
-    # ── Construcción del encabezado ──────────────────────────────
+    def __repr__(self) -> str:
+        return "BloqueGenerator()"
 
-    @staticmethod
-    def _build_header(block: ThematicBlock) -> str:
-        """Construye el encabezado del bloque con metadatos.
 
-        Incluye el título, período, conteo de mensajes y tamaño
-        estimado en tokens.
+if __name__ == "__main__":
+    # ── Validación interna de bloque_generator.py ──
+    print("=== Validación de bloque_generator.py ===\n")
 
-        Args:
-            block: Bloque temático.
+    from contexto_zai.models import Exchange, Message, MessageRole, ThematicBlock
 
-        Returns:
-            Encabezado markdown del bloque.
-        """
-        logger.debug(
-            "Construyendo encabezado para bloque '%s'",
-            block.display_name,
-        )
+    gen = BloqueGenerator()
+    cleaner = ContentCleaner()
 
-        tokens_k = block.estimated_tokens / 1000
+    # Test 1: bloque con un tema
+    ex1 = Exchange(
+        id=1,
+        director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1788482829, content="Ejecuta pytest"),
+        agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=1788482830, content="Tests OK")],
+        topic="validaciones",
+        start_timestamp=1788482829,
+        end_timestamp=1788482830,
+    )
+    block1 = ThematicBlock(filename="bloque_01.md")
+    block1.add_exchange(ex1)
+    content1 = gen.generate(block1, cleaner)
+    assert "validaciones" in content1
+    assert "Ejecuta pytest" in content1
+    assert "Tests OK" in content1
+    assert "1 intercambios" in content1
+    print(f"✓ Bloque con 1 tema: {len(content1)} chars")
 
-        lines: list[str] = [
-            f"# {block.display_name}",
-            f"**Período:** {block.period_str}",
-            (
-                f"**Mensajes:** {block.exchange_count} exchanges "
-                f"({block.director_count} del Director, "
-                f"{block.agent_count} del agente)"
-            ),
-            f"**Tamaño estimado:** ~{tokens_k:.1f}K tokens",
-            "---",
-        ]
+    # Test 2: bloque con varios temas
+    ex2 = Exchange(
+        id=2,
+        director_msg=Message(seq=3, role=MessageRole.USER, timestamp=1788482900, content="Lee el worklog"),
+        agent_msgs=[Message(seq=4, role=MessageRole.ASSISTANT, timestamp=1788482901, content="Worklog leído")],
+        topic="configuracion_proyecto",
+        start_timestamp=1788482900,
+        end_timestamp=1788482901,
+    )
+    block2 = ThematicBlock(filename="bloque_02.md")
+    block2.add_exchange(ex1)  # tema: validaciones
+    block2.add_exchange(ex2)  # tema: configuracion_proyecto
+    content2 = gen.generate(block2, cleaner)
+    assert "validaciones" in content2
+    assert "configuracion_proyecto" in content2
+    assert "2 intercambios" in content2
+    assert "2 temas" in content2
+    print(f"✓ Bloque con 2 temas: {len(content2)} chars")
 
-        return "\n".join(lines)
+    # Test 3: bloque vacío
+    block3 = ThematicBlock(filename="bloque_vacio.md")
+    content3 = gen.generate(block3, cleaner)
+    assert "Bloque vacío" in content3
+    print(f"✓ Bloque vacío: manejado correctamente")
 
-    # ── Formateo de exchanges ────────────────────────────────────
-
-    def _format_all_exchanges(
-        self,
-        block: ThematicBlock,
-        cleaner: ContentCleaner,
-    ) -> str:
-        """Formatea todos los exchanges del bloque usando el cleaner.
-
-        Itera sobre los exchanges del bloque y delega el formateo
-        de cada uno al ``ContentCleaner.format_exchange()``. Los
-        exchanges se numeran secuencialmente dentro del bloque.
-
-        Args:
-            block: Bloque temático con sus exchanges.
-            cleaner: Instancia de :class:`ContentCleaner`.
-
-        Returns:
-            Contenido markdown con todos los exchanges formateados.
-        """
-        logger.debug(
-            "Formateando %d exchanges para bloque '%s'",
-            block.exchange_count,
-            block.display_name,
-        )
-
-        if not block.exchanges:
-            logger.debug(
-                "Bloque '%s' no tiene exchanges", block.display_name
-            )
-            return "(sin exchanges en este bloque)"
-
-        parts: list[str] = []
-
-        for idx, exchange in enumerate(block.exchanges, start=1):
-            logger.debug(
-                "Formateando exchange %d/%d (id=%d) del bloque '%s'",
-                idx,
-                block.exchange_count,
-                exchange.id,
-                block.display_name,
-            )
-            formatted = cleaner.format_exchange(exchange, exchange_num=idx)
-            parts.append(formatted)
-
-        result = "\n\n".join(parts)
-
-        logger.debug(
-            "Exchanges formateados: %d caracteres",
-            len(result),
-        )
-        return result
-
-    # ── Ensamblaje ───────────────────────────────────────────────
-
-    @staticmethod
-    def _assemble(header: str, exchanges_content: str) -> str:
-        """Ensambla el encabezado y los exchanges en el documento final.
-
-        Args:
-            header: Encabezado markdown con metadatos.
-            exchanges_content: Contenido de los exchanges formateados.
-
-        Returns:
-            Documento markdown completo del bloque.
-        """
-        return f"{header}\n\n{exchanges_content}\n"
+    print("\n✅ bloque_generator.py: todos los tests pasaron")
