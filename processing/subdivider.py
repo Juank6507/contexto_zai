@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/processing/subdivider.py
+# contexto_zai/processing/subdivider.py -- Subdivisor de temas grandes: genera subtemas derivados unicos (no parte1/parte2).
 """Subdivisor de temas grandes en subtemas derivados únicos (v3.2).
 
 Cuando un tema individual crece tanto que no cabe en un bloque
@@ -20,6 +20,21 @@ Atómico standalone: importa config y models, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -28,7 +43,6 @@ from contexto_zai.config import TOKEN_LIMITS
 from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class SubdivisionResult:
@@ -43,7 +57,6 @@ class SubdivisionResult:
     tema_padre: str
     subtemas: list[tuple[str, list[Exchange]]]
     razon: str = ""
-
 
 class Subdivider:
     """Subdivide temas grandes en subtemas derivados únicos.
@@ -84,7 +97,7 @@ class Subdivider:
             "Subdivider inicializado: max_tokens=%d", max_tokens_per_block
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def needs_subdivision(
         self,
@@ -147,7 +160,7 @@ class Subdivider:
         """Devuelve los nombres de subtemas creados al subdividir."""
         return [name for name, _ in result.subtemas if name != tema_padre]
 
-    # ── Propiedades ────────────────────────────────────────────────
+    # -- Propiedades ------------------------------------------------
 
     @property
     def max_tokens(self) -> int:
@@ -156,7 +169,7 @@ class Subdivider:
     def __repr__(self) -> str:
         return f"Subdivider(max_tokens={self._max_tokens})"
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _subdivide_lexical(
         self,
@@ -205,7 +218,7 @@ class Subdivider:
         subtemas_final: list[tuple[str, list[Exchange]]] = []
         for subtema_name, sub_exchanges in grupos.items():
             if sum(ex.estimated_tokens for ex in sub_exchanges) > self._max_tokens:
-                # Subdivisión recursiva (con sub_palabras vacías → temporal)
+                # Subdivisión recursiva (con sub_palabras vacías -> temporal)
                 recursive_result = self._subdivide_temporal(subtema_name, sub_exchanges)
                 subtemas_final.extend(recursive_result.subtemas)
             else:
@@ -228,14 +241,14 @@ class Subdivider:
         de nuevo. Caso base: si queda 1 solo intercambio y sigue
         superando el límite, se reporta como error (no se puede subdividir más).
         """
-        # Caso base: 1 solo intercambio que supera el límite → no subdividible
+        # Caso base: 1 solo intercambio que supera el límite -> no subdividible
         if len(exchanges) == 1:
             tokens = sum(ex.estimated_tokens for ex in exchanges)
             if tokens > self._max_tokens:
                 # El intercambio individual supera el límite.
                 # Devolverlo tal cual; BlockPacker lo detectará como error.
                 logger.warning(
-                    "Intercambio individual de tema '%s' supera el límite "
+                    "Intercambio individual de tema '%s' supera el limite "
                     "(%d > %d tokens). No se puede subdividir más.",
                     tema, int(tokens), self._max_tokens,
                 )
@@ -277,10 +290,18 @@ class Subdivider:
             razon="subdivisión temporal (cronológica)",
         )
 
-
 if __name__ == "__main__":
-    # ── Validación interna de subdivider.py (atómico standalone) ──
-    print("=== Validación de subdivider.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de subdivider.py (atómico standalone) --
+    print("=== Validacion de subdivider.py ===\n")
 
     from contexto_zai.models import Message, MessageRole
 
@@ -294,9 +315,9 @@ if __name__ == "__main__":
     result1 = sub.subdivide("validaciones", exchanges_small)
     assert len(result1.subtemas) == 1
     assert result1.subtemas[0][0] == "validaciones"
-    print(f"✓ Tema pequeño: no se subdivide")
+    print(f"[OK] Tema pequeno: no se subdivide")
 
-    # Test 2: tema que supera el límite → se subdivide temporalmente
+    # Test 2: tema que supera el límite -> se subdivide temporalmente
     # Intercambios pequeños (200 chars ~57 tokens cada uno), 30 intercambios = ~1714 tokens
     exchanges_big = [
         Exchange(id=i, director_msg=Message(seq=i, role=MessageRole.USER, timestamp=i, content="x" * 200), topic="general", start_timestamp=i, end_timestamp=i+1)
@@ -308,7 +329,7 @@ if __name__ == "__main__":
     for name, exchanges in result2.subtemas:
         tokens = sum(ex.estimated_tokens for ex in exchanges)
         assert tokens <= sub.max_tokens, f"Subtema '{name}' supera límite: {tokens:.0f}"
-    print(f"✓ Tema grande subdividido temporalmente: {len(result2.subtemas)} subtemas")
+    print(f"[OK] Tema grande subdividido temporalmente: {len(result2.subtemas)} subtemas")
 
     # Test 3: subdivisión léxica para 'validaciones'
     # Intercambios pequeños (200 chars ~57 tokens), 40 intercambios = ~2280 tokens > 1000
@@ -338,12 +359,12 @@ if __name__ == "__main__":
     for name, exchanges in result3.subtemas:
         tokens = sum(ex.estimated_tokens for ex in exchanges)
         assert tokens <= sub.max_tokens, f"Subtema '{name}' supera límite: {tokens:.0f}"
-    print(f"✓ Subdivisión léxica para 'validaciones': {subtema_names}")
+    print(f"[OK] Subdivision lexica para 'validaciones': {subtema_names}")
 
     # Test 4: needs_subdivision
     assert not sub.needs_subdivision("general", exchanges_small)
     assert sub.needs_subdivision("general", exchanges_big)
-    print(f"✓ needs_subdivision: detecta correctamente")
+    print(f"[OK] needs_subdivision: detecta correctamente")
 
     # Test 5: ningún subtema supera el límite tras subdivisión recursiva
     # Intercambios medianos que sí se pueden subdividir
@@ -357,11 +378,11 @@ if __name__ == "__main__":
         assert tokens <= sub.max_tokens, (
             f"Subtema '{name}' supera límite: {tokens:.0f} > {sub.max_tokens}"
         )
-    print(f"✓ Subdivisión recursiva: {len(result5.subtemas)} subtemas, todos < {sub.max_tokens}")
+    print(f"[OK] Subdivision recursiva: {len(result5.subtemas)} subtemas, todos < {sub.max_tokens}")
 
     # Test 6: get_subtema_names
     names = sub.get_subtema_names("validaciones", result3)
     assert all(name.startswith("validaciones_") for name in names)
-    print(f"✓ get_subtema_names: {names}")
+    print(f"[OK] get_subtema_names: {names}")
 
-    print("\n✅ subdivider.py: todos los tests pasaron")
+    print("\n[PASS] subdivider.py: todos los tests pasaron")

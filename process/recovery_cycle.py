@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/process/recovery_cycle.py
+# contexto_zai/process/recovery_cycle.py -- Ciclo de recuperacion completo: orquesta pasos 5-9 (extraccion -> clasificacion -> generacion).
 """Ciclo de recuperación completo (v3.2).
 
 Coordina los pasos 5-9 del flujo de la spec:
@@ -12,6 +12,21 @@ Es un script de dependencia: orquesta varios atómicos.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from dataclasses import dataclass
@@ -31,7 +46,6 @@ from contexto_zai.processing.subdivider import Subdivider
 from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class RecoveryCycleResult:
@@ -54,7 +68,6 @@ class RecoveryCycleResult:
     files_count: int = 0
     share_id: str = ""
     error: str = ""
-
 
 class RecoveryCycle:
     """Orquesta el ciclo completo de recuperación (pasos 5-9).
@@ -107,7 +120,7 @@ class RecoveryCycle:
             return DecisionesGenerator(extractor=extractor)
         return DecisionesGenerator()
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def run(
         self,
@@ -138,7 +151,7 @@ class RecoveryCycle:
                 )
 
             logger.info(
-                "Extraídos: %d mensajes (%d chars)",
+                "Extraidos: %d mensajes (%d chars)",
                 len(messages),
                 sum(len(m.content) for m in messages),
             )
@@ -168,7 +181,7 @@ class RecoveryCycle:
             # Empaquetar en bloques por tamaño
             blocks = self._packer.pack(expanded)
 
-            # Actualizar metadata con mapeo tema→archivo
+            # Actualizar metadata con mapeo tema->archivo
             metadata = self._metadata_mgr.read()
             metadata.chat_id = self._chat_id
             metadata.share_id = share_id
@@ -184,7 +197,7 @@ class RecoveryCycle:
             self._metadata_mgr.write(metadata)
 
             # PASO 7: Generación de los 3 archivos + bloques
-            logger.info("Paso 7: Generando archivos de recuperación...")
+            logger.info("Paso 7: Generando archivos de recuperacion...")
             recovery_files = self._recovery_gen.generate_all(
                 exchanges=exchanges,
                 blocks=blocks,
@@ -221,10 +234,10 @@ class RecoveryCycle:
             )
 
         except Exception as e:
-            logger.exception("Error en ciclo de recuperación")
+            logger.exception("Error en ciclo de recuperacion")
             return RecoveryCycleResult(success=False, error=str(e))
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _write_files(
         self,
@@ -240,3 +253,74 @@ class RecoveryCycle:
 
     def __repr__(self) -> str:
         return f"RecoveryCycle(chat_id={self._chat_id[:8]}...)"
+
+if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de recovery_cycle.py (atómico standalone) --
+    # Tests básicos de construcción e invariante.
+    # Los tests de integración con API simulada están en tests/test_recovery_cycle.py
+    print("=== Validacion de recovery_cycle.py ===\n")
+
+    import tempfile
+    from pathlib import Path
+
+    # Test 1: construcción del ciclo con componentes inyectados
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cycle = RecoveryCycle(
+            jwt="fake-jwt",
+            chat_id="fake-chat-id",
+            workspace_dir=Path(tmpdir) / "workspace",
+            download_dir=Path(tmpdir) / "download",
+        )
+        assert cycle._jwt == "fake-jwt"
+        assert cycle._chat_id == "fake-chat-id"
+        assert cycle._exchange_builder is not None
+        assert cycle._classifier is not None
+        assert cycle._packer is not None
+        assert cycle._recovery_gen is not None
+        assert cycle._metadata_mgr is not None
+        print(f"[OK] Construccion con componentes inyectados")
+
+    # Test 2: paths multiplataforma (no hardcodear /home/z/...)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws_dir = Path(tmpdir) / "workspace"
+        dl_dir = Path(tmpdir) / "download"
+        cycle = RecoveryCycle(
+            jwt="fake-jwt",
+            chat_id="fake-chat-id",
+            workspace_dir=ws_dir,
+            download_dir=dl_dir,
+        )
+        # Los paths deben ser objetos Path, no strings
+        assert isinstance(cycle._workspace_dir, Path)
+        assert isinstance(cycle._download_dir, Path)
+        # En Windows, los paths deben usar backslashes automáticamente
+        assert cycle._workspace_dir == ws_dir
+        assert cycle._download_dir == dl_dir
+        print(f"[OK] Paths multiplataforma (Path objects, no strings)")
+
+    # Test 3: ResultType estructura correcta
+    result = RecoveryCycleResult(success=True, messages_count=10, exchanges_count=5, blocks_count=3, files_count=8, share_id="abc")
+    assert result.success
+    assert result.messages_count == 10
+    assert result.exchanges_count == 5
+    assert result.blocks_count == 3
+    assert result.files_count == 8
+    assert result.share_id == "abc"
+    print(f"[OK] RecoveryCycleResult: estructura correcta")
+
+    # Test 4: repr
+    cycle = RecoveryCycle(jwt="x", chat_id="abc-123-def")
+    assert "abc-123" in repr(cycle)
+    print(f"[OK] repr: {cycle!r}")
+
+    print("\n[PASS] recovery_cycle.py: tests basicos pasaron")
+    print("   Tests de integracion con API simulada: tests/test_recovery_cycle.py")

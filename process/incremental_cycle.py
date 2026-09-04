@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/process/incremental_cycle.py
+# contexto_zai/process/incremental_cycle.py -- Ciclo incremental: orquesta paso 10 (actualizacion con mensajes nuevos desde ultimo_timestamp).
 """Ciclo de actualización incremental (v3.2).
 
 Coordina el paso 10 del flujo:
@@ -11,6 +11,21 @@ Es un script de dependencia: orquesta varios atómicos.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from dataclasses import dataclass
@@ -28,7 +43,6 @@ from contexto_zai.processing.exchange_builder import ExchangeBuilder
 from contexto_zai.processing.subdivider import Subdivider
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class IncrementalCycleResult:
@@ -53,7 +67,6 @@ class IncrementalCycleResult:
     previous_timestamp: float = 0.0
     new_timestamp: float = 0.0
     error: str = ""
-
 
 class IncrementalCycle:
     """Orquesta la actualización incremental de los archivos.
@@ -87,7 +100,7 @@ class IncrementalCycle:
         self._packer = BlockPacker()
         self._metadata_mgr = MetadataManager(output_dir=self._workspace_dir)
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def run(self) -> IncrementalCycleResult:
         """Ejecuta la actualización incremental.
@@ -210,3 +223,75 @@ class IncrementalCycle:
 
     def __repr__(self) -> str:
         return f"IncrementalCycle(chat_id={self._chat_id[:8]}...)"
+
+if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de incremental_cycle.py (atómico standalone) --
+    # Tests básicos. Los tests de integración con API simulada están en
+    # tests/test_incremental_cycle.py
+    print("=== Validacion de incremental_cycle.py ===\n")
+
+    import tempfile
+    from pathlib import Path
+
+    # Test 1: construcción del ciclo
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cycle = IncrementalCycle(
+            jwt="fake-jwt",
+            chat_id="fake-chat-id",
+            workspace_dir=Path(tmpdir) / "ws",
+            download_dir=Path(tmpdir) / "dl",
+        )
+        assert cycle._jwt == "fake-jwt"
+        assert cycle._chat_id == "fake-chat-id"
+        assert cycle._exchange_builder is not None
+        assert cycle._classifier is not None
+        assert cycle._packer is not None
+        assert cycle._metadata_mgr is not None
+        print(f"[OK] Construccion con componentes inyectados")
+
+    # Test 2: paths multiplataforma
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws_dir = Path(tmpdir) / "ws"
+        dl_dir = Path(tmpdir) / "dl"
+        cycle = IncrementalCycle(
+            jwt="x", chat_id="abc",
+            workspace_dir=ws_dir, download_dir=dl_dir,
+        )
+        assert isinstance(cycle._workspace_dir, Path)
+        assert isinstance(cycle._download_dir, Path)
+        print(f"[OK] Paths multiplataforma (Path objects)")
+
+    # Test 3: IncrementalCycleResult estructura
+    r = IncrementalCycleResult(success=True, new_messages_count=5, new_exchanges_count=2, new_blocks_count=3, previous_timestamp=100.0, new_timestamp=200.0)
+    assert r.success
+    assert r.new_messages_count == 5
+    assert r.new_timestamp == 200.0
+    print(f"[OK] IncrementalCycleResult: estructura correcta")
+
+    # Test 4: error si no hay metadata previa
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cycle = IncrementalCycle(
+            jwt="x", chat_id="abc",
+            workspace_dir=Path(tmpdir), download_dir=Path(tmpdir) / "dl",
+        )
+        result = cycle.run()
+        assert not result.success
+        assert "metadata" in result.error.lower()
+        print(f"[OK] Sin metadata previa: error reportado")
+
+    # Test 5: repr
+    cycle = IncrementalCycle(jwt="x", chat_id="abc-123-def")
+    assert "abc-123" in repr(cycle)
+    print(f"[OK] repr: {cycle!r}")
+
+    print("\n[PASS] incremental_cycle.py: tests basicos pasaron")
+    print("   Tests de integracion: tests/test_incremental_cycle.py")

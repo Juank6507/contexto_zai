@@ -1,15 +1,31 @@
-# Destino: /home/z/my-project/tests/test_estado_indice_generation.py
+# tests/test_estado_indice_generation.py -- Test de integracion: generadores de estado (8 secciones), indice (mapeo) y decisiones.
+
 """Test de integración: generadores de estado, índice y decisiones (v3.2).
 
 Valida la funcionalidad colectiva de los 3 generadores principales:
 1. EstadoGenerator produce 8 secciones (D1-D4 + A1-A4).
-2. IndiceGenerator produce tabla `tema → archivo`.
+2. IndiceGenerator produce tabla `tema -> archivo`.
 3. DecisionesGenerator funciona en modo offline (placeholder) y
    online (con extractor simulado).
 4. RecoveryGenerator orquesta los 3 + bloque_generator.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import sys
 from pathlib import Path
@@ -31,7 +47,6 @@ from contexto_zai.models import (
     ThematicBlock,
 )
 from contexto_zai.processing.content_cleaner import ContentCleaner
-
 
 def make_test_exchanges() -> list[Exchange]:
     """Crea intercambios de prueba."""
@@ -62,7 +77,6 @@ def make_test_exchanges() -> list[Exchange]:
         ),
     ]
 
-
 def test_estado_generator_8_secciones():
     """Test 1: estado_generator produce 8 secciones D1-D4 + A1-A4."""
     print("\n=== Test 1: estado_generator con 8 secciones ===")
@@ -72,21 +86,19 @@ def test_estado_generator_8_secciones():
 
     for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
         assert f"Sección {section}" in content, f"Falta sección {section}"
-    print(f"  ✓ 8 secciones presentes (D1-D4, A1-A4)")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] 8 secciones presentes (D1-D4, A1-A4)")
+    print(f"  [PASS] PASO")
 
 def test_estado_d1_literal_director():
     """Test 2: D1 contiene el último mensaje del Director literal."""
-    print("\n=== Test 2: D1 es literal del último mensaje del Director ===")
+    print("\n=== Test 2: D1 es literal del ultimo mensaje del Director ===")
     gen = EstadoGenerator()
     exchanges = make_test_exchanges()
     content = gen.generate(exchanges, chat_label="Test")
     # D1 debe contener el último mensaje del Director
     assert "¿Por qué respondes eso si ya acordamos usar X?" in content
-    print(f"  ✓ D1 contiene el último mensaje del Director")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] D1 contiene el ultimo mensaje del Director")
+    print(f"  [PASS] PASO")
 
 def test_estado_a3_no_falsos_positivos():
     """Test 3: A3 no detecta falsos positivos de error."""
@@ -98,13 +110,12 @@ def test_estado_a3_no_falsos_positivos():
     # A3 debe contener "Traceback" (error real) pero NO "passed" como error
     a3_section = content.split("Sección A3")[1].split("Sección A4")[0]
     assert "Traceback" in a3_section  # detectado como error real
-    print(f"  ✓ A3 detecta Traceback (error real)")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] A3 detecta Traceback (error real)")
+    print(f"  [PASS] PASO")
 
 def test_indice_with_tema_to_archivo_table():
-    """Test 4: índice contiene tabla mapeo `tema → archivo`."""
-    print("\n=== Test 4: índice con tabla tema→archivo ===")
+    """Test 4: índice contiene tabla mapeo `tema -> archivo`."""
+    print("\n=== Test 4: indice con tabla tema->archivo ===")
     gen = IndiceGenerator()
     b1 = ThematicBlock(filename="bloque_01.md")
     b1.add_exchange(Exchange(id=1, director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="x"), topic="validaciones", start_timestamp=1, end_timestamp=2))
@@ -112,14 +123,13 @@ def test_indice_with_tema_to_archivo_table():
     b2.add_exchange(Exchange(id=2, director_msg=Message(seq=2, role=MessageRole.USER, timestamp=3, content="y"), topic="general", start_timestamp=3, end_timestamp=4))
 
     content = gen.generate([b1, b2], chat_label="Test")
-    assert "Mapeo tema → archivo" in content
+    assert "Mapeo tema -> archivo" in content
     assert "| Tema | Archivo |" in content
     assert "`validaciones`" in content
     assert "`bloque_01.md`" in content
     assert "`general`" in content
-    print(f"  ✓ Tabla mapeo con todos los temas y archivos")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Tabla mapeo con todos los temas y archivos")
+    print(f"  [PASS] PASO")
 
 def test_decisiones_offline_placeholder():
     """Test 5: decisiones en modo offline produce placeholder."""
@@ -129,9 +139,8 @@ def test_decisiones_offline_placeholder():
     content, summary = gen.generate(exchanges)
     assert "Sin decisiones registradas" in content
     assert "No se identificaron" in summary
-    print(f"  ✓ Placeholder en modo offline")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Placeholder en modo offline")
+    print(f"  [PASS] PASO")
 
 def test_decisiones_online_with_mock_extractor():
     """Test 6: decisiones en modo online con extractor simulado."""
@@ -155,13 +164,12 @@ def test_decisiones_online_with_mock_extractor():
     content, summary = gen.generate(exchanges)
     assert "Usar PriorityQueue" in content
     assert "D01" in content
-    print(f"  ✓ Decisiones extraídas con extractor simulado")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Decisiones extraidas con extractor simulado")
+    print(f"  [PASS] PASO")
 
 def test_decisiones_deduplicacion():
     """Test 7: deduplicación de decisiones por título."""
-    print("\n=== Test 7: deduplicación de decisiones ===")
+    print("\n=== Test 7: deduplicacion de decisiones ===")
 
     def mock_extractor(exs):
         return [Decision(id="", timestamp=0, title="Decisión repetida", decision="X")]
@@ -172,9 +180,8 @@ def test_decisiones_deduplicacion():
     content, _ = gen.generate(exchanges, existing_decisions=existing)
     # No debe añadir la decisión duplicada
     assert content.count("Decisión repetida") == 1
-    print(f"  ✓ Decisión duplicada no se añade")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Decision duplicada no se anade")
+    print(f"  [PASS] PASO")
 
 def test_recovery_generator_orquestacion():
     """Test 8: recovery_generator produce los 4 archivos correctos."""
@@ -193,13 +200,12 @@ def test_recovery_generator_orquestacion():
     assert "01_indice_recuperacion.md" in filenames
     assert "02_decisiones_clave.md" in filenames
     assert "bloque_01.md" in filenames
-    print(f"  ✓ 4 archivos generados: {filenames}")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] 4 archivos generados: {filenames}")
+    print(f"  [PASS] PASO")
 
 def test_recovery_generator_uses_metadata_for_indice():
     """Test 9: recovery_generator usa metadata para el índice."""
-    print("\n=== Test 9: índice usa metadata ===")
+    print("\n=== Test 9: indice usa metadata ===")
     gen = RecoveryGenerator()
     exchanges = make_test_exchanges()
     b1 = ThematicBlock(filename="bloque_01.md")
@@ -211,13 +217,12 @@ def test_recovery_generator_uses_metadata_for_indice():
     indice = next(f for f in files if f.filename == "01_indice_recuperacion.md")
     assert "validaciones" in indice.content
     assert "bloque_01.md" in indice.content
-    print(f"  ✓ Índice usa metadata para mapeo")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Indice usa metadata para mapeo")
+    print(f"  [PASS] PASO")
 
 def main():
     print("=" * 60)
-    print("TEST DE INTEGRACIÓN: generadores de estado, índice, decisiones")
+    print("TEST DE INTEGRACION: generadores de estado, indice, decisiones")
     print("=" * 60)
     tests = [
         test_estado_generator_8_secciones,
@@ -237,13 +242,21 @@ def main():
             test()
             passed += 1
         except (AssertionError, Exception) as e:
-            print(f"  ❌ FALLÓ: {e}")
+            print(f"  [FAIL] FALLO: {e}")
             failed += 1
     print(f"\n{'=' * 60}")
     print(f"RESULTADO: {passed} pasaron, {failed} fallaron de {len(tests)} tests")
     print(f"{'=' * 60}")
     return 0 if failed == 0 else 1
 
-
 if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
     sys.exit(main())

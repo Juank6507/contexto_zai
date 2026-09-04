@@ -1,10 +1,10 @@
-# Destino: /home/z/my-project/contexto_zai/metadata/manager.py
+# contexto_zai/metadata/manager.py -- Gestor de metadata: lee/escribe _metadata.json con mapeo tema->archivo y ultimo_timestamp.
 """Gestor de la metadata de recuperación (v3.2).
 
 Lee y escribe el archivo `_metadata.json` que trackea:
 - chat_id y share_id de la sesión
 - ultimo_timestamp procesado (para actualización incremental)
-- mapeo tema → archivo (unicidad garantizada)
+- mapeo tema -> archivo (unicidad garantizada)
 - subtemas derivados (registro de subdivisiones)
 - ultima_activacion (ISO timestamp)
 
@@ -17,6 +17,21 @@ Atómico standalone: importa config y models, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import json
 import logging
 from datetime import datetime, timezone
@@ -27,7 +42,6 @@ from contexto_zai.config import METADATA_FILENAME
 from contexto_zai.models import RecoveryMetadata
 
 logger = logging.getLogger(__name__)
-
 
 class MetadataManager:
     """Lee y escribe la metadata de recuperación.
@@ -55,7 +69,7 @@ class MetadataManager:
             "MetadataManager inicializado: %s", self._path
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def read(self) -> RecoveryMetadata:
         """Lee la metadata del archivo. Si no existe, devuelve una vacía.
@@ -65,7 +79,7 @@ class MetadataManager:
         """
         if not self._path.exists():
             logger.info(
-                "Archivo de metadata no existe, creando vacío: %s", self._path
+                "Archivo de metadata no existe, creando vacio: %s", self._path
             )
             return RecoveryMetadata()
 
@@ -73,7 +87,7 @@ class MetadataManager:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             meta = RecoveryMetadata(**data)
             logger.debug(
-                "Metadata leída: chat_id=%s, ultimo_ts=%s, temas=%d",
+                "Metadata leida: chat_id=%s, ultimo_ts=%s, temas=%d",
                 meta.chat_id,
                 meta.ultimo_timestamp,
                 len(meta.tema_a_archivo),
@@ -188,7 +202,7 @@ class MetadataManager:
             self._path.unlink()
             logger.info("Metadata eliminada: %s", self._path)
 
-    # ── Propiedades ────────────────────────────────────────────────
+    # -- Propiedades ------------------------------------------------
 
     @property
     def path(self) -> Path:
@@ -198,10 +212,18 @@ class MetadataManager:
     def __repr__(self) -> str:
         return f"MetadataManager(path={self._path!r})"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de manager.py (atómico standalone) ──
-    print("=== Validación de metadata/manager.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de manager.py (atómico standalone) --
+    print("=== Validacion de metadata/manager.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -214,7 +236,7 @@ if __name__ == "__main__":
         meta = mgr.read()
         assert meta.chat_id == ""
         assert meta.tema_a_archivo == {}
-        print(f"✓ read() en archivo inexistente: metadata vacía")
+        print(f"[OK] read() en archivo inexistente: metadata vacía")
 
         # Test 2: write() crea el archivo
         meta.chat_id = "abc-123"
@@ -222,14 +244,14 @@ if __name__ == "__main__":
         meta.ultimo_timestamp = 1234567890
         mgr.write(meta)
         assert mgr.exists()
-        print(f"✓ write() crea archivo: {mgr.path.name}")
+        print(f"[OK] write() crea archivo: {mgr.path.name}")
 
         # Test 3: read() recupera lo escrito
         meta2 = mgr.read()
         assert meta2.chat_id == "abc-123"
         assert meta2.share_id == "def-456"
         assert meta2.ultimo_timestamp == 1234567890
-        print(f"✓ read() recupera datos: chat_id={meta2.chat_id}")
+        print(f"[OK] read() recupera datos: chat_id={meta2.chat_id}")
 
         # Test 4: register_tema
         mgr.register_tema("validaciones", "bloque_01.md")
@@ -237,7 +259,7 @@ if __name__ == "__main__":
         meta3 = mgr.read()
         assert meta3.tema_a_archivo["validaciones"] == "bloque_01.md"
         assert meta3.tema_a_archivo["configuracion_proyecto"] == "bloque_01.md"
-        print(f"✓ register_tema: 2 temas en bloque_01.md")
+        print(f"[OK] register_tema: 2 temas en bloque_01.md")
 
         # Test 5: violación de unicidad lanza error
         try:
@@ -245,7 +267,7 @@ if __name__ == "__main__":
             assert False, "Debería lanzar ValueError"
         except ValueError as e:
             assert "Violación de unicidad" in str(e)
-            print(f"✓ Unicidad: violación detectada correctamente")
+            print(f"[OK] Unicidad: violacion detectada correctamente")
 
         # Test 6: register_subtema
         mgr.register_subtema("validaciones", "validaciones_server", "bloque_02.md")
@@ -253,18 +275,18 @@ if __name__ == "__main__":
         assert "validaciones_server" in meta4.tema_a_archivo
         assert meta4.tema_a_archivo["validaciones_server"] == "bloque_02.md"
         assert "validaciones_server" in meta4.subtemas_derivados["validaciones"]
-        print(f"✓ register_subtema: 'validaciones_server' registrado")
+        print(f"[OK] register_subtema: 'validaciones_server' registrado")
 
         # Test 7: get_archivo_for_tema
         assert mgr.get_archivo_for_tema("validaciones") == "bloque_01.md"
         assert mgr.get_archivo_for_tema("validaciones_server") == "bloque_02.md"
         assert mgr.get_archivo_for_tema("no_existe") is None
-        print(f"✓ get_archivo_for_tema: consultas OK")
+        print(f"[OK] get_archivo_for_tema: consultas OK")
 
         # Test 8: get/set_ultimo_timestamp
         mgr.set_ultimo_timestamp(9999999)
         assert mgr.get_ultimo_timestamp() == 9999999
-        print(f"✓ get/set_ultimo_timestamp: {mgr.get_ultimo_timestamp()}")
+        print(f"[OK] get/set_ultimo_timestamp: {mgr.get_ultimo_timestamp()}")
 
         # Test 9: touch_activacion
         mgr.touch_activacion()
@@ -272,26 +294,26 @@ if __name__ == "__main__":
         assert meta5.ultima_activacion != ""
         # Formato ISO: contiene 'T' y 'Z'
         assert "T" in meta5.ultima_activacion
-        print(f"✓ touch_activacion: {meta5.ultima_activacion}")
+        print(f"[OK] touch_activacion: {meta5.ultima_activacion}")
 
         # Test 10: update con múltiples campos
         mgr.update(chat_id="new-id", total_exchanges=42)
         meta6 = mgr.read()
         assert meta6.chat_id == "new-id"
         assert meta6.total_exchanges == 42
-        print(f"✓ update: chat_id={meta6.chat_id}, total_exchanges={meta6.total_exchanges}")
+        print(f"[OK] update: chat_id={meta6.chat_id}, total_exchanges={meta6.total_exchanges}")
 
         # Test 11: reset elimina el archivo
         mgr.reset()
         assert not mgr.exists()
-        print(f"✓ reset: archivo eliminado")
+        print(f"[OK] reset: archivo eliminado")
 
-        # Test 12: archivo corrupto → metadata vacía
+        # Test 12: archivo corrupto -> metadata vacía
         # Crear archivo con JSON inválido
         mgr._path.parent.mkdir(parents=True, exist_ok=True)
         mgr._path.write_text("{invalid json", encoding="utf-8")
         meta7 = mgr.read()
         assert meta7.chat_id == ""  # Recuperado como vacío
-        print(f"✓ Archivo corrupto: recuperado como vacío")
+        print(f"[OK] Archivo corrupto: recuperado como vacio")
 
-    print("\n✅ metadata/manager.py: todos los tests pasaron")
+    print("\n[PASS] metadata/manager.py: todos los tests pasaron")

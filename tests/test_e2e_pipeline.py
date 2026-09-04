@@ -1,4 +1,5 @@
-# Destino: /home/z/my-project/tests/test_e2e_pipeline.py
+# tests/test_e2e_pipeline.py -- Test E2E: validacion end-to-end del pipeline completo (activacion -> archivos generados).
+
 """Test E2E: validación end-to-end del pipeline completo (v3.2).
 
 Valida TODO el proceso desde la activación hasta los archivos
@@ -7,7 +8,7 @@ a la API real.
 
 Este es el test más importante: cubre el flujo completo del spec:
 1. Activación del Orchestrator (trigger explícito).
-2. RecoveryCycle: extracción → clasificación → packing → generación.
+2. RecoveryCycle: extracción -> clasificación -> packing -> generación.
 3. Verificación de los 4 tipos de archivo.
 4. Metadata correcta.
 5. Unicidad temática.
@@ -16,6 +17,21 @@ Este es el test más importante: cubre el flujo completo del spec:
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import json
 import sys
@@ -30,7 +46,6 @@ from contexto_zai.models import DetectionTrigger, Message, MessageRole
 from contexto_zai.pipeline import run, status
 from contexto_zai.process.orchestrator import Orchestrator
 
-
 def _patched_context_manager(mock_class, **method_returns):
     """Configura un mock de clase para que funcione como context manager."""
     instance = MagicMock()
@@ -40,7 +55,6 @@ def _patched_context_manager(mock_class, **method_returns):
         getattr(instance, method_name).return_value = return_value
     mock_class.return_value = instance
     return instance
-
 
 def make_realistic_chat() -> list[Message]:
     """Crea un chat realista con varios temas y varios intercambios."""
@@ -70,11 +84,9 @@ def make_realistic_chat() -> list[Message]:
 
     return messages
 
-
 # ==========================================================================
 # TESTS E2E
 # ==========================================================================
-
 
 def test_e2e_pipeline_run_success():
     """Test E2E 1: pipeline.run() completo con chat realista."""
@@ -100,10 +112,9 @@ def test_e2e_pipeline_run_success():
         assert result.cycle_used == "recovery"
         assert result.exchanges_processed > 0
         assert result.files_generated > 0
-        print(f"  ✓ Success, ciclo={result.cycle_used}, {result.exchanges_processed} exchanges, {result.files_generated} archivos")
-        print(f"  ✅ PASÓ")
+        print(f"  [OK] Success, ciclo={result.cycle_used}, {result.exchanges_processed} exchanges, {result.files_generated} archivos")
+        print(f"  [PASS] PASO")
         return tmpdir  # para reutilizar en otros tests
-
 
 def test_e2e_all_4_file_types_generated():
     """Test E2E 2: se generan los 4 tipos de archivo."""
@@ -123,9 +134,8 @@ def test_e2e_all_4_file_types_generated():
         assert (ws / "02_decisiones_clave.md").exists()
         bloques = list(ws.glob("bloque_*.md"))
         assert len(bloques) > 0
-        print(f"  ✓ 4 tipos: estado, índice, decisiones, {len(bloques)} bloque(s)")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] 4 tipos: estado, indice, decisiones, {len(bloques)} bloque(s)")
+        print(f"  [PASS] PASO")
 
 def test_e2e_estado_with_8_sections():
     """Test E2E 3: estado actual con 8 secciones D1-D4+A1-A4."""
@@ -142,13 +152,12 @@ def test_e2e_estado_with_8_sections():
         estado = (ws / "00_estado_actual.md").read_text(encoding="utf-8")
         for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
             assert f"Sección {section}" in estado, f"Falta sección {section}"
-        print(f"  ✓ Estado con 8 secciones")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Estado con 8 secciones")
+        print(f"  [PASS] PASO")
 
 def test_e2e_indice_with_mapping_table():
-    """Test E2E 4: índice con tabla mapeo `tema → archivo`."""
-    print("\n=== Test E2E 4: índice con mapeo ===")
+    """Test E2E 4: índice con tabla mapeo `tema -> archivo`."""
+    print("\n=== Test E2E 4: indice con mapeo ===")
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
@@ -159,14 +168,13 @@ def test_e2e_indice_with_mapping_table():
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         indice = (ws / "01_indice_recuperacion.md").read_text(encoding="utf-8")
-        assert "Mapeo tema → archivo" in indice
+        assert "Mapeo tema -> archivo" in indice
         assert "| Tema | Archivo |" in indice
         # Los temas del chat realista deben aparecer
         assert "configuracion_proyecto" in indice
         assert "validaciones" in indice
-        print(f"  ✓ Índice con tabla tema→archivo")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Indice con tabla tema->archivo")
+        print(f"  [PASS] PASO")
 
 def test_e2e_metadata_correct():
     """Test E2E 5: metadata _metadata.json con campos correctos."""
@@ -187,13 +195,12 @@ def test_e2e_metadata_correct():
         assert len(meta["tema_a_archivo"]) > 0
         assert meta["ultimo_timestamp"] > 0
         assert meta["ultima_activacion"] != ""
-        print(f"  ✓ Metadata: {meta['total_exchanges']} exchanges, {len(meta['tema_a_archivo'])} temas")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Metadata: {meta['total_exchanges']} exchanges, {len(meta['tema_a_archivo'])} temas")
+        print(f"  [PASS] PASO")
 
 def test_e2e_no_block_exceeds_70k_tokens():
     """Test E2E 6: ningún bloque supera 70K tokens."""
-    print("\n=== Test E2E 6: límite 70K tokens ===")
+    print("\n=== Test E2E 6: limite 70K tokens ===")
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
@@ -206,13 +213,12 @@ def test_e2e_no_block_exceeds_70k_tokens():
         for b in ws.glob("bloque_*.md"):
             tokens = len(b.read_text(encoding="utf-8")) / 3.5
             assert tokens <= 70_000, f"Bloque {b.name} supera 70K: {tokens:.0f}"
-        print(f"  ✓ Todos los bloques < 70K tokens")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Todos los bloques < 70K tokens")
+        print(f"  [PASS] PASO")
 
 def test_e2e_unicity_tematica():
     """Test E2E 7: unicidad temática (un tema en un solo archivo)."""
-    print("\n=== Test E2E 7: unicidad temática ===")
+    print("\n=== Test E2E 7: unicidad tematica ===")
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
@@ -229,9 +235,8 @@ def test_e2e_unicity_tematica():
             for other_tema, other_archivo in meta["tema_a_archivo"].items():
                 if tema == other_tema:
                     assert archivo == other_archivo
-        print(f"  ✓ Unicidad: {len(meta['tema_a_archivo'])} temas, cada uno en un solo archivo")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Unicidad: {len(meta['tema_a_archivo'])} temas, cada uno en un solo archivo")
+        print(f"  [PASS] PASO")
 
 def test_e2e_status_function():
     """Test E2E 8: función status() devuelve estado correcto."""
@@ -255,9 +260,8 @@ def test_e2e_status_function():
         assert st_after["metadata_exists"] is True
         assert st_after["total_temas"] > 0
         assert st_after["ultimo_timestamp"] > 0
-        print(f"  ✓ status(): antes={st_before['total_temas']} temas, después={st_after['total_temas']} temas")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] status(): antes={st_before['total_temas']} temas, después={st_after['total_temas']} temas")
+        print(f"  [PASS] PASO")
 
 def test_e2e_orchestrator_chooses_recovery_when_no_metadata():
     """Test E2E 9: Orchestrator elige RecoveryCycle cuando no hay metadata."""
@@ -275,9 +279,8 @@ def test_e2e_orchestrator_chooses_recovery_when_no_metadata():
 
         assert result.success
         assert result.cycle_used == "recovery"
-        print(f"  ✓ Sin metadata → RecoveryCycle ejecutado")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Sin metadata -> RecoveryCycle ejecutado")
+        print(f"  [PASS] PASO")
 
 def test_e2e_files_in_workspace_and_download():
     """Test E2E 10: archivos escritos tanto en workspace como en download."""
@@ -295,9 +298,8 @@ def test_e2e_files_in_workspace_and_download():
         ws_files = sorted([f.name for f in ws.glob("*.md")])
         dl_files = sorted([f.name for f in dl.glob("*.md")])
         assert ws_files == dl_files, f"Archivos en workspace y download difieren: ws={ws_files}, dl={dl_files}"
-        print(f"  ✓ {len(ws_files)} archivos en workspace = {len(dl_files)} archivos en download")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] {len(ws_files)} archivos en workspace = {len(dl_files)} archivos en download")
+        print(f"  [PASS] PASO")
 
 def test_e2e_windows_path_compatibility():
     """Test E2E 11: paths multiplataforma (funciona en Windows)."""
@@ -318,9 +320,8 @@ def test_e2e_windows_path_compatibility():
     assert isinstance(root, Path)
     # Debe contener contexto_zai (el paquete)
     assert (root / "contexto_zai").is_dir()
-    print(f"  ✓ Resolución multiplataforma: WORKSPACE_ROOT={root}")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Resolucion multiplataforma: WORKSPACE_ROOT={root}")
+    print(f"  [PASS] PASO")
 
 def main():
     print("=" * 60)
@@ -347,7 +348,7 @@ def main():
             passed += 1
         except (AssertionError, Exception) as e:
             import traceback
-            print(f"  ❌ FALLÓ: {e}")
+            print(f"  [FAIL] FALLO: {e}")
             traceback.print_exc()
             failed += 1
     print(f"\n{'=' * 60}")
@@ -355,6 +356,14 @@ def main():
     print(f"{'=' * 60}")
     return 0 if failed == 0 else 1
 
-
 if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
     sys.exit(main())

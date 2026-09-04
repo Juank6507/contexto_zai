@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/generation/estado_generator.py
+# contexto_zai/generation/estado_generator.py -- Generador del archivo 00_estado_actual.md con 8 secciones (D1-D4 + A1-A4).
 """Generador del archivo 00_estado_actual.md (v3.2).
 
 Produce las 8 secciones obligatorias (D1-D4 + A1-A4) que capturan
@@ -17,6 +17,21 @@ Atómico standalone: importa config y models, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -27,7 +42,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
-
 
 # Patrones para detectar errores reales (no conversaciones sobre errores)
 _ERROR_PATTERNS = [
@@ -52,7 +66,6 @@ _FILE_PATH_PATTERN = re.compile(
     r"`?(/home/z/[^\s`]+|/tmp/[^\s`]+|contexto_zai/[^\s`]+\.(?:py|md|json))`?"
 )
 
-
 class EstadoGenerator:
     """Genera el archivo 00_estado_actual.md con 8 secciones.
 
@@ -75,7 +88,7 @@ class EstadoGenerator:
             max_chars, int(max_chars / 3.5),
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def generate(
         self,
@@ -99,28 +112,28 @@ class EstadoGenerator:
         ultimo_exchange = exchanges[-1]
         tema_actual = ultimo_exchange.topic
 
-        # Sección D1 — Última instrucción del Director
+        # Sección D1 -- Última instrucción del Director
         d1 = self._build_d1(ultimo_exchange)
 
-        # Sección D2 — Contexto del tema activo
+        # Sección D2 -- Contexto del tema activo
         d2 = self._build_d2(recent, tema_actual)
 
-        # Sección D3 — Decisiones pendientes del Director
+        # Sección D3 -- Decisiones pendientes del Director
         d3 = self._build_d3(recent)
 
-        # Sección D4 — Restricciones y preferencias activas
+        # Sección D4 -- Restricciones y preferencias activas
         d4 = self._build_d4(recent)
 
-        # Sección A1 — Qué estaba haciendo el agente
+        # Sección A1 -- Qué estaba haciendo el agente
         a1 = self._build_a1(recent)
 
-        # Sección A2 — Entregables producidos
+        # Sección A2 -- Entregables producidos
         a2 = self._build_a2(recent)
 
-        # Sección A3 — Errores abiertos
+        # Sección A3 -- Errores abiertos
         a3 = self._build_a3(recent)
 
-        # Sección A4 — Siguiente paso lógico
+        # Sección A4 -- Siguiente paso lógico
         a4 = self._build_a4(ultimo_exchange, tema_actual)
 
         content = self._assemble(
@@ -147,7 +160,7 @@ class EstadoGenerator:
     def __repr__(self) -> str:
         return f"EstadoGenerator(max_chars={self._max_chars})"
 
-    # ── Construcción de secciones ─────────────────────────────────
+    # -- Construcción de secciones ---------------------------------
 
     def _build_d1(self, ultimo_exchange: "Exchange") -> str:
         """Sección D1: Última instrucción del Director (literal)."""
@@ -286,7 +299,7 @@ class EstadoGenerator:
 
         lines: list[str] = []
         for path, ctx in list(files.items())[:15]:
-            ctx_str = f" — {ctx}" if ctx else ""
+            ctx_str = f" -- {ctx}" if ctx else ""
             lines.append(f"- `{path}`{ctx_str}")
         return "\n".join(lines)
 
@@ -334,7 +347,7 @@ class EstadoGenerator:
         director_msg = ultimo_exchange.director_msg.content.strip()
         # Si el último mensaje del Director contiene una instrucción, esa es el siguiente paso
         if "?" in director_msg:
-            # Es una pregunta, no una instrucción → continuar respondiéndola
+            # Es una pregunta, no una instrucción -> continuar respondiéndola
             return (
                 f"Responder la pregunta/instancia del Director del último intercambio. "
                 f"Tema activo: {tema_actual}."
@@ -346,7 +359,7 @@ class EstadoGenerator:
             f"instrucción o verificar completitud de la tarea."
         )
 
-    # ── Ensamblado y truncado ──────────────────────────────────────
+    # -- Ensamblado y truncado --------------------------------------
 
     def _assemble(
         self,
@@ -356,43 +369,43 @@ class EstadoGenerator:
         a1: str, a2: str, a3: str, a4: str,
     ) -> str:
         """Ensambla las 8 secciones en el contenido final."""
-        return f"""# Estado Actual — {chat_label}
+        return f"""# Estado Actual -- {chat_label}
 
 **Tema activo:** {tema_actual}
 
 ---
 
-## Sección D1 — Última instrucción del Director
+## Sección D1 -- Última instrucción del Director
 
 {d1}
 
-## Sección D2 — Contexto del tema activo
+## Sección D2 -- Contexto del tema activo
 
 {d2}
 
-## Sección D3 — Decisiones pendientes del Director
+## Sección D3 -- Decisiones pendientes del Director
 
 {d3}
 
-## Sección D4 — Restricciones y preferencias activas
+## Sección D4 -- Restricciones y preferencias activas
 
 {d4}
 
 ---
 
-## Sección A1 — Qué estaba haciendo el agente
+## Sección A1 -- Qué estaba haciendo el agente
 
 {a1}
 
-## Sección A2 — Entregables producidos
+## Sección A2 -- Entregables producidos
 
 {a2}
 
-## Sección A3 — Errores abiertos
+## Sección A3 -- Errores abiertos
 
 {a3}
 
-## Sección A4 — Siguiente paso lógico
+## Sección A4 -- Siguiente paso lógico
 
 {a4}
 """
@@ -407,7 +420,7 @@ class EstadoGenerator:
 
         # Estrategia simple: cortar D2 por la mitad si es muy larga
         logger.warning(
-            "Estado actual excede límite (%d > %d chars), truncando D2",
+            "Estado actual excede limite (%d > %d chars), truncando D2",
             len(content), max_chars,
         )
         # Encontrar el inicio y fin de D2
@@ -424,10 +437,18 @@ class EstadoGenerator:
         # Fallback: cortar por el final
         return content[:max_chars - 50] + "\n\n... (truncado por límite)\n"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de estado_generator.py ──
-    print("=== Validación de estado_generator.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de estado_generator.py --
+    print("=== Validacion de estado_generator.py ===\n")
 
     from contexto_zai.models import Exchange, Message, MessageRole
 
@@ -457,39 +478,39 @@ if __name__ == "__main__":
     # Verificar que las 8 secciones están presentes
     for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
         assert f"Sección {section}" in content, f"Sección {section} no encontrada"
-    print(f"✓ 8 secciones presentes (D1-D4, A1-A4)")
+    print(f"[OK] 8 secciones presentes (D1-D4, A1-A4)")
 
     # Test 2: D1 contiene literalmente el último mensaje del Director
     assert "¿Por qué respondes eso si ya acordamos X?" in content
-    print(f"✓ D1: última instrucción del Director literal")
+    print(f"[OK] D1: ultima instruccion del Director literal")
 
     # Test 3: D2 menciona el tema activo
     assert "validaciones" in content
-    print(f"✓ D2: tema activo 'validaciones' presente")
+    print(f"[OK] D2: tema activo 'validaciones' presente")
 
     # Test 3b: D2 no incluye el "tema" como una mención aislada, sino como "Tema activo:"
     assert "Tema activo: **validaciones**" in content
-    print(f"✓ D2: 'Tema activo: **validaciones**' presente")
+    print(f"[OK] D2: 'Tema activo: **validaciones**' presente")
 
     # Test 4: A3 detecta error real (Traceback), no falsos positivos
     assert "Traceback" in content
     # No debe detectar "ERROR" en "5 passed" como error
     assert "passed" not in content.split("A3")[1]  # "passed" no debe aparecer en la sección de errores
-    print(f"✓ A3: detecta Traceback real, evita falsos positivos")
+    print(f"[OK] A3: detecta Traceback real, evita falsos positivos")
 
     # Test 5: A4 no repite literalmente la instrucción del Director
     a4_section = content.split("Sección A4")[1]
     assert "Continuar" in a4_section or "Responder" in a4_section
-    print(f"✓ A4: describe siguiente paso sin repetir instrucción literal")
+    print(f"[OK] A4: describe siguiente paso sin repetir instruccion literal")
 
-    # Test 6: tema vacío → mensaje de error
+    # Test 6: tema vacío -> mensaje de error
     empty = gen.generate([], chat_label="Empty")
     assert "Sin intercambios" in empty
-    print(f"✓ Lista vacía: mensaje apropiado")
+    print(f"[OK] Lista vacia: mensaje apropiado")
 
     # Test 7: lista vacía de exchanges
     content_empty = gen.generate([], chat_label="V")
     assert "Sin intercambios" in content_empty
-    print(f"✓ Lista vacía: manejada")
+    print(f"[OK] Lista vacia: manejada")
 
-    print("\n✅ estado_generator.py: todos los tests pasaron")
+    print("\n[PASS] estado_generator.py: todos los tests pasaron")

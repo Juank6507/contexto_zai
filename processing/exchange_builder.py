@@ -1,3 +1,4 @@
+# contexto_zai/processing/exchange_builder.py -- Constructor de intercambios: agrupa mensajes en pares Director+agente.
 """Módulo de construcción de exchanges a partir de mensajes.
 
 Agrupa mensajes individuales en unidades de conversación (Exchange),
@@ -8,12 +9,26 @@ siguiente mensaje del Director.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 
 from contexto_zai.models import Exchange, Message, MessageRole
 
 logger = logging.getLogger(__name__)
-
 
 class ExchangeBuilder:
     """Construye exchanges a partir de una lista plana de mensajes.
@@ -50,7 +65,7 @@ class ExchangeBuilder:
             Lista de :class:`Exchange` con ids secuenciales (1-based),
             timestamps asignados y tema por defecto ``"general"``.
         """
-        logger.info("Iniciando construcción de exchanges a partir de %d mensajes", len(messages))
+        logger.info("Iniciando construccion de exchanges a partir de %d mensajes", len(messages))
 
         exchanges: list[Exchange] = []
         current_director: Message | None = None
@@ -90,7 +105,7 @@ class ExchangeBuilder:
                 # Acumular respuestas del agente al exchange actual
                 if current_director is not None:
                     current_agent_msgs.append(msg)
-                    logger.debug("Respuesta del agente añadida al exchange actual (seq=%d)", msg.seq)
+                    logger.debug("Respuesta del agente anadida al exchange actual (seq=%d)", msg.seq)
                 else:
                     logger.warning(
                         "Mensaje de agente (seq=%d) sin Director previo; se omite",
@@ -109,7 +124,7 @@ class ExchangeBuilder:
             self._assign_timestamps(exchange)
             exchanges.append(exchange)
             logger.debug(
-                "Último exchange %d cerrado: %d respuestas del agente",
+                "Ultimo exchange %d cerrado: %d respuestas del agente",
                 exchange.id,
                 exchange.agent_count,
             )
@@ -144,14 +159,22 @@ class ExchangeBuilder:
             exchange.end_timestamp,
         )
 
-
 if __name__ == "__main__":
-    # ── Validación interna de exchange_builder.py (atómico standalone) ──
-    print("=== Validación de exchange_builder.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de exchange_builder.py (atómico standalone) --
+    print("=== Validacion de exchange_builder.py ===\n")
 
     from contexto_zai.models import Message, MessageRole
 
-    # Test 1: dos intercambios user → assistant
+    # Test 1: dos intercambios user -> assistant
     msgs = [
         Message(seq=1, role=MessageRole.USER, timestamp=1.0, content="hola"),
         Message(seq=2, role=MessageRole.ASSISTANT, timestamp=2.0, content="respuesta1"),
@@ -163,7 +186,7 @@ if __name__ == "__main__":
     assert len(exchanges) == 2, f"Esperaba 2 exchanges, obtuve {len(exchanges)}"
     assert exchanges[0].director_msg.content == "hola"
     assert exchanges[1].director_msg.content == "otra"
-    print(f"✓ 2 exchanges construidos correctamente")
+    print(f"[OK] 2 exchanges construidos correctamente")
 
     # Test 2: assistant con múltiples respuestas en un exchange
     msgs2 = [
@@ -175,17 +198,17 @@ if __name__ == "__main__":
     exchanges2 = eb.build(msgs2)
     assert len(exchanges2) == 1
     assert len(exchanges2[0].agent_msgs) == 3
-    print(f"✓ 1 exchange con 3 respuestas del agente")
+    print(f"[OK] 1 exchange con 3 respuestas del agente")
 
     # Test 3: lista vacía
     assert eb.build([]) == []
-    print(f"✓ Lista vacía manejada correctamente")
+    print(f"[OK] Lista vacia manejada correctamente")
 
     # Test 4: solo user (sin respuesta del agente)
     msgs3 = [Message(seq=1, role=MessageRole.USER, timestamp=1.0, content="solo")]
     exchanges3 = eb.build(msgs3)
     assert len(exchanges3) == 1
     assert exchanges3[0].agent_msgs == []
-    print(f"✓ Exchange sin respuesta del agente manejado")
+    print(f"[OK] Exchange sin respuesta del agente manejado")
 
-    print("\n✅ exchange_builder.py: todos los tests pasaron")
+    print("\n[PASS] exchange_builder.py: todos los tests pasaron")

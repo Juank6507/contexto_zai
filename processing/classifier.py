@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/processing/classifier.py
+# contexto_zai/processing/classifier.py -- Clasificador tematico: asigna un tema a cada intercambio por keywords (con continuidad tematica).
 """Clasificador temático de intercambios (v3.2).
 
 Asigna un tema a cada intercambio basándose en las palabras clave
@@ -23,6 +23,21 @@ Atómico standalone: importa config y models, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -31,7 +46,6 @@ from contexto_zai.config import DEFAULT_THEME_RULES, ThemeRule
 from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class ClassificationResult:
@@ -48,7 +62,6 @@ class ClassificationResult:
     matched_keywords: list[str]
     score: int
     previous_topic: Optional[str] = None
-
 
 class MessageClassifier:
     """Clasifica intercambios en temas léxicos.
@@ -71,7 +84,7 @@ class MessageClassifier:
         self._rules_map: dict[str, ThemeRule] = {r.name: r for r in self._rules}
         logger.debug("MessageClassifier inicializado con %d reglas", len(self._rules))
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def classify(
         self,
@@ -99,7 +112,7 @@ class MessageClassifier:
                 scores[rule.name] = (len(matched), matched)
 
         if not scores:
-            # Sin coincidencias → general
+            # Sin coincidencias -> general
             return ClassificationResult(
                 tema="general",
                 matched_keywords=[],
@@ -162,7 +175,7 @@ class MessageClassifier:
             ex.topic = result.tema
             previous_topic = result.tema
         logger.info(
-            "Clasificados %d intercambios. Distribución de temas: %s",
+            "Clasificados %d intercambios. Distribucion de temas: %s",
             len(exchanges),
             self._topic_distribution(exchanges),
         )
@@ -176,7 +189,7 @@ class MessageClassifier:
         """Devuelve todas las reglas del clasificador."""
         return list(self._rules)
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     @staticmethod
     def _topic_distribution(
@@ -191,10 +204,18 @@ class MessageClassifier:
     def __repr__(self) -> str:
         return f"MessageClassifier(rules={len(self._rules)})"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de classifier.py (atómico standalone) ──
-    print("=== Validación de classifier.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de classifier.py (atómico standalone) --
+    print("=== Validacion de classifier.py ===\n")
 
     from contexto_zai.models import Message, MessageRole
 
@@ -211,7 +232,7 @@ if __name__ == "__main__":
     r1 = cl.classify(ex1)
     assert r1.tema == "validaciones", f"Esperaba 'validaciones', obtuve '{r1.tema}'"
     assert r1.score >= 2  # "pytest", "valida", "tests" coinciden
-    print(f"✓ Clasificación básica: tema='{r1.tema}', score={r1.score}")
+    print(f"[OK] Clasificacion basica: tema='{r1.tema}', score={r1.score}")
 
     # Test 2: tema "configuracion_proyecto" por worklog/repo
     ex2 = Exchange(
@@ -223,9 +244,9 @@ if __name__ == "__main__":
     )
     r2 = cl.classify(ex2)
     assert r2.tema == "configuracion_proyecto", f"Esperaba 'configuracion_proyecto', obtuve '{r2.tema}'"
-    print(f"✓ Tema configuracion_proyecto: tema='{r2.tema}', score={r2.score}")
+    print(f"[OK] Tema configuracion_proyecto: tema='{r2.tema}', score={r2.score}")
 
-    # Test 3: sin coincidencias → general
+    # Test 3: sin coincidencias -> general
     ex3 = Exchange(
         id=3,
         director_msg=Message(seq=3, role=MessageRole.USER, timestamp=5, content="Hola, ¿cómo estás?"),
@@ -236,7 +257,7 @@ if __name__ == "__main__":
     r3 = cl.classify(ex3)
     assert r3.tema == "general"
     assert r3.score == 0
-    print(f"✓ Sin coincidencias: tema='general'")
+    print(f"[OK] Sin coincidencias: tema='general'")
 
     # Test 4: continuidad temática (empate se resuelve con previous_topic)
     ex_empate = Exchange(
@@ -251,7 +272,7 @@ if __name__ == "__main__":
     # Con previous_topic="general": si 'validaciones' gana solo, no cambia
     r_con = cl.classify(ex_empate, previous_topic="general")
     assert r_sin.tema == r_con.tema == "validaciones"
-    print(f"✓ Continuidad: tema='{r_sin.tema}' con/sin previous_topic")
+    print(f"[OK] Continuidad: tema='{r_sin.tema}' con/sin previous_topic")
 
     # Test 5: clasificación de lista con continuidad
     exchanges = [ex1, ex2, ex3]
@@ -259,7 +280,7 @@ if __name__ == "__main__":
     assert exchanges[0].topic == "validaciones"
     assert exchanges[1].topic == "configuracion_proyecto"
     assert exchanges[2].topic == "general"
-    print(f"✓ Clasificación en lote con continuidad: OK")
+    print(f"[OK] Clasificacion en lote con continuidad: OK")
 
     # Test 6: get_rule y get_rules
     rule = cl.get_rule("validaciones")
@@ -267,6 +288,6 @@ if __name__ == "__main__":
     assert cl.get_rule("no_existe") is None
     all_rules = cl.get_rules()
     assert len(all_rules) >= 7
-    print(f"✓ get_rule / get_rules: {len(all_rules)} reglas accesibles")
+    print(f"[OK] get_rule / get_rules: {len(all_rules)} reglas accesibles")
 
-    print("\n✅ classifier.py: todos los tests pasaron")
+    print("\n[PASS] classifier.py: todos los tests pasaron")

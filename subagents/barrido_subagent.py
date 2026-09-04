@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/subagents/barrido_subagent.py
+# contexto_zai/subagents/barrido_subagent.py -- Subagente de barrido: busca informacion sobre un tema en un archivo con pregunta concreta.
 """Subagente de barrido por temas (v3.2).
 
 Un subagente por cada archivo relevante (identificado vía índice).
@@ -7,6 +7,21 @@ responde; si no, no. Cuando todos han respondido, se cierran.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from dataclasses import dataclass
@@ -19,7 +34,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import RecoveryMetadata
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class BarridoResult:
@@ -36,7 +50,6 @@ class BarridoResult:
     pregunta: str
     respuesta: str = ""
     success: bool = True
-
 
 class BarridoSubagent:
     """Subagente que busca información sobre un tema en un archivo.
@@ -120,9 +133,17 @@ Si no hay nada relevante, responde exactamente: "No hay información relevante e
     def __repr__(self) -> str:
         return f"BarridoSubagent(blocks_dir={self._blocks_dir!r})"
 
-
 if __name__ == "__main__":
-    print("=== Validación de barrido_subagent.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    print("=== Validacion de barrido_subagent.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -143,18 +164,18 @@ if __name__ == "__main__":
         r1 = sub.run("bloque_01.md", "pregunta1 sobre X")
         assert r1.success
         assert "Info encontrada" in r1.respuesta
-        print(f"✓ Encuentra información relevante")
+        print(f"[OK] Encuentra informacion relevante")
 
         # Test 2: no encuentra info
         r2 = sub.run("bloque_02.md", "pregunta2 sobre Y")
         assert r2.success
         assert "No hay información" in r2.respuesta
-        print(f"✓ Reporta ausencia de información")
+        print(f"[OK] Reporta ausencia de informacion")
 
         # Test 3: archivo no existe
         r3 = sub.run("no_existe.md", "pregunta")
         assert not r3.success
-        print(f"✓ Archivo no encontrado: error reportado")
+        print(f"[OK] Archivo no encontrado: error reportado")
 
         # Test 4: run_many
         results = sub.run_many([
@@ -162,6 +183,6 @@ if __name__ == "__main__":
             ("bloque_02.md", "pregunta2"),
         ])
         assert len(results) == 2
-        print(f"✓ run_many: {len(results)} resultados")
+        print(f"[OK] run_many: {len(results)} resultados")
 
-    print("\n✅ barrido_subagent.py: todos los tests pasaron")
+    print("\n[PASS] barrido_subagent.py: todos los tests pasaron")

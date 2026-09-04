@@ -1,3 +1,4 @@
+# contexto_zai/processing/content_cleaner.py -- Limpiador de contenido: elimina reasoning JSON, conserva codigo y rutas de archivo.
 """Módulo de limpieza y formateo de contenido de mensajes.
 
 Se encarga de eliminar bloques de razonamiento (reasoning) insertados
@@ -6,6 +7,21 @@ los exchanges como markdown para su inclusión en bloques temáticos.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import json
 import logging
@@ -31,7 +47,6 @@ _REASONING_PATTERN_ALT = re.compile(
     r'\A\s*\{\s*"type"\s*:\s*"reasoning"\s*,\s*"content"\s*:\s*"((?:[^"\\]|\\.)*)"\s*\}\s*',
     re.DOTALL,
 )
-
 
 class ContentCleaner:
     """Limpia contenido de mensajes y formatea exchanges como markdown.
@@ -78,7 +93,7 @@ class ContentCleaner:
             vacía si todo el contenido era razonamiento.
         """
         if not content or not content.strip():
-            logger.debug("Contenido vacío, nada que limpiar")
+            logger.debug("Contenido vacio, nada que limpiar")
             return ""
 
         result = self._remove_reasoning_block(content)
@@ -86,13 +101,13 @@ class ContentCleaner:
 
         if cleaned:
             logger.debug(
-                "Razonamiento eliminado: %d → %d caracteres",
+                "Razonamiento eliminado: %d -> %d caracteres",
                 len(content),
                 len(cleaned),
             )
         else:
             logger.debug(
-                "Todo el contenido era razonamiento (%d chars) → vacío",
+                "Todo el contenido era razonamiento (%d chars) -> vacío",
                 len(content),
             )
 
@@ -107,7 +122,7 @@ class ContentCleaner:
 
         Formato de salida::
 
-            ## Exchange {N} — [{fecha}]
+            ## Exchange {N} -- [{fecha}]
 
             ### Director:
             {contenido del director}
@@ -147,7 +162,7 @@ class ContentCleaner:
 
         # Construir el bloque markdown
         lines: list[str] = [
-            f"## Exchange {num} — [{datetime_str}]",
+            f"## Exchange {num} -- [{datetime_str}]",
             "",
             "### Director:",
             director_content,
@@ -184,7 +199,7 @@ class ContentCleaner:
             return self.clean(content)
         return content
 
-    # ── Métodos internos ──────────────────────────────────────────
+    # -- Métodos internos ------------------------------------------
 
     def _remove_reasoning_block(self, content: str) -> str:
         """Elimina un bloque de razonamiento al inicio del contenido.
@@ -209,7 +224,7 @@ class ContentCleaner:
         """
         stripped = content.strip()
 
-        # Estrategia 1: JSON estricto — todo el contenido es el bloque
+        # Estrategia 1: JSON estricto -- todo el contenido es el bloque
         try:
             data = json.loads(stripped)
             if isinstance(data, dict) and data.get("type") == "reasoning":
@@ -220,12 +235,12 @@ class ContentCleaner:
                     logger.debug("Bloque de razonamiento (JSON completo) eliminado, queda remainder")
                     return remainder.strip()
                 # Solo era razonamiento
-                logger.debug("Bloque de razonamiento (JSON completo) — contenido vacío tras limpieza")
+                logger.debug("Bloque de razonamiento (JSON completo) -- contenido vacío tras limpieza")
                 return ""
         except (json.JSONDecodeError, ValueError):
             pass
 
-        # Estrategia 2: JSON de prefijo — el bloque está al inicio
+        # Estrategia 2: JSON de prefijo -- el bloque está al inicio
         try:
             prefix_data, remainder = self._try_parse_prefix_json(stripped)
             if prefix_data is not None and isinstance(prefix_data, dict):
@@ -243,7 +258,7 @@ class ContentCleaner:
                 logger.debug("Bloque de razonamiento (regex) eliminado, queda contenido visible")
                 return after.strip()
             else:
-                logger.debug("Bloque de razonamiento (regex) — contenido vacío tras limpieza")
+                logger.debug("Bloque de razonamiento (regex) -- contenido vacío tras limpieza")
                 return ""
 
         # No se encontró bloque de razonamiento
@@ -292,10 +307,18 @@ class ContentCleaner:
         except (json.JSONDecodeError, ValueError):
             return None, content
 
-
 if __name__ == "__main__":
-    # ── Validación interna de content_cleaner.py (atómico standalone) ──
-    print("=== Validación de content_cleaner.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de content_cleaner.py (atómico standalone) --
+    print("=== Validacion de content_cleaner.py ===\n")
 
     from contexto_zai.models import Exchange, Message, MessageRole
 
@@ -305,19 +328,21 @@ if __name__ == "__main__":
     texto_con_reasoning = '{"type":"reasoning","content":"pensamiento oculto"} Respuesta visible'
     limpio = cc.clean(texto_con_reasoning)
     assert "visible" in limpio
-    print(f"✓ Eliminación de reasoning: OK")
+    print(f"[OK] Eliminacion de reasoning: OK")
 
     # Test 2: conservar código en bloques triple backtick
     texto_con_codigo = "Aquí el código:\n```python\nprint('hola')\n```\nFin"
     limpio2 = cc.clean(texto_con_codigo)
     assert "print('hola')" in limpio2
-    print(f"✓ Conservación de código: OK")
+    print(f"[OK] Conservacion de codigo: OK")
 
-    # Test 3: conservar rutas de archivos
-    texto_con_rutas = "Modifiqué /home/z/my-project/file.py y otro/path/to/file.ts"
+    # Test 3: conservar rutas de archivos (multiplataforma: usa Path)
+    from pathlib import Path as _Path
+    ruta_ejemplo = str(_Path.home() / "project" / "file.py")
+    texto_con_rutas = f"Modifiqué {ruta_ejemplo} y otro/path/to/file.ts"
     limpio3 = cc.clean(texto_con_rutas)
-    assert "/home/z/my-project/file.py" in limpio3
-    print(f"✓ Conservación de rutas: OK")
+    assert ruta_ejemplo in limpio3
+    print(f"[OK] Conservacion de rutas: OK")
 
     # Test 4: formatear exchange como markdown
     ex = Exchange(
@@ -331,6 +356,6 @@ if __name__ == "__main__":
     md = cc.format_exchange(ex, exchange_num=1)
     assert "Pregunta del director" in md
     assert "Respuesta del agente" in md
-    print(f"✓ Formateo de exchange como markdown: OK")
+    print(f"[OK] Formateo de exchange como markdown: OK")
 
-    print("\n✅ content_cleaner.py: todos los tests pasaron")
+    print("\n[PASS] content_cleaner.py: todos los tests pasaron")

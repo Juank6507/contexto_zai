@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/detection/token_counter.py
+# contexto_zai/detection/token_counter.py -- Contador preventivo de tokens: dispara recuperacion al 90% de capacidad util.
 """Contador preventivo de tokens consumidos (v3.2).
 
 Estima los tokens consumidos por el agente desde la última recuperación.
@@ -10,6 +10,21 @@ Atómico standalone: importa config y models, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -19,7 +34,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
-
 
 class TokenCounter:
     """Estima tokens consumidos y dispara recuperación preventiva.
@@ -51,7 +65,7 @@ class TokenCounter:
             TOKEN_LIMITS.capacidad_util,
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def estimate(self, exchanges: list["Exchange"]) -> int:
         """Estima los tokens consumidos por una lista de intercambios.
@@ -65,7 +79,7 @@ class TokenCounter:
         total_chars = sum(ex.total_chars for ex in exchanges)
         self._last_estimated_tokens = int(total_chars / TOKEN_LIMITS.conversion_rate)
         logger.debug(
-            "Estimación: %d intercambios, %d chars, ~%d tokens",
+            "Estimacion: %d intercambios, %d chars, ~%d tokens",
             len(exchanges),
             total_chars,
             self._last_estimated_tokens,
@@ -102,7 +116,7 @@ class TokenCounter:
             return 0.0
         return (tokens / self._threshold_tokens) * 100
 
-    # ── Propiedades ────────────────────────────────────────────────
+    # -- Propiedades ------------------------------------------------
 
     @property
     def threshold_tokens(self) -> int:
@@ -117,10 +131,18 @@ class TokenCounter:
     def __repr__(self) -> str:
         return f"TokenCounter(threshold={self._threshold_tokens} tokens)"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de token_counter.py ──
-    print("=== Validación de token_counter.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de token_counter.py --
+    print("=== Validacion de token_counter.py ===\n")
 
     from contexto_zai.models import Exchange, Message, MessageRole
 
@@ -134,12 +156,12 @@ if __name__ == "__main__":
     ]
     tokens = counter.estimate(exchanges)
     assert tokens == int(2000 / 3.5)  # 571 tokens
-    print(f"✓ Estimación: 2 intercambios = {tokens} tokens")
+    print(f"[OK] Estimacion: 2 intercambios = {tokens} tokens")
 
     # Test 2: should_trigger con umbral bajo
     # Threshold es 50% de 102400 = 51200
     assert not counter.should_trigger()  # 571 < 51200
-    print(f"✓ should_trigger: no dispara con pocos tokens")
+    print(f"[OK] should_trigger: no dispara con pocos tokens")
 
     # Test 3: disparo cuando se supera el umbral
     big_exchanges = [
@@ -148,27 +170,27 @@ if __name__ == "__main__":
     ]
     big_tokens = counter.estimate(big_exchanges)
     assert counter.should_trigger()
-    print(f"✓ should_trigger: dispara con {big_tokens} tokens (> {counter.threshold_tokens})")
+    print(f"[OK] should_trigger: dispara con {big_tokens} tokens (> {counter.threshold_tokens})")
 
     # Test 4: remaining_tokens
     remaining = counter.remaining_tokens(current_tokens=10000)
     assert remaining == counter.threshold_tokens - 10000
-    print(f"✓ remaining_tokens: {remaining} (con 10000 consumidos)")
+    print(f"[OK] remaining_tokens: {remaining} (con 10000 consumidos)")
 
     # Test 5: utilization_pct
     pct = counter.utilization_pct(current_tokens=counter.threshold_tokens // 2)
     assert abs(pct - 50.0) < 0.1
-    print(f"✓ utilization_pct: {pct:.1f}% (esperado 50%)")
+    print(f"[OK] utilization_pct: {pct:.1f}% (esperado 50%)")
 
     # Test 6: umbral por defecto (90%)
     default_counter = TokenCounter()
     assert default_counter.threshold_tokens == int(102_400 * 0.90)
-    print(f"✓ Umbral por defecto: {default_counter.threshold_tokens} tokens (90% de capacidad útil)")
+    print(f"[OK] Umbral por defecto: {default_counter.threshold_tokens} tokens (90% de capacidad util)")
 
     # Test 7: lista vacía
     assert counter.estimate([]) == 0
     assert not counter.should_trigger()
-    print(f"✓ Lista vacía: 0 tokens, no dispara")
+    print(f"[OK] Lista vacia: 0 tokens, no dispara")
 
     # Test 8: propiedades (usar un counter con estimación conocida)
     counter_with_estimation = TokenCounter(threshold_pct=0.5)
@@ -176,6 +198,6 @@ if __name__ == "__main__":
         Exchange(id=1, director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="x" * 1000), topic="general", start_timestamp=1, end_timestamp=2),
     ])
     assert counter_with_estimation.last_estimated_tokens > 0
-    print(f"✓ last_estimated_tokens: {counter_with_estimation.last_estimated_tokens}")
+    print(f"[OK] last_estimated_tokens: {counter_with_estimation.last_estimated_tokens}")
 
-    print("\n✅ token_counter.py: todos los tests pasaron")
+    print("\n[PASS] token_counter.py: todos los tests pasaron")

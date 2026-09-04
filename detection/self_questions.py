@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/detection/self_questions.py
+# contexto_zai/detection/self_questions.py -- Auto-preguntas tras entregas: verifica archivo, decision y siguiente paso.
 """Auto-preguntas tras entregas relevantes (v3.2).
 
 Después de cada entrega importante, el agente se hace tres preguntas
@@ -14,6 +14,21 @@ Atómico standalone: importa config, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
@@ -24,7 +39,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class SelfQuestionResult:
@@ -43,7 +57,6 @@ class SelfQuestionResult:
     def should_trigger(self) -> bool:
         """True si alguna pregunta falló."""
         return len(self.failures) > 0
-
 
 class SelfQuestions:
     """Hace auto-preguntas tras entregas para detectar pérdida de contexto.
@@ -71,7 +84,7 @@ class SelfQuestions:
             "SelfQuestions inicializado: %d preguntas", len(self._questions)
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def ask(
         self,
@@ -104,7 +117,7 @@ class SelfQuestions:
 
         if result.should_trigger:
             logger.info(
-                "Self-preguntas: %d/%d fallaron → disparar recuperación",
+                "Self-preguntas: %d/%d fallaron -> disparar recuperacion",
                 len(failures), len(answers),
             )
         else:
@@ -162,14 +175,22 @@ class SelfQuestions:
     def __repr__(self) -> str:
         return f"SelfQuestions(questions={len(self._questions)})"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de self_questions.py ──
-    print("=== Validación de self_questions.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de self_questions.py --
+    print("=== Validacion de self_questions.py ===\n")
 
     sq = SelfQuestions()
 
-    # Test 1: todas respondidas → no dispara
+    # Test 1: todas respondidas -> no dispara
     result = sq.ask(
         archivo_actual="server.py",
         decision_actual="usar PriorityQueue",
@@ -177,15 +198,15 @@ if __name__ == "__main__":
     )
     assert not result.should_trigger
     assert len(result.failures) == 0
-    print(f"✓ Todas respondidas: no dispara")
+    print(f"[OK] Todas respondidas: no dispara")
 
-    # Test 2: ninguna respondida → dispara
+    # Test 2: ninguna respondida -> dispara
     result2 = sq.ask()
     assert result2.should_trigger
     assert len(result2.failures) == 3
-    print(f"✓ Ninguna respondida: dispara ({len(result2.failures)} fallos)")
+    print(f"[OK] Ninguna respondida: dispara ({len(result2.failures)} fallos)")
 
-    # Test 3: una falla → dispara
+    # Test 3: una falla -> dispara
     result3 = sq.ask(
         archivo_actual="server.py",
         decision_actual=None,  # falla
@@ -193,7 +214,7 @@ if __name__ == "__main__":
     )
     assert result3.should_trigger
     assert len(result3.failures) == 1
-    print(f"✓ Una falla: dispara")
+    print(f"[OK] Una falla: dispara")
 
     # Test 4: respuesta vacía cuenta como falla
     result4 = sq.ask(
@@ -202,7 +223,7 @@ if __name__ == "__main__":
         siguiente_paso="continuar",
     )
     assert result4.should_trigger
-    print(f"✓ Respuesta vacía: cuenta como falla")
+    print(f"[OK] Respuesta vacia: cuenta como falla")
 
     # Test 5: ask_from_context con contexto completo
     result5 = sq.ask_from_context(
@@ -212,22 +233,22 @@ if __name__ == "__main__":
         current_topic="planificador",
     )
     assert not result5.should_trigger
-    print(f"✓ ask_from_context con contexto: no dispara")
+    print(f"[OK] ask_from_context con contexto: no dispara")
 
     # Test 6: ask_from_context sin contexto
     result6 = sq.ask_from_context()
     assert result6.should_trigger
-    print(f"✓ ask_from_context sin contexto: dispara")
+    print(f"[OK] ask_from_context sin contexto: dispara")
 
     # Test 7: ask_from_context parcial
     result7 = sq.ask_from_context(current_file="server.py")
     # Solo archivo, falta decisión y siguiente paso
     assert result7.should_trigger
     assert len(result7.failures) == 2
-    print(f"✓ ask_from_context parcial: dispara ({len(result7.failures)} fallos)")
+    print(f"[OK] ask_from_context parcial: dispara ({len(result7.failures)} fallos)")
 
     # Test 8: preguntas por defecto cargadas
     assert len(sq.questions) == 3
-    print(f"✓ Preguntas por defecto: {sq.questions}")
+    print(f"[OK] Preguntas por defecto: {sq.questions}")
 
-    print("\n✅ self_questions.py: todos los tests pasaron")
+    print("\n[PASS] self_questions.py: todos los tests pasaron")

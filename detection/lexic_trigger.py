@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/detection/lexic_trigger.py
+# contexto_zai/detection/lexic_trigger.py -- Disparador lexico: detecta frases del Director que indican perdida de contexto.
 """Disparador léxico de pérdida de contexto (v3.2).
 
 Detecta frases del Director que indican que el agente ha perdido
@@ -10,6 +10,21 @@ Atómico standalone: importa config, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 import re
 from typing import Optional
@@ -17,7 +32,6 @@ from typing import Optional
 from contexto_zai.config import LEXIC_TRIGGER_PHRASES
 
 logger = logging.getLogger(__name__)
-
 
 class LexicTrigger:
     """Detecta pérdida de contexto analizando el lenguaje del Director.
@@ -48,7 +62,7 @@ class LexicTrigger:
             len(self._phrases),
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def detect(self, message: str) -> bool:
         """Detecta si el mensaje del Director contiene frases disparadoras.
@@ -99,10 +113,18 @@ class LexicTrigger:
     def __repr__(self) -> str:
         return f"LexicTrigger(phrases={len(self._phrases)})"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de lexic_trigger.py ──
-    print("=== Validación de lexic_trigger.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de lexic_trigger.py --
+    print("=== Validacion de lexic_trigger.py ===\n")
 
     lt = LexicTrigger()
 
@@ -110,24 +132,24 @@ if __name__ == "__main__":
     assert lt.detect("Ya te dije que esto es así")
     assert lt.detect("no repitas eso otra vez")
     assert lt.detect("estás olvidando lo que acordamos")
-    print(f"✓ Detección básica: frases conocidas detectadas")
+    print(f"[OK] Deteccion basica: frases conocidas detectadas")
 
     # Test 2: case-insensitive
     assert lt.detect("YA TE DIJE")
     assert lt.detect("ya te dije")
-    print(f"✓ Case-insensitive: OK")
+    print(f"[OK] Case-insensitive: OK")
 
     # Test 3: mensaje neutro no dispara
     assert not lt.detect("Ejecuta el pytest de server.py")
     assert not lt.detect("Hola, ¿cómo estás?")
-    print(f"✓ Mensaje neutro: no dispara")
+    print(f"[OK] Mensaje neutro: no dispara")
 
     # Test 4: detect_with_context devuelve frases
     detected, phrases = lt.detect_with_context("Ya te dije que no repitas eso")
     assert detected
     assert "ya te dije" in phrases
     assert "no repitas" in phrases
-    print(f"✓ detect_with_context: {phrases}")
+    print(f"[OK] detect_with_context: {phrases}")
 
     # Test 5: mensaje vacío
     assert not lt.detect("")
@@ -135,16 +157,16 @@ if __name__ == "__main__":
     detected_empty, phrases_empty = lt.detect_with_context("")
     assert not detected_empty
     assert phrases_empty == []
-    print(f"✓ Mensaje vacío: manejado correctamente")
+    print(f"[OK] Mensaje vacio: manejado correctamente")
 
     # Test 6: add_phrase
     initial_count = len(lt.phrases)
     lt.add_phrase("nueva frase disparadora")
     assert len(lt.phrases) == initial_count + 1
-    print(f"✓ add_phrase: añadida correctamente")
+    print(f"[OK] add_phrase: anadida correctamente")
 
     # Test 7: frases por defecto cargadas
     assert len(lt.phrases) >= 10
-    print(f"✓ Frases por defecto: {len(lt.phrases)} cargadas")
+    print(f"[OK] Frases por defecto: {len(lt.phrases)} cargadas")
 
-    print("\n✅ lexic_trigger.py: todos los tests pasaron")
+    print("\n[PASS] lexic_trigger.py: todos los tests pasaron")

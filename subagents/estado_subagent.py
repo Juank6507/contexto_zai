@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/subagents/estado_subagent.py
+# contexto_zai/subagents/estado_subagent.py -- Subagente de estado actual: lee el bloque del tema del ultimo intercambio y extrae contexto.
 """Subagente de estado actual (v3.2).
 
 Lee el archivo temático que contiene el tema del último intercambio
@@ -7,6 +7,21 @@ Entrega el contexto completo al agente principal y desaparece.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from dataclasses import dataclass
@@ -19,7 +34,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import Exchange, RecoveryMetadata
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class EstadoContext:
@@ -34,7 +48,6 @@ class EstadoContext:
     tema: str
     archivo_leido: str
     contexto: str
-
 
 class EstadoSubagent:
     """Subagente que lee el bloque del tema del último intercambio.
@@ -65,7 +78,7 @@ class EstadoSubagent:
 
         Args:
             exchange: Último intercambio del chat.
-            metadata: Metadata con mapeo tema→archivo.
+            metadata: Metadata con mapeo tema->archivo.
 
         Returns:
             EstadoContext con el contexto extraído.
@@ -84,7 +97,7 @@ class EstadoSubagent:
         # Si no se encuentra archivo, devolver contexto vacío
         if not archivo:
             logger.warning(
-                "No se encontró archivo para tema '%s'. Directorio: %s",
+                "No se encontro archivo para tema '%s'. Directorio: %s",
                 tema, self._blocks_dir,
             )
             return EstadoContext(
@@ -140,10 +153,18 @@ principal pueda continuar el trabajo sin ambigüedad."""
     def __repr__(self) -> str:
         return f"EstadoSubagent(blocks_dir={self._blocks_dir!r})"
 
-
 if __name__ == "__main__":
-    # ── Validación interna ──
-    print("=== Validación de estado_subagent.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna --
+    print("=== Validacion de estado_subagent.py ===\n")
 
     import tempfile
     from contexto_zai.models import Exchange, Message, MessageRole, RecoveryMetadata
@@ -171,7 +192,7 @@ if __name__ == "__main__":
         assert ctx.tema == "validaciones"
         assert "Contexto completo" in ctx.contexto
         assert "bloque_01.md" in ctx.archivo_leido
-        print(f"✓ Contexto extraído del archivo correcto")
+        print(f"[OK] Contexto extraido del archivo correcto")
 
     # Test 2: sin archivo encontrado
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -180,9 +201,9 @@ if __name__ == "__main__":
         ctx = sub.run(ex)
         assert ctx.archivo_leido == ""
         assert "No se encontró" in ctx.contexto
-        print(f"✓ Sin archivo: mensaje de error")
+        print(f"[OK] Sin archivo: mensaje de error")
 
-    # Test 3: con metadata que mapea tema → archivo
+    # Test 3: con metadata que mapea tema -> archivo
     with tempfile.TemporaryDirectory() as tmpdir:
         Path(tmpdir, "bloque_02.md").write_text("...", encoding="utf-8")
         meta = RecoveryMetadata()
@@ -191,6 +212,6 @@ if __name__ == "__main__":
         sub = EstadoSubagent(launcher=launcher, blocks_dir=tmpdir)
         ctx = sub.run(ex, metadata=meta)
         assert "bloque_02.md" in ctx.archivo_leido
-        print(f"✓ Con metadata: archivo correcto desde mapeo")
+        print(f"[OK] Con metadata: archivo correcto desde mapeo")
 
-    print("\n✅ estado_subagent.py: todos los tests pasaron")
+    print("\n[PASS] estado_subagent.py: todos los tests pasaron")

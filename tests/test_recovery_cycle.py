@@ -1,4 +1,5 @@
-# Destino: /home/z/my-project/tests/test_recovery_cycle.py
+# tests/test_recovery_cycle.py -- Test de integracion: RecoveryCycle completo con API simulada (mocks de AuthClient y ChatClient).
+
 """Test de integración: RecoveryCycle con API simulada (v3.2).
 
 Valida el ciclo completo de recuperación (pasos 5-9) usando mocks
@@ -18,6 +19,21 @@ Cubre:
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import json
 import sys
 import tempfile
@@ -29,7 +45,6 @@ sys.path.insert(0, str(WORKSPACE_ROOT))
 
 from contexto_zai.models import Message, MessageRole
 from contexto_zai.process.recovery_cycle import RecoveryCycle
-
 
 def _patched_context_manager(mock_class, **method_returns):
     """Configura un mock de clase para que funcione como context manager.
@@ -44,7 +59,6 @@ def _patched_context_manager(mock_class, **method_returns):
         getattr(instance, method_name).return_value = return_value
     mock_class.return_value = instance
     return instance
-
 
 def test_recovery_cycle_success_with_mocked_api():
     """Test 1: ciclo exitoso con API simulada."""
@@ -74,9 +88,8 @@ def test_recovery_cycle_success_with_mocked_api():
         assert result.exchanges_count == 2
         assert result.share_id == "fake-share-id"
         assert result.files_count > 0
-        print(f"  ✓ {result.messages_count} msgs, {result.exchanges_count} exchanges, {result.files_count} archivos")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] {result.messages_count} msgs, {result.exchanges_count} exchanges, {result.files_count} archivos")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_writes_files_in_workspace_and_download():
     """Test 2: archivos escritos en workspace y download."""
@@ -99,9 +112,8 @@ def test_recovery_cycle_writes_files_in_workspace_and_download():
         dl_files = list(dl.glob("*.md"))
         assert len(ws_files) == result.files_count
         assert len(dl_files) == result.files_count
-        print(f"  ✓ workspace: {len(ws_files)} archivos, download: {len(dl_files)} archivos")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] workspace: {len(ws_files)} archivos, download: {len(dl_files)} archivos")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_metadata_correct():
     """Test 3: metadata generada correctamente."""
@@ -127,9 +139,8 @@ def test_recovery_cycle_metadata_correct():
         assert meta["total_exchanges"] == 1
         assert len(meta["tema_a_archivo"]) > 0
         assert meta["ultimo_timestamp"] == 110
-        print(f"  ✓ Metadata: chat_id={meta['chat_id']}, temas={len(meta['tema_a_archivo'])}")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Metadata: chat_id={meta['chat_id']}, temas={len(meta['tema_a_archivo'])}")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_estado_8_secciones():
     """Test 4: estado actual con 8 secciones."""
@@ -150,13 +161,12 @@ def test_recovery_cycle_estado_8_secciones():
         estado = (ws / "00_estado_actual.md").read_text(encoding="utf-8")
         for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
             assert f"Sección {section}" in estado, f"Falta sección {section}"
-        print(f"  ✓ 8 secciones presentes")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] 8 secciones presentes")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_indice_with_mapping():
-    """Test 5: índice con tabla mapeo tema→archivo."""
-    print("\n=== Test 5: índice con mapeo ===")
+    """Test 5: índice con tabla mapeo tema->archivo."""
+    print("\n=== Test 5: indice con mapeo ===")
     fake_messages = [
         Message(seq=1, role=MessageRole.USER, timestamp=100, content="pytest"),
         Message(seq=2, role=MessageRole.ASSISTANT, timestamp=110, content="OK"),
@@ -171,14 +181,13 @@ def test_recovery_cycle_indice_with_mapping():
             cycle.run()
 
         indice = (ws / "01_indice_recuperacion.md").read_text(encoding="utf-8")
-        assert "Mapeo tema → archivo" in indice
-        print(f"  ✓ Índice con tabla mapeo")
-        print(f"  ✅ PASÓ")
-
+        assert "Mapeo tema -> archivo" in indice
+        print(f"  [OK] Indice con tabla mapeo")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_unicity():
     """Test 6: unicidad temática tras el ciclo."""
-    print("\n=== Test 6: unicidad temática ===")
+    print("\n=== Test 6: unicidad tematica ===")
     fake_messages = [
         Message(seq=1, role=MessageRole.USER, timestamp=100, content="pytest"),
         Message(seq=2, role=MessageRole.ASSISTANT, timestamp=110, content="OK"),
@@ -204,9 +213,8 @@ def test_recovery_cycle_unicity():
         for tema, archivo in tema_archivo.items():
             # El tema solo debe estar mapeado a un archivo
             assert tema_archivo[tema] == archivo
-        print(f"  ✓ Unicidad: cada tema en un solo archivo")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Unicidad: cada tema en un solo archivo")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_api_error():
     """Test 7: error de API capturado."""
@@ -224,13 +232,12 @@ def test_recovery_cycle_api_error():
 
         assert not result.success
         assert "API caída" in result.error
-        print(f"  ✓ Error de API capturado: {result.error}")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Error de API capturado: {result.error}")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_empty_messages():
     """Test 8: lista vacía de mensajes."""
-    print("\n=== Test 8: lista vacía de mensajes ===")
+    print("\n=== Test 8: lista vacia de mensajes ===")
     with tempfile.TemporaryDirectory() as tmpdir:
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
@@ -241,13 +248,12 @@ def test_recovery_cycle_empty_messages():
 
         assert not result.success
         assert "No se extrajeron mensajes" in result.error
-        print(f"  ✓ Lista vacía: error correcto")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] Lista vacia: error correcto")
+        print(f"  [PASS] PASO")
 
 def test_recovery_cycle_no_block_exceeds_70k():
     """Test 9: ningún bloque supera 70K tokens con mensajes grandes."""
-    print("\n=== Test 9: límite 70K tokens por bloque ===")
+    print("\n=== Test 9: limite 70K tokens por bloque ===")
     # 50 mensajes grandes en 5 temas
     fake_messages = []
     for i in range(50):
@@ -274,13 +280,12 @@ def test_recovery_cycle_no_block_exceeds_70k():
             chars = len(b.read_text(encoding="utf-8"))
             tokens = chars / 3.5
             assert tokens <= 70_000, f"Bloque {b.name} supera 70K: {tokens:.0f}"
-        print(f"  ✓ {len(bloques)} bloques, ninguno supera 70K tokens")
-        print(f"  ✅ PASÓ")
-
+        print(f"  [OK] {len(bloques)} bloques, ninguno supera 70K tokens")
+        print(f"  [PASS] PASO")
 
 def main():
     print("=" * 60)
-    print("TEST DE INTEGRACIÓN: RecoveryCycle (con API simulada)")
+    print("TEST DE INTEGRACION: RecoveryCycle (con API simulada)")
     print("=" * 60)
     tests = [
         test_recovery_cycle_success_with_mocked_api,
@@ -300,13 +305,21 @@ def main():
             test()
             passed += 1
         except (AssertionError, Exception) as e:
-            print(f"  ❌ FALLÓ: {e}")
+            print(f"  [FAIL] FALLO: {e}")
             failed += 1
     print(f"\n{'=' * 60}")
     print(f"RESULTADO: {passed} pasaron, {failed} fallaron de {len(tests)} tests")
     print(f"{'=' * 60}")
     return 0 if failed == 0 else 1
 
-
 if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
     sys.exit(main())

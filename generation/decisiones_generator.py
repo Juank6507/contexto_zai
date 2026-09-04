@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/generation/decisiones_generator.py
+# contexto_zai/generation/decisiones_generator.py -- Generador del archivo 02_decisiones_clave.md: delegador a subagente LLM (no regex).
 """Generador del archivo 02_decisiones_clave.md (v3.2).
 
 Delegador: en v3.2 las decisiones se extraen con un subagente LLM,
@@ -18,6 +18,21 @@ Tamaño máximo: 12K tokens (~42KB chars).
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -29,10 +44,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # Tipo del callback del subagente LLM
 DecisionExtractor = Callable[[list["Exchange"]], list[Decision]]
-
 
 class DecisionesGenerator:
     """Genera el archivo 02_decisiones_clave.md.
@@ -64,10 +77,10 @@ class DecisionesGenerator:
         self._extractor = extractor
         logger.debug(
             "DecisionesGenerator inicializado: max_chars=%d, extractor=%s",
-            max_chars, "sí" if extractor else "no (offline)",
+            max_chars, "si" if extractor else "no (offline)",
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def generate(
         self,
@@ -103,14 +116,14 @@ class DecisionesGenerator:
         if self._extractor is not None:
             new_decisions = self._extractor(new_exchanges)
             logger.info(
-                "Extractor devolvió %d decisiones de %d intercambios",
+                "Extractor devolvio %d decisiones de %d intercambios",
                 len(new_decisions), len(new_exchanges),
             )
         else:
             # Modo offline: placeholder
             logger.warning(
                 "Modo offline: no hay extractor de decisiones. "
-                "El archivo 02_decisiones_clave.md tendrá un placeholder."
+                "El archivo 02_decisiones_clave.md tendra un placeholder."
             )
             new_decisions = []
 
@@ -128,7 +141,7 @@ class DecisionesGenerator:
         # Truncar si excede el límite
         if len(content) > self._max_chars:
             logger.warning(
-                "Decisiones excede límite (%d > %d chars), truncando",
+                "Decisiones excede limite (%d > %d chars), truncando",
                 len(content), self._max_chars,
             )
             content = content[:self._max_chars - 50] + "\n\n... (truncado por límite)\n"
@@ -147,7 +160,7 @@ class DecisionesGenerator:
         mode = "online" if self._extractor else "offline"
         return f"DecisionesGenerator(mode={mode!r})"
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _merge_and_deduplicate(
         self,
@@ -173,7 +186,7 @@ class DecisionesGenerator:
             # Deduplicar por título
             title_key = d.title.lower().strip() if d.title else ""
             if title_key and title_key in seen_titles:
-                logger.debug("Decisión duplicada (por título): %s", d.title)
+                logger.debug("Decision duplicada (por titulo): %s", d.title)
                 continue
             seen_titles.add(title_key)
 
@@ -222,7 +235,7 @@ class DecisionesGenerator:
 
         for d in decisions:
             lines.extend([
-                f"## {d.id} — {d.title}",
+                f"## {d.id} -- {d.title}",
                 f"- **Cuándo:** {d.timestamp}",
                 f"- **Tema:** {d.tema}" if d.tema else "",
                 f"- **Decisión:** {d.decision}" if d.decision else "",
@@ -241,15 +254,23 @@ class DecisionesGenerator:
         lines: list[str] = []
         for d in decisions[:15]:  # Máximo 15 en el resumen
             title = d.title or d.decision[:80] if d.decision else "Sin título"
-            lines.append(f"- {d.id} — {title}")
+            lines.append(f"- {d.id} -- {title}")
         if len(decisions) > 15:
             lines.append(f"- ... y {len(decisions) - 15} más (ver 02_decisiones_clave.md)")
         return "\n".join(lines)
 
-
 if __name__ == "__main__":
-    # ── Validación interna de decisiones_generator.py ──
-    print("=== Validación de decisiones_generator.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de decisiones_generator.py --
+    print("=== Validacion de decisiones_generator.py ===\n")
 
     from contexto_zai.models import Decision, Exchange, Message, MessageRole
 
@@ -262,7 +283,7 @@ if __name__ == "__main__":
     content, summary = gen_off.generate(exchanges)
     assert "Sin decisiones registradas" in content
     assert "No se identificaron" in summary
-    print(f"✓ Modo offline: placeholder correcto")
+    print(f"[OK] Modo offline: placeholder correcto")
 
     # Test 2: modo online con extractor simulado
     def extractor_mock(exs):
@@ -284,14 +305,14 @@ if __name__ == "__main__":
     assert "D01" in content2  # ID autoasignado
     assert "planificador" in content2
     assert "D01" in summary2
-    print(f"✓ Modo online: extractor simulado funciona")
+    print(f"[OK] Modo online: extractor simulado funciona")
 
     # Test 3: deduplicación por título
     existing = [Decision(id="D01", timestamp=0, title="Usar PriorityQueue", decision="X")]
     content3, _ = gen_on.generate(exchanges, existing_decisions=existing)
     # No debería añadir otra vez la misma decisión
     assert content3.count("Usar PriorityQueue") == 1
-    print(f"✓ Deduplicación: decisión repetida no se añade")
+    print(f"[OK] Deduplicacion: decision repetida no se anade")
 
     # Test 4: modo incremental (filtrar por timestamp)
     exchanges_with_ts = [
@@ -301,7 +322,7 @@ if __name__ == "__main__":
     content4, _ = gen_on.generate(exchanges_with_ts, from_timestamp=15)
     # Solo procesa el exchange con ts > 15
     # El extractor mock siempre devuelve lo mismo, así que solo verificamos que se llama
-    print(f"✓ Modo incremental: filtrado por timestamp OK")
+    print(f"[OK] Modo incremental: filtrado por timestamp OK")
 
     # Test 5: renumeración de IDs continúa secuencia
     existing2 = [Decision(id="D05", timestamp=0, title="Vieja", decision="X")]
@@ -309,11 +330,11 @@ if __name__ == "__main__":
     content5, _ = gen_on.generate(new_exs, existing_decisions=existing2)
     # La nueva decisión debe tener ID D06
     assert "D06" in content5
-    print(f"✓ Renumeración: nueva decisión con ID D06")
+    print(f"[OK] Renumeracion: nueva decision con ID D06")
 
     # Test 6: repr muestra modo
     assert "offline" in repr(gen_off)
     assert "online" in repr(gen_on)
-    print(f"✓ repr: {gen_off!r}, {gen_on!r}")
+    print(f"[OK] repr: {gen_off!r}, {gen_on!r}")
 
-    print("\n✅ decisiones_generator.py: todos los tests pasaron")
+    print("\n[PASS] decisiones_generator.py: todos los tests pasaron")

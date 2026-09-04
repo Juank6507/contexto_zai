@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/subagents/mantenimiento_subagent.py
+# contexto_zai/subagents/mantenimiento_subagent.py -- Subagente de mantenimiento: actualizacion incremental de archivos de recuperacion.
 """Subagente de mantenimiento (actualización incremental) (v3.2).
 
 Lee la metadata para saber el último timestamp procesado, extrae solo
@@ -7,6 +7,21 @@ Actualiza la metadata con el nuevo timestamp.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from dataclasses import dataclass
@@ -19,7 +34,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import Exchange, RecoveryMetadata
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class MantenimientoResult:
@@ -36,7 +50,6 @@ class MantenimientoResult:
     new_exchanges_count: int = 0
     new_ultimo_timestamp: float = 0.0
     error: str = ""
-
 
 class MantenimientoSubagent:
     """Subagente de actualización incremental.
@@ -96,7 +109,7 @@ class MantenimientoSubagent:
             )
 
             if not new_messages:
-                logger.info("No hay mensajes nuevos desde última activación")
+                logger.info("No hay mensajes nuevos desde ultima activacion")
                 return MantenimientoResult(
                     success=True,
                     new_exchanges_count=0,
@@ -124,9 +137,17 @@ class MantenimientoSubagent:
     def __repr__(self) -> str:
         return "MantenimientoSubagent()"
 
-
 if __name__ == "__main__":
-    print("=== Validación de mantenimiento_subagent.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    print("=== Validacion de mantenimiento_subagent.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -153,13 +174,13 @@ if __name__ == "__main__":
         assert result.success
         assert result.new_exchanges_count == 3  # 3 mensajes nuevos (ts=0 al inicio)
         assert result.new_ultimo_timestamp == 300
-        print(f"✓ Mantenimiento exitoso: 3 mensajes nuevos, último ts={result.new_ultimo_timestamp}")
+        print(f"[OK] Mantenimiento exitoso: 3 mensajes nuevos, ultimo ts={result.new_ultimo_timestamp}")
 
         # Verificar que metadata se actualizó
         meta = mgr.read()
         assert meta.ultimo_timestamp == 300
         assert meta.ultima_activacion != ""
-        print(f"✓ Metadata actualizada: ultimo_timestamp={meta.ultimo_timestamp}")
+        print(f"[OK] Metadata actualizada: ultimo_timestamp={meta.ultimo_timestamp}")
 
     # Test 2: sin mensajes nuevos
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -178,7 +199,7 @@ if __name__ == "__main__":
         assert result2.success
         assert result2.new_exchanges_count == 0
         assert result2.new_ultimo_timestamp == 1000  # no cambió
-        print(f"✓ Sin mensajes nuevos: 0 intercambios procesados")
+        print(f"[OK] Sin mensajes nuevos: 0 intercambios procesados")
 
     # Test 3: error en chat_client
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -192,6 +213,6 @@ if __name__ == "__main__":
         result3 = sub3.run(chat_id="abc", share_id="def")
         assert not result3.success
         assert "API caída" in result3.error
-        print(f"✓ Error en chat_client: capturado correctamente")
+        print(f"[OK] Error en chat_client: capturado correctamente")
 
-    print("\n✅ mantenimiento_subagent.py: todos los tests pasaron")
+    print("\n[PASS] mantenimiento_subagent.py: todos los tests pasaron")

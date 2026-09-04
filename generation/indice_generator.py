@@ -1,18 +1,33 @@
-# Destino: /home/z/my-project/contexto_zai/generation/indice_generator.py
+# contexto_zai/generation/indice_generator.py -- Generador del archivo 01_indice_recuperacion.md con tabla mapeo tema->archivo.
 """Generador del archivo 01_indice_recuperacion.md (v3.2).
 
-Produce el índice con el mapeo explícito `tema → archivo`, no
+Produce el índice con el mapeo explícito `tema -> archivo`, no
 solo una lista de bloques por descripción como en v1.0.
 
 Diferencia crítica respecto a v1.0:
 - v1.0: lista de bloques por descripción.
-- v3.2: tabla `tema → archivo` consultable, incluyendo subtemas
+- v3.2: tabla `tema -> archivo` consultable, incluyendo subtemas
   derivados de subdivisiones.
 
 Tamaño máximo: 8K tokens (~28KB chars).
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from typing import TYPE_CHECKING, Optional
@@ -25,9 +40,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class IndiceGenerator:
-    """Genera el archivo 01_indice_recuperacion.md con mapeo tema→archivo.
+    """Genera el archivo 01_indice_recuperacion.md con mapeo tema->archivo.
 
     Args:
         max_chars: Límite máximo de caracteres (por defecto 28K).
@@ -44,7 +58,7 @@ class IndiceGenerator:
         self._max_chars = max_chars
         logger.debug("IndiceGenerator inicializado: max_chars=%d", max_chars)
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def generate(
         self,
@@ -58,7 +72,7 @@ class IndiceGenerator:
         Args:
             blocks: Lista de ThematicBlock generados.
             chat_label: Etiqueta del chat.
-            metadata: Metadata con el mapeo tema→archivo (opcional).
+            metadata: Metadata con el mapeo tema->archivo (opcional).
                 Si se proporciona, se usa para construir la tabla.
                 Si no, se construye a partir de los blocks.
             decisiones_summary: Resumen de decisiones (opcional).
@@ -66,12 +80,12 @@ class IndiceGenerator:
         Returns:
             Contenido markdown del índice.
         """
-        # Construir mapeo tema → archivo
+        # Construir mapeo tema -> archivo
         tema_a_archivo = self._build_tema_a_archivo(blocks, metadata)
 
         # Construir contenido
         lines: list[str] = [
-            f"# Índice de Recuperación — {chat_label or 'Chat'}",
+            f"# Índice de Recuperación -- {chat_label or 'Chat'}",
             "",
             "## Instrucción",
             "",
@@ -88,7 +102,7 @@ class IndiceGenerator:
             "5. El subagente devolverá una respuesta concisa.",
             "6. Si necesitas otro tema, repite desde el paso 3.",
             "",
-            "## Mapeo tema → archivo",
+            "## Mapeo tema -> archivo",
             "",
             "| Tema | Archivo | Tokens aprox. |",
             "|------|---------|---------------|",
@@ -140,13 +154,13 @@ class IndiceGenerator:
         # Truncar si excede el límite
         if len(content) > self._max_chars:
             logger.warning(
-                "Índice excede límite (%d > %d chars), truncando",
+                "Indice excede limite (%d > %d chars), truncando",
                 len(content), self._max_chars,
             )
             content = content[:self._max_chars - 50] + "\n\n... (truncado por límite)\n"
 
         logger.info(
-            "Índice generado: %d chars (%.0f tokens), %d temas mapeados",
+            "Indice generado: %d chars (%.0f tokens), %d temas mapeados",
             len(content), len(content) / 3.5, len(tema_a_archivo),
         )
         return content
@@ -158,14 +172,14 @@ class IndiceGenerator:
     def __repr__(self) -> str:
         return f"IndiceGenerator(max_chars={self._max_chars})"
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _build_tema_a_archivo(
         self,
         blocks: list["ThematicBlock"],
         metadata: Optional[RecoveryMetadata],
     ) -> dict[str, str]:
-        """Construye el mapeo tema → archivo.
+        """Construye el mapeo tema -> archivo.
 
         Prioriza la metadata si se proporciona (es la fuente de verdad).
         Si no, lo construye a partir de los bloques.
@@ -179,8 +193,8 @@ class IndiceGenerator:
             for tema in b.temas:
                 if tema in mapping and mapping[tema] != b.filename:
                     logger.warning(
-                        "Tema '%s' aparece en múltiples archivos: %s y %s "
-                        "(violación de unicidad)",
+                        "Tema '%s' aparece en multiples archivos: %s y %s "
+                        "(violacion de unicidad)",
                         tema, mapping[tema], b.filename,
                     )
                 mapping[tema] = b.filename
@@ -197,16 +211,24 @@ class IndiceGenerator:
                 return f"{b.estimated_tokens / 1000:.1f}K"
         return "?"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de indice_generator.py ──
-    print("=== Validación de indice_generator.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de indice_generator.py --
+    print("=== Validacion de indice_generator.py ===\n")
 
     from contexto_zai.models import Exchange, Message, MessageRole, ThematicBlock
 
     gen = IndiceGenerator()
 
-    # Test 1: tabla tema → archivo presente
+    # Test 1: tabla tema -> archivo presente
     ex1 = Exchange(id=1, director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="test"), topic="validaciones", start_timestamp=1, end_timestamp=2)
     ex2 = Exchange(id=2, director_msg=Message(seq=2, role=MessageRole.USER, timestamp=3, content="worklog"), topic="configuracion_proyecto", start_timestamp=3, end_timestamp=4)
     b1 = ThematicBlock(filename="bloque_01.md")
@@ -218,26 +240,26 @@ if __name__ == "__main__":
     content = gen.generate([b1, b2], chat_label="Test")
 
     # Verificar tabla mapeo
-    assert "Mapeo tema → archivo" in content
+    assert "Mapeo tema -> archivo" in content
     assert "| Tema | Archivo |" in content
     assert "`validaciones`" in content
     assert "`bloque_01.md`" in content
     assert "`configuracion_proyecto`" in content
     assert "`general`" in content
     assert "`bloque_02.md`" in content
-    print(f"✓ Tabla tema → archivo con todos los temas")
+    print(f"[OK] Tabla tema -> archivo con todos los temas")
 
     # Test 2: protocolo de recuperación presente
     assert "Protocolo de recuperación" in content
     assert "00_estado_actual.md" in content
     assert "subagente" in content.lower()
-    print(f"✓ Protocolo de recuperación documentado")
+    print(f"[OK] Protocolo de recuperacion documentado")
 
     # Test 3: resumen de bloques
     assert "Resumen de bloques" in content
     assert "bloque_01.md" in content
     assert "Temas:" in content
-    print(f"✓ Resumen de bloques con temas listados")
+    print(f"[OK] Resumen de bloques con temas listados")
 
     # Test 4: con metadata
     from contexto_zai.models import RecoveryMetadata
@@ -250,12 +272,12 @@ if __name__ == "__main__":
     content2 = gen.generate([b1, b2], chat_label="Test", metadata=meta)
     assert "Subtemas derivados" in content2
     assert "validaciones_server" in content2
-    print(f"✓ Subtemas derivados documentados desde metadata")
+    print(f"[OK] Subtemas derivados documentados desde metadata")
 
     # Test 5: con resumen de decisiones
     content3 = gen.generate([b1, b2], chat_label="Test", decisiones_summary="- D01: usar X\n- D02: descartar Y")
     assert "Decisiones clave (resumen)" in content3
     assert "D01: usar X" in content3
-    print(f"✓ Resumen de decisiones incluido")
+    print(f"[OK] Resumen de decisiones incluido")
 
-    print("\n✅ indice_generator.py: todos los tests pasaron")
+    print("\n[PASS] indice_generator.py: todos los tests pasaron")

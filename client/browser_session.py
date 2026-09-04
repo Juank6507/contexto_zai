@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/client/browser_session.py
+# contexto_zai/client/browser_session.py -- Sesion autenticada del navegador: protocolo de inyeccion de cookie JWT (metodologia JWT).
 """Sesión autenticada del navegador para chat.z.ai.
 
 Maneja el protocolo de inyección de cookie de la metodología JWT
@@ -12,6 +12,21 @@ los estrictamente necesarios para su lógica (config para rutas).
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import json
 import logging
 import subprocess
@@ -22,7 +37,6 @@ from pathlib import Path
 from contexto_zai.config import API_CONFIG, BROWSER_AUTH_STATE_PATH
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class CookieInfo:
@@ -39,7 +53,6 @@ class CookieInfo:
     value: str
     is_guest: bool = False
     email: str = "unknown"
-
 
 class BrowserSession:
     """Wrapper sobre agent-browser para autenticación en chat.z.ai.
@@ -69,7 +82,7 @@ class BrowserSession:
         self._chat_url_template = chat_url_template
         self._is_open = False
 
-    # ── Operaciones del navegador ──────────────────────────────────
+    # -- Operaciones del navegador ----------------------------------
 
     def open_chat_zai(self) -> None:
         """Abre chat.z.ai (página principal) para establecer el dominio."""
@@ -130,7 +143,7 @@ class BrowserSession:
         self._run_browser_cmd(["close"])
         self._is_open = False
 
-    # ── Estado autenticado ─────────────────────────────────────────
+    # -- Estado autenticado -----------------------------------------
 
     def save_state(self) -> bool:
         """Guarda el estado autenticado en .browser_auth_state.json."""
@@ -159,7 +172,7 @@ class BrowserSession:
         """Verifica si existe un estado autenticado guardado."""
         return self._auth_state_path.exists()
 
-    # ── Protocolo de autenticación completo ────────────────────────
+    # -- Protocolo de autenticación completo ------------------------
 
     def is_guest(self) -> bool:
         """Verifica si la sesión actual es de invitado."""
@@ -184,7 +197,7 @@ class BrowserSession:
         Returns:
             True si la autenticación fue exitosa.
         """
-        logger.info("Aplicando protocolo de inyección de cookie para chat %s", chat_id)
+        logger.info("Aplicando protocolo de inyeccion de cookie para chat %s", chat_id)
 
         # Paso 1: abrir chat.z.ai
         self.open_chat_zai()
@@ -204,13 +217,13 @@ class BrowserSession:
         # Paso 6: verificar
         cookie = self.get_token_cookie()
         if cookie is None:
-            logger.error("No se encontró cookie `token` tras autenticación")
+            logger.error("No se encontro cookie `token` tras autenticacion")
             return False
         if cookie.is_guest:
-            logger.error("La cookie sigue siendo de invitado tras autenticación")
+            logger.error("La cookie sigue siendo de invitado tras autenticacion")
             return False
 
-        logger.info("Autenticación exitosa: %s", cookie.email)
+        logger.info("Autenticacion exitosa: %s", cookie.email)
         return True
 
     def ensure_authenticated(self, jwt_director: str, chat_id: str) -> bool:
@@ -226,9 +239,9 @@ class BrowserSession:
             self.load_state()
             self.navigate_to_chat(chat_id)
             if not self.is_guest():
-                logger.info("Sesión ya autenticada (estado cargado)")
+                logger.info("Sesion ya autenticada (estado cargado)")
                 return True
-            logger.info("Estado guardado expiró o es de invitado, re-autenticando")
+            logger.info("Estado guardado expiro o es de invitado, re-autenticando")
 
         # Aplicar protocolo de inyección
         success = self.authenticate(jwt_director, chat_id)
@@ -236,7 +249,7 @@ class BrowserSession:
             self.save_state()
         return success
 
-    # ── Internos ───────────────────────────────────────────────────
+    # -- Internos ---------------------------------------------------
 
     def _parse_token_cookie(self, value: str) -> CookieInfo:
         """Decodifica un JWT y devuelve CookieInfo."""
@@ -289,7 +302,7 @@ class BrowserSession:
             )
             if result.returncode != 0:
                 logger.warning(
-                    "agent-browser %s falló (code %d): %s",
+                    "agent-browser %s fallo (code %d): %s",
                     args[0], result.returncode, result.stderr.strip(),
                 )
             return result.stdout.strip() if capture else ""
@@ -304,10 +317,18 @@ class BrowserSession:
         """Espera los segundos indicados."""
         time.sleep(seconds)
 
-
 if __name__ == "__main__":
-    # ── Validación interna de browser_session.py (atómico standalone) ─
-    print("=== Validación de browser_session.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de browser_session.py (atómico standalone) -
+    print("=== Validacion de browser_session.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -316,7 +337,7 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmpdir:
         session = BrowserSession(auth_state_path=Path(tmpdir) / "state.json")
         assert not session.has_saved_state()
-        print("✓ Instancia sin estado guardado")
+        print("[OK] Instancia sin estado guardado")
 
         # Test 2: parseo de cookie guest
         # JWT real de invitado: header.payload.signature
@@ -329,7 +350,7 @@ if __name__ == "__main__":
         cookie = session._parse_token_cookie(guest_jwt)
         assert cookie.is_guest is True
         assert cookie.email == "guest-123@guest.com"
-        print(f"✓ Cookie guest detectada: email={cookie.email}")
+        print(f"[OK] Cookie guest detectada: email={cookie.email}")
 
         # Test 3: parseo de cookie del Director
         payload_dir = base64.urlsafe_b64encode(
@@ -339,20 +360,20 @@ if __name__ == "__main__":
         cookie = session._parse_token_cookie(director_jwt)
         assert cookie.is_guest is False
         assert cookie.email == "juanca6507@gmail.com"
-        print(f"✓ Cookie Director detectada: email={cookie.email}")
+        print(f"[OK] Cookie Director detectada: email={cookie.email}")
 
         # Test 4: parseo de JWT malformado
         cookie = session._parse_token_cookie("no-es-un-jwt")
         assert cookie.is_guest is False  # No se pudo decodificar
         assert cookie.email == "unknown"
-        print(f"✓ JWT malformado tratado como unknown")
+        print(f"[OK] JWT malformado tratado como unknown")
 
     # Test 5: URL template del chat
     session = BrowserSession()
     url = session._chat_url_template.format(chat_id="abc-123")
     assert url == "https://chat.z.ai/c/abc-123"
-    print(f"✓ URL template: {url}")
+    print(f"[OK] URL template: {url}")
 
-    print("\n✅ browser_session.py: todos los tests pasaron")
-    print("\nNota: para validar el protocolo completo de autenticación")
+    print("\n[PASS] browser_session.py: todos los tests pasaron")
+    print("\nNota: para validar el protocolo completo de autenticacion")
     print("      contra chat.z.ai real, ejecutar tests/test_browser_session.py")

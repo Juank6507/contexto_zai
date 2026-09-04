@@ -1,3 +1,4 @@
+# contexto_zai/verification/verifier.py -- Verificador de limites de tokens: evalua archivos contra limites (ERROR/WARNING/OK).
 """Verificador de archivos de recuperación.
 
 Valida que cada archivo generado cumpla con los límites de tokens
@@ -5,6 +6,21 @@ definidos en la configuración y produce un reporte legible.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 
@@ -37,13 +53,11 @@ _ICON_OK = "\u2705"
 _ICON_WARN = "\u26A0\uFE0F"
 _ICON_ERR = "\u274C"
 
-
 def _format_tokens(value: float) -> str:
     """Formatea un valor de tokens en notación compacta (ej. ~2.1K)."""
     if value >= 1_000:
         return f"~{value / 1_000:.1f}K"
     return f"~{value:.0f}"
-
 
 def _verdict_icon(verdict: Verdict) -> str:
     """Devuelve el ícono asociado a un veredicto."""
@@ -55,7 +69,6 @@ def _verdict_icon(verdict: Verdict) -> str:
         case Verdict.ERROR:
             return _ICON_ERR
 
-
 def _verdict_label(verdict: Verdict) -> str:
     """Devuelve la etiqueta legible de un veredicto."""
     match verdict:
@@ -65,7 +78,6 @@ def _verdict_label(verdict: Verdict) -> str:
             return "ADVERTENCIA"
         case Verdict.ERROR:
             return "ERROR"
-
 
 class Verifier:
     """Verifica que los archivos de recuperación respeten los límites de tokens.
@@ -85,7 +97,7 @@ class Verifier:
         """Inicializa el verificador con los límites globales de tokens."""
         self._limits = TOKEN_LIMITS
 
-    # ── Lógica de verificación ──────────────────────────────────────
+    # -- Lógica de verificación --------------------------------------
 
     def _judge_file(self, file: RecoveryFile) -> FileVerification:
         """Evalúa un archivo individual y devuelve su verificación."""
@@ -107,10 +119,10 @@ class Verifier:
         msg = f"{_format_tokens(estimated)} tokens / {limit:,} límite ({pct:.0f}%)"
         if verdict == Verdict.ERROR:
             over = estimated - limit
-            msg += f" — excede el límite en {_format_tokens(over)} tokens"
+            msg += f" -- excede el límite en {_format_tokens(over)} tokens"
         elif verdict == Verdict.WARNING:
             remaining = limit - estimated
-            msg += f" — {_format_tokens(remaining)} tokens de margen"
+            msg += f" -- {_format_tokens(remaining)} tokens de margen"
 
         return FileVerification(
             filename=file.filename,
@@ -120,7 +132,7 @@ class Verifier:
             message=msg,
         )
 
-    # ── API pública ─────────────────────────────────────────────────
+    # -- API pública -------------------------------------------------
 
     def verify(self, files: list[RecoveryFile]) -> VerificationReport:
         """Verifica una lista de archivos y devuelve el reporte completo.
@@ -138,7 +150,7 @@ class Verifier:
         for file in files:
             fv = self._judge_file(file)
             verifications.append(fv)
-            logger.debug("%s → %s", fv.filename, fv.verdict.value)
+            logger.debug("%s -> %s", fv.filename, fv.verdict.value)
 
             if file.category in _MAIN_LOAD_CATEGORIES:
                 total_main_load += file.estimated_tokens
@@ -163,7 +175,7 @@ class Verifier:
         )
 
         logger.info(
-            "Verificación completada: %d archivos, carga principal %s/%s, veredicto=%s",
+            "Verificacion completada: %d archivos, carga principal %s/%s, veredicto=%s",
             len(verifications),
             _format_tokens(total_main_load),
             f"{self._limits.carga_principal_max:,}",
@@ -172,7 +184,7 @@ class Verifier:
 
         return report
 
-    # ── Formateo del reporte ────────────────────────────────────────
+    # -- Formateo del reporte ----------------------------------------
 
     def format_report(self, report: VerificationReport) -> str:
         """Genera un resumen legible del reporte de verificación.
@@ -183,8 +195,8 @@ class Verifier:
         Returns:
             Cadena de texto con el reporte formateado.
         """
-        sep = "═" * 40
-        thin = "─" * 40
+        sep = "=" * 40
+        thin = "-" * 40
         lines: list[str] = []
 
         # Cabecera.
@@ -197,14 +209,14 @@ class Verifier:
             icon = _verdict_icon(fv.verdict)
             label = _verdict_label(fv.verdict)
             lines.append(f"{_ICON_FILE} {fv.filename}")
-            lines.append(f"   {fv.message} — {icon} {label}")
+            lines.append(f"   {fv.message} -- {icon} {label}")
 
         # Carga principal.
         lines.append(thin)
         load_icon = _ICON_OK if report.main_load_ok else _ICON_ERR
         lines.append(
             f"{_ICON_CHART} Carga principal: {_format_tokens(report.total_main_load)} "
-            f"/ {report.main_load_limit:,} tokens — {load_icon}"
+            f"/ {report.main_load_limit:,} tokens -- {load_icon}"
         )
 
         # Resultado global.
@@ -222,17 +234,25 @@ class Verifier:
 
         return "\n".join(lines)
 
-
 if __name__ == "__main__":
-    # ── Validación interna de verifier.py (atómico standalone) ──
-    print("=== Validación de verifier.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de verifier.py (atómico standalone) --
+    print("=== Validacion de verifier.py ===\n")
 
     from contexto_zai.config import TOKEN_LIMITS
     from contexto_zai.models import FileCategory, RecoveryFile, Verdict
 
     v = Verifier()
 
-    # Test 1: archivo dentro del límite → OK
+    # Test 1: archivo dentro del límite -> OK
     f_ok = RecoveryFile(
         filename="00_estado_actual.md",
         category=FileCategory.ESTADO,
@@ -242,9 +262,9 @@ if __name__ == "__main__":
     report = v.verify([f_ok])
     assert report.overall_verdict == Verdict.OK
     assert not report.has_errors
-    print(f"✓ Archivo dentro del límite: veredicto OK")
+    print(f"[OK] Archivo dentro del limite: veredicto OK")
 
-    # Test 2: archivo que excede el límite por >1.1× → ERROR
+    # Test 2: archivo que excede el límite por >1.1× -> ERROR
     contenido_excedente = "x" * int(TOKEN_LIMITS.max_tokens_bloque * 3.5 * 1.2)  # 120% del límite
     f_err = RecoveryFile(
         filename="bloque_x.md",
@@ -254,7 +274,7 @@ if __name__ == "__main__":
     )
     report2 = v.verify([f_err])
     assert report2.has_errors, f"Esperaba errores, obtuve verdict={report2.overall_verdict}"
-    print(f"✓ Bloque que excede 70K tokens (1.2x): detectado como ERROR")
+    print(f"[OK] Bloque que excede 70K tokens (1.2x): detectado como ERROR")
 
     # Test 3: carga principal total (estado + indice + decisiones)
     f_estado = RecoveryFile(filename="00_estado_actual.md", category=FileCategory.ESTADO, content="x" * 1000, token_limit=TOKEN_LIMITS.max_tokens_estado)
@@ -262,11 +282,11 @@ if __name__ == "__main__":
     f_dec = RecoveryFile(filename="02_decisiones_clave.md", category=FileCategory.DECISIONES, content="x" * 1000, token_limit=TOKEN_LIMITS.max_tokens_decisiones)
     report3 = v.verify([f_estado, f_indice, f_dec])
     assert report3.main_load_limit == 40_000  # v3.2
-    print(f"✓ Carga principal con límite v3.2 (40K): OK")
+    print(f"[OK] Carga principal con limite v3.2 (40K): OK")
 
     # Test 4: reporte formateado
     formatted = v.format_report(report3)
     assert "Resultado" in formatted or "resultado" in formatted.lower()
-    print(f"✓ Formateo de reporte: OK")
+    print(f"[OK] Formateo de reporte: OK")
 
-    print("\n✅ verifier.py: todos los tests pasaron")
+    print("\n[PASS] verifier.py: todos los tests pasaron")

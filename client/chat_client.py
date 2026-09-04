@@ -1,3 +1,4 @@
+# contexto_zai/client/chat_client.py -- Cliente de extraccion de mensajes: arbol de mensajes y contenido via batch (chat_id autenticado).
 """Cliente de extracción de mensajes de chat.z.ai (v3.2).
 
 Extrae el árbol de mensajes (vía share público) y el contenido
@@ -9,6 +10,21 @@ desde v2.2.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import json
 import logging
@@ -22,18 +38,14 @@ from contexto_zai.models import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
-
 class ChatClientError(Exception):
     """Error base del ChatClient."""
-
 
 class MessageTreeError(ChatClientError):
     """Error al obtener el árbol de mensajes."""
 
-
 class BatchExtractionError(ChatClientError):
     """Error al extraer el contenido de mensajes en batch."""
-
 
 class ChatClient:
     """Extrae mensajes completos de un chat de chat.z.ai.
@@ -78,7 +90,7 @@ class ChatClient:
             },
         )
 
-    # ── Métodos públicos ───────────────────────────────────────
+    # -- Métodos públicos ---------------------------------------
 
     def get_message_tree(self, share_id: str) -> dict:
         """Obtiene el árbol de mensajes de un chat compartido.
@@ -91,8 +103,8 @@ class ChatClient:
 
         Returns:
             Diccionario con la estructura del chat. Clave relevante:
-                - chat.id → chat_id interno
-                - chat.history.messages → mapa de {msg_id: metadata}
+                - chat.id -> chat_id interno
+                - chat.history.messages -> mapa de {msg_id: metadata}
 
         Raises:
             MessageTreeError: Si la solicitud falla.
@@ -105,7 +117,7 @@ class ChatClient:
         if token:
             cookies = {API_CONFIG.cookie_name: token}
 
-        logger.debug("Obteniendo árbol de mensajes: %s", url)
+        logger.debug("Obteniendo arbol de mensajes: %s", url)
         response = self._client.get(url, cookies=cookies or None)
 
         if response.status_code in (401, 403):
@@ -123,7 +135,7 @@ class ChatClient:
         response.raise_for_status()
         data = response.json()
         logger.info(
-            "Árbol obtenido. chat_id=%s, mensajes en árbol=%d",
+            "Arbol obtenido. chat_id=%s, mensajes en arbol=%d",
             data.get("chat", {}).get("id", "?"),
             len(data.get("chat", {}).get("history", {}).get("messages", {})),
         )
@@ -190,7 +202,7 @@ class ChatClient:
         data = response.json()
         extracted = data.get("data", {})
         logger.info(
-            "Batch extraído: %d/%d mensajes con contenido",
+            "Batch extraido: %d/%d mensajes con contenido",
             len(extracted),
             len(message_ids),
         )
@@ -203,7 +215,7 @@ class ChatClient:
     ) -> list[Message]:
         """Extrae todos los mensajes de un chat compartido.
 
-        Orquesta: get_message_tree → ordenar IDs → get_messages_batch → parsear.
+        Orquesta: get_message_tree -> ordenar IDs -> get_messages_batch -> parsear.
 
         v3.2: Si chat_id es None, se descubre del árbol de mensajes.
         El batch usa chat_id autenticado, no share_id.
@@ -235,7 +247,7 @@ class ChatClient:
         )
 
         if not messages_map:
-            logger.warning("El chat %s no tiene mensajes en el árbol.", resolved_chat_id)
+            logger.warning("El chat %s no tiene mensajes en el arbol.", resolved_chat_id)
             return []
 
         # Paso 2: Ordenar IDs cronológicamente
@@ -277,7 +289,7 @@ class ChatClient:
             )
 
         logger.info(
-            "Extracción completa: %d mensajes de chat %s",
+            "Extraccion completa: %d mensajes de chat %s",
             len(messages),
             chat_id,
         )
@@ -334,7 +346,7 @@ class ChatClient:
         mode = "browser" if self._browser_session else ("token" if self._token else "none")
         return f"ChatClient(mode={mode!r}, base_url={self._base_url!r})"
 
-    # ── Métodos privados ──────────────────────────────────────
+    # -- Métodos privados --------------------------------------
 
     def _get_effective_token(self) -> Optional[str]:
         """Obtiene el token efectivo: explícito o desde la cookie del navegador."""
@@ -386,10 +398,18 @@ class ChatClient:
 
         return ""
 
-
 if __name__ == "__main__":
-    # ── Validación interna de chat_client.py (atómico standalone) ──
-    print("=== Validación de chat_client.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de chat_client.py (atómico standalone) --
+    print("=== Validacion de chat_client.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -398,40 +418,40 @@ if __name__ == "__main__":
     # Test 1: modo legacy con token
     client_legacy = ChatClient(token="eyJhbG.test.payload")
     assert client_legacy._get_effective_token() == "eyJhbG.test.payload"
-    print(f"✓ Modo legacy: {client_legacy!r}")
+    print(f"[OK] Modo legacy: {client_legacy!r}")
 
-    # Test 2: modo navegador v3.2 (sin token en cookie → None)
+    # Test 2: modo navegador v3.2 (sin token en cookie -> None)
     with tempfile.TemporaryDirectory() as tmpdir:
         session = BrowserSession(auth_state_path=Path(tmpdir) / "state.json")
         client_v3 = ChatClient(browser_session=session)
         # Como no hay navegador real, _get_effective_token devuelve None
         # (BrowserSession.get_token_cookie() devuelve None si agent-browser no está corriendo)
         assert client_v3._get_effective_token() is None
-        print(f"✓ Modo navegador v3.2: {client_v3!r}")
+        print(f"[OK] Modo navegador v3.2: {client_v3!r}")
 
-    # Test 3: sin token ni browser_session → None
+    # Test 3: sin token ni browser_session -> None
     client_no_auth = ChatClient()
     assert client_no_auth._get_effective_token() is None
-    print(f"✓ Sin autenticación: {client_no_auth!r}")
+    print(f"[OK] Sin autenticacion: {client_no_auth!r}")
 
     # Test 4: get_messages_batch sin token lanza BatchExtractionError
     try:
         client_no_auth.get_messages_batch(chat_id="abc", message_ids=["1"])
         assert False, "Debería haber lanzado BatchExtractionError"
     except BatchExtractionError as e:
-        print(f"✓ get_messages_batch sin token: error correcto")
+        print(f"[OK] get_messages_batch sin token: error correcto")
 
     # Test 5: _extract_content con string
     content = ChatClient._extract_content({"content": "hola"})
     assert content == "hola"
-    print(f"✓ _extract_content string: OK")
+    print(f"[OK] _extract_content string: OK")
 
     # Test 6: _extract_content con content_blocks
     content = ChatClient._extract_content({
         "content_blocks": [{"text": "parte1"}, {"text": "parte2"}]
     })
     assert "parte1" in content and "parte2" in content
-    print(f"✓ _extract_content blocks: OK")
+    print(f"[OK] _extract_content blocks: OK")
 
     # Test 7: _extract_content filtra reasoning
     content = ChatClient._extract_content({
@@ -439,7 +459,7 @@ if __name__ == "__main__":
     })
     assert "visible" in content
     assert "oculto" not in content
-    print(f"✓ _extract_content filtra reasoning: OK")
+    print(f"[OK] _extract_content filtra reasoning: OK")
 
     # Test 8: load_from_file
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -452,13 +472,13 @@ if __name__ == "__main__":
     assert len(msgs) == 2
     assert msgs[0].is_user
     assert msgs[1].is_assistant
-    print(f"✓ load_from_file: {len(msgs)} mensajes cargados")
+    print(f"[OK] load_from_file: {len(msgs)} mensajes cargados")
 
     # Cerrar
     client_legacy.close()
     client_v3.close()
     client_no_auth.close()
 
-    print("\n✅ chat_client.py: todos los tests pasaron")
+    print("\n[PASS] chat_client.py: todos los tests pasaron")
     print("\nNota: para validar extract_all contra la API real,")
     print("      ejecutar tests/test_chat_client.py con JWT del Director")

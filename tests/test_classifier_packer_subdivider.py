@@ -1,4 +1,5 @@
-# Destino: /home/z/my-project/tests/test_classifier_packer_subdivider.py
+# tests/test_classifier_packer_subdivider.py -- Test de integracion: clasificador + empaquetador + subdivider (unicidad, limites, subtemas).
+
 """Test de integración: clasificador + empaquetador + subdivider (v3.2).
 
 Valida la funcionalidad colectiva de los 3 módulos de procesamiento
@@ -15,6 +16,21 @@ Invariante garantizada:
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import sys
 from pathlib import Path
 
@@ -27,7 +43,6 @@ from contexto_zai.processing.classifier import MessageClassifier
 from contexto_zai.processing.subdivider import Subdivider
 from contexto_zai.models import Exchange, Message, MessageRole
 
-
 def make_exchange(ex_id: int, content: str, topic: str = "", ts: int = 0) -> Exchange:
     """Crea un intercambio de prueba."""
     return Exchange(
@@ -39,10 +54,9 @@ def make_exchange(ex_id: int, content: str, topic: str = "", ts: int = 0) -> Exc
         end_timestamp=ts + 1,
     )
 
-
 def test_classifier_packer_basic_integration():
-    """Test 1: clasificador + empaquetador: 2 temas → 1 bloque si caben."""
-    print("\n=== Test 1: clasificador + empaquetador básico ===")
+    """Test 1: clasificador + empaquetador: 2 temas -> 1 bloque si caben."""
+    print("\n=== Test 1: clasificador + empaquetador basico ===")
     cl = MessageClassifier()
     packer = BlockPacker()
 
@@ -56,25 +70,23 @@ def test_classifier_packer_basic_integration():
     blocks = packer.pack_from_exchanges(exchanges)
     assert len(blocks) == 1, f"Esperaba 1 bloque, obtuve {len(blocks)}"
     assert set(blocks[0].temas) == {"validaciones", "configuracion_proyecto"}
-    print(f"  ✓ 2 temas en 1 bloque: {blocks[0].temas}")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] 2 temas en 1 bloque: {blocks[0].temas}")
+    print(f"  [PASS] PASO")
 
 def test_subdivider_no_subdivision_when_small():
     """Test 2: subdivider no subdivide temas pequeños."""
-    print("\n=== Test 2: subdivider respeta temas pequeños ===")
+    print("\n=== Test 2: subdivider respeta temas pequenos ===")
     sub = Subdivider()
     exchanges = [make_exchange(i, f"test {i}", ts=i * 10) for i in range(1, 4)]
     result = sub.subdivide("validaciones", exchanges)
     assert len(result.subtemas) == 1
     assert result.subtemas[0][0] == "validaciones"
-    print(f"  ✓ Tema pequeño no se subdivide")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Tema pequeno no se subdivide")
+    print(f"  [PASS] PASO")
 
 def test_subdivider_generates_unique_subtemas():
     """Test 3: subdivider genera subtemas únicos (no parte1/parte2)."""
-    print("\n=== Test 3: subdivider genera subtemas únicos ===")
+    print("\n=== Test 3: subdivider genera subtemas unicos ===")
     # Forzar subdivisión léxica para 'validaciones' (tiene SUBTEMAS_LEXICOS)
     sub = Subdivider(max_tokens_per_block=500)  # límite bajo
     # 40 intercambios con sub-palabras diferentes
@@ -94,13 +106,12 @@ def test_subdivider_generates_unique_subtemas():
     assert len(subtema_names) == len(set(subtema_names)), f"Subtemas duplicados: {subtema_names}"
     # NO deben ser "parte1/parte2"
     assert not any("parte1" in name or "parte2" in name for name in subtema_names), f"Usó parte1/parte2: {subtema_names}"
-    print(f"  ✓ Subtemas únicos generados: {subtema_names}")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] Subtemas unicos generados: {subtema_names}")
+    print(f"  [PASS] PASO")
 
 def test_packer_no_block_exceeds_limit():
     """Test 4: ningún bloque supera 70K tokens."""
-    print("\n=== Test 4: límite de 70K tokens por bloque ===")
+    print("\n=== Test 4: limite de 70K tokens por bloque ===")
     packer = BlockPacker()  # 70K tokens por defecto
     # 50 intercambios grandes en temas diferentes
     exchanges = [
@@ -110,13 +121,12 @@ def test_packer_no_block_exceeds_limit():
     blocks = packer.pack_from_exchanges(exchanges)
     for b in blocks:
         assert b.estimated_tokens <= 70_000, f"Bloque {b.filename} supera 70K: {b.estimated_tokens:.0f}"
-    print(f"  ✓ {len(blocks)} bloques, ninguno supera 70K tokens")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] {len(blocks)} bloques, ninguno supera 70K tokens")
+    print(f"  [PASS] PASO")
 
 def test_unicity_tematica_one_tema_one_file():
     """Test 5: un tema vive en un solo archivo (unicidad)."""
-    print("\n=== Test 5: unicidad temática ===")
+    print("\n=== Test 5: unicidad tematica ===")
     cl = MessageClassifier()
     packer = BlockPacker()
     exchanges = [
@@ -129,12 +139,11 @@ def test_unicity_tematica_one_tema_one_file():
     # Todos los intercambios de 'validaciones' deben estar en un solo bloque
     blocks_with_validaciones = [b for b in blocks if "validaciones" in b.temas]
     assert len(blocks_with_validaciones) == 1, f"Tema en {len(blocks_with_validaciones)} bloques, debería ser 1"
-    print(f"  ✓ 'validaciones' en un solo archivo: {blocks_with_validaciones[0].filename}")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] 'validaciones' en un solo archivo: {blocks_with_validaciones[0].filename}")
+    print(f"  [PASS] PASO")
 
 def test_full_pipeline_subdivide_then_pack():
-    """Test 6: pipeline completo clasificar → subdividir → empaquetar."""
+    """Test 6: pipeline completo clasificar -> subdividir -> empaquetar."""
     print("\n=== Test 6: pipeline completo multi-tema ===")
     cl = MessageClassifier()
     sub = Subdivider(max_tokens_per_block=1000)
@@ -183,14 +192,13 @@ def test_full_pipeline_subdivide_then_pack():
             assert t not in seen_temas, f"Tema {t} duplicado en {seen_temas[t]} y {b.filename}"
             seen_temas[t] = b.filename
 
-    print(f"  ✓ {len(blocks)} bloques, {len(seen_temas)} temas únicos, todos < 1000 tokens")
-    print(f"  ✅ PASÓ")
-
+    print(f"  [OK] {len(blocks)} bloques, {len(seen_temas)} temas únicos, todos < 1000 tokens")
+    print(f"  [PASS] PASO")
 
 def main():
     """Ejecuta todos los tests de integración."""
     print("=" * 60)
-    print("TEST DE INTEGRACIÓN: classifier + packer + subdivider")
+    print("TEST DE INTEGRACION: classifier + packer + subdivider")
     print("=" * 60)
     tests = [
         test_classifier_packer_basic_integration,
@@ -207,13 +215,21 @@ def main():
             test()
             passed += 1
         except (AssertionError, Exception) as e:
-            print(f"  ❌ FALLÓ: {e}")
+            print(f"  [FAIL] FALLO: {e}")
             failed += 1
     print(f"\n{'=' * 60}")
     print(f"RESULTADO: {passed} pasaron, {failed} fallaron de {len(tests)} tests")
     print(f"{'=' * 60}")
     return 0 if failed == 0 else 1
 
-
 if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
     sys.exit(main())

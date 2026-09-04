@@ -1,3 +1,4 @@
+# contexto_zai/config.py -- Constantes y configuracion del sistema (limites, rutas, reglas tematicas).
 """Constantes y configuración del sistema Contexto Z.ai.
 
 Centraliza todos los parámetros del spec de recuperación de contexto.
@@ -8,14 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
-# ── Rutas por defecto ──────────────────────────────────────────────
+# -- Rutas por defecto ----------------------------------------------
 
 DEFAULT_OUTPUT_DIR = Path("contexto_recuperacion")
 DEFAULT_MESSAGES_FILE = Path("chat_messages.json")
 
-
-# ── Límites de tokens (Sección 4 del spec) ─────────────────────────
+# -- Límites de tokens (Sección 4 del spec) -------------------------
 
 @dataclass(frozen=True)
 class TokenLimits:
@@ -72,11 +71,9 @@ class TokenLimits:
         """Tokens consumidos a partir de los cuales se dispara la recuperación preventiva."""
         return int(self.capacidad_util * self.umbral_compresion_pct)
 
-
 TOKEN_LIMITS = TokenLimits()
 
-
-# ── API de chat.z.ai ───────────────────────────────────────────────
+# -- API de chat.z.ai -----------------------------------------------
 
 @dataclass(frozen=True)
 class APIConfig:
@@ -112,11 +109,9 @@ class APIConfig:
     def auth_check_url(self) -> str:
         return f"{self.base_url}/api/v1/auths/"
 
-
 API_CONFIG = APIConfig()
 
-
-# ── Reglas temáticas por defecto ───────────────────────────────────
+# -- Reglas temáticas por defecto -----------------------------------
 
 @dataclass
 class ThemeRule:
@@ -135,7 +130,6 @@ class ThemeRule:
     keywords: list[str] = field(default_factory=list)
     block_prefix: str = "bloque"
     description: str = ""
-
 
 DEFAULT_THEME_RULES: list[ThemeRule] = [
     ThemeRule(
@@ -225,8 +219,7 @@ DEFAULT_THEME_RULES: list[ThemeRule] = [
     ),
 ]
 
-
-# ── Generación de archivos ─────────────────────────────────────────
+# -- Generación de archivos -----------------------------------------
 
 ESTADO_ACTUAL_FILENAME = "00_estado_actual.md"
 INDICE_RECUPERACION_FILENAME = "01_indice_recuperacion.md"
@@ -235,15 +228,42 @@ METADATA_FILENAME = "_metadata.json"
 
 SUPPORTED_MESSAGES_FORMATS = {".json"}
 
+# -- Rutas del workspace v3.2 --------------------------------------
+#
+# Compatibilidad multiplataforma (Windows/Linux/macOS):
+# - Si la variable de entorno CZAI_WORKSPACE_DIR está definida, se usa.
+# - Si no, se usa el directorio padre del paquete contexto_zai (que es
+#   el workspace del agente) o Path.home() / "czai_workspace" como fallback.
+# - Los paths se construyen con pathlib.Path (no strings con barras).
 
-# ── Rutas del workspace v3.2 ──────────────────────────────────────
+import os
 
-WORKSPACE_OUTPUT_DIR = Path("/home/z/my-project/contexto_recuperacion")
-DOWNLOAD_OUTPUT_DIR = Path("/home/z/my-project/download/contexto_recuperacion")
-BROWSER_AUTH_STATE_PATH = Path("/home/z/my-project/.browser_auth_state.json")
+def _resolve_workspace_root() -> Path:
+    """Resuelve la raíz del workspace del agente de forma multiplataforma.
 
+    Orden de prioridad:
+    1. Variable de entorno CZAI_WORKSPACE_DIR.
+    2. Directorio padre del paquete contexto_zai (3 niveles arriba de este archivo).
+    3. Path.home() / "czai_workspace" como fallback.
+    """
+    env = os.environ.get("CZAI_WORKSPACE_DIR")
+    if env:
+        return Path(env)
+    # Este archivo está en <workspace>/contexto_zai/config.py
+    # El workspace es el padre de contexto_zai.
+    here = Path(__file__).resolve().parent
+    workspace = here.parent
+    # Verificar que el workspace parece razonable (contiene contexto_zai)
+    if (workspace / "contexto_zai").is_dir():
+        return workspace
+    return Path.home() / "czai_workspace"
 
-# ── Detección de pérdida de contexto (Sección 6 del spec v3.2) ────
+WORKSPACE_ROOT = _resolve_workspace_root()
+WORKSPACE_OUTPUT_DIR = WORKSPACE_ROOT / "contexto_recuperacion"
+DOWNLOAD_OUTPUT_DIR = WORKSPACE_ROOT / "download" / "contexto_recuperacion"
+BROWSER_AUTH_STATE_PATH = WORKSPACE_ROOT / ".browser_auth_state.json"
+
+# -- Detección de pérdida de contexto (Sección 6 del spec v3.2) ----
 
 LEXIC_TRIGGER_PHRASES: list[str] = [
     "ya te dije", "lo hablamos", "no repitas", "otra vez lo mismo",
@@ -257,41 +277,69 @@ SELF_QUESTIONS: list[str] = [
     "¿Sé qué sigue?",
 ]
 
-
 if __name__ == "__main__":
-    # ── Validación interna de config.py (atómico standalone) ────────
-    print("=== Validación de config.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de config.py (atómico standalone) --------
+    print("=== Validacion de config.py ===\n")
 
     # Test 1: límites v3.2 actualizados
     assert TOKEN_LIMITS.max_tokens_estado == 20_000, "max_tokens_estado debe ser 20K (v3.2)"
     assert TOKEN_LIMITS.carga_principal_max == 40_000, "carga_principal_max debe ser 40K (v3.2)"
     assert TOKEN_LIMITS.max_tokens_estado == 20_000
-    print(f"✓ Límites v3.2: estado={TOKEN_LIMITS.max_tokens_estado}, carga={TOKEN_LIMITS.carga_principal_max}")
+    print(f"[OK] Limites v3.2: estado={TOKEN_LIMITS.max_tokens_estado}, carga={TOKEN_LIMITS.carga_principal_max}")
 
     # Test 2: umbral de disparo
     expected_umbral = int(TOKEN_LIMITS.capacidad_util * 0.90)
     assert TOKEN_LIMITS.umbral_disparo_tokens == expected_umbral
-    print(f"✓ Umbral disparo: {TOKEN_LIMITS.umbral_disparo_tokens} tokens (90% de {TOKEN_LIMITS.capacidad_util})")
+    print(f"[OK] Umbral disparo: {TOKEN_LIMITS.umbral_disparo_tokens} tokens (90% de {TOKEN_LIMITS.capacidad_util})")
 
     # Test 3: API config con batch por chat_id (v3.2)
     assert "chat_id" in API_CONFIG.messages_batch_by_chat_url
     assert "share_id" not in API_CONFIG.messages_batch_by_chat_url
-    print(f"✓ Batch endpoint v3.2: {API_CONFIG.messages_batch_by_chat_url}")
+    print(f"[OK] Batch endpoint v3.2: {API_CONFIG.messages_batch_by_chat_url}")
 
     # Test 4: conversiones chars
     assert TOKEN_LIMITS.max_chars_estado == int(20_000 * 3.5)
     assert TOKEN_LIMITS.max_chars_bloque == int(70_000 * 3.5)
-    print(f"✓ Chars: estado={TOKEN_LIMITS.max_chars_estado}, bloque={TOKEN_LIMITS.max_chars_bloque}")
+    print(f"[OK] Chars: estado={TOKEN_LIMITS.max_chars_estado}, bloque={TOKEN_LIMITS.max_chars_bloque}")
 
     # Test 5: reglas temáticas cargadas
     assert len(DEFAULT_THEME_RULES) >= 7
     assert any(r.name == "general" for r in DEFAULT_THEME_RULES)
-    print(f"✓ Reglas temáticas: {len(DEFAULT_THEME_RULES)} reglas cargadas")
+    print(f"[OK] Reglas tematicas: {len(DEFAULT_THEME_RULES)} reglas cargadas")
 
     # Test 6: disparadores léxicos y auto-preguntas
     assert len(LEXIC_TRIGGER_PHRASES) >= 5
     assert len(SELF_QUESTIONS) == 3
-    print(f"✓ Disparadores léxicos: {len(LEXIC_TRIGGER_PHRASES)} frases")
-    print(f"✓ Auto-preguntas: {len(SELF_QUESTIONS)} preguntas")
+    print(f"[OK] Disparadores lexicos: {len(LEXIC_TRIGGER_PHRASES)} frases")
+    print(f"[OK] Auto-preguntas: {len(SELF_QUESTIONS)} preguntas")
 
-    print("\n✅ config.py: todos los tests pasaron")
+    # Test 7: rutas multiplataforma (v3.2 + Windows)
+    # Las rutas deben ser objetos Path, no strings con barras
+    assert isinstance(WORKSPACE_ROOT, Path)
+    assert isinstance(WORKSPACE_OUTPUT_DIR, Path)
+    assert isinstance(DOWNLOAD_OUTPUT_DIR, Path)
+    assert isinstance(BROWSER_AUTH_STATE_PATH, Path)
+    # WORKSPACE_OUTPUT_DIR debe estar dentro de WORKSPACE_ROOT
+    assert WORKSPACE_OUTPUT_DIR.is_relative_to(WORKSPACE_ROOT) if hasattr(WORKSPACE_OUTPUT_DIR, "is_relative_to") else str(WORKSPACE_OUTPUT_DIR).startswith(str(WORKSPACE_ROOT))
+    # BROWSER_AUTH_STATE_PATH debe ser un archivo dentro del workspace
+    assert BROWSER_AUTH_STATE_PATH.name == ".browser_auth_state.json"
+    # Soporta variable de entorno CZAI_WORKSPACE_DIR
+    import os as _os
+    _os.environ["CZAI_WORKSPACE_DIR"] = "/custom/workspace"
+    _custom = _resolve_workspace_root()
+    assert str(_custom) == "/custom/workspace" or str(_custom).replace("\\", "/") == "/custom/workspace"
+    del _os.environ["CZAI_WORKSPACE_DIR"]
+    print(f"[OK] Rutas multiplataforma: WORKSPACE_ROOT={WORKSPACE_ROOT}")
+    print(f"  WORKSPACE_OUTPUT_DIR={WORKSPACE_OUTPUT_DIR}")
+    print(f"  DOWNLOAD_OUTPUT_DIR={DOWNLOAD_OUTPUT_DIR}")
+
+    print("\n[PASS] config.py: todos los tests pasaron")

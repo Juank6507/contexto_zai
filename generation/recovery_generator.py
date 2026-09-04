@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/generation/recovery_generator.py
+# contexto_zai/generation/recovery_generator.py -- Orquestador de generacion: coordina estado, indice, decisiones y bloques.
 """Orquestador de generación de archivos de recuperación (v3.2).
 
 Coordina los 4 generadores individuales para producir la lista
@@ -13,6 +13,21 @@ límite de tokens según la configuración.
 """
 
 from __future__ import annotations
+
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
 
 import logging
 from typing import TYPE_CHECKING, Optional
@@ -34,7 +49,6 @@ if TYPE_CHECKING:
     from contexto_zai.models import Exchange, RecoveryMetadata, ThematicBlock
 
 logger = logging.getLogger(__name__)
-
 
 class RecoveryGenerator:
     """Orquestador de generación de archivos de recuperación.
@@ -62,7 +76,7 @@ class RecoveryGenerator:
         self._cleaner = cleaner or ContentCleaner()
         logger.debug("RecoveryGenerator inicializado")
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def generate_all(
         self,
@@ -79,7 +93,7 @@ class RecoveryGenerator:
             exchanges: Lista completa de intercambios.
             blocks: Lista de bloques temáticos.
             chat_label: Etiqueta del chat.
-            metadata: Metadata con mapeo tema→archivo (para el índice).
+            metadata: Metadata con mapeo tema->archivo (para el índice).
             existing_decisions_content: Contenido previo de 02_decisiones_clave.md
                 (para modo incremental de decisiones).
             from_timestamp: Si > 0, las decisiones solo se procesan para
@@ -118,7 +132,7 @@ class RecoveryGenerator:
         )
 
         # 3. Índice (usa metadata y resumen de decisiones)
-        logger.debug("Generando índice")
+        logger.debug("Generando indice")
         indice_content = self._indice_gen.generate(
             blocks=blocks,
             chat_label=chat_label,
@@ -135,7 +149,7 @@ class RecoveryGenerator:
         )
 
         # 4. Bloques temáticos (uno por bloque)
-        logger.debug("Generando %d bloques temáticos", len(blocks))
+        logger.debug("Generando %d bloques tematicos", len(blocks))
         for block in blocks:
             bloque_content = self._bloque_gen.generate(
                 block=block,
@@ -151,7 +165,7 @@ class RecoveryGenerator:
             )
 
         logger.info(
-            "Generación completa: %d archivos (3 principales + %d bloques)",
+            "Generacion completa: %d archivos (3 principales + %d bloques)",
             len(recovery_files), len(blocks),
         )
         return recovery_files
@@ -159,7 +173,7 @@ class RecoveryGenerator:
     def __repr__(self) -> str:
         return "RecoveryGenerator()"
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _get_token_limit(self, category: FileCategory) -> int:
         """Mapea una categoría a su límite de tokens."""
@@ -171,10 +185,18 @@ class RecoveryGenerator:
         }
         return mapping.get(category, 0)
 
-
 if __name__ == "__main__":
-    # ── Validación interna de recovery_generator.py ──
-    print("=== Validación de recovery_generator.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de recovery_generator.py --
+    print("=== Validacion de recovery_generator.py ===\n")
 
     from contexto_zai.models import (
         Exchange,
@@ -217,36 +239,36 @@ if __name__ == "__main__":
     assert "01_indice_recuperacion.md" in filenames
     assert "02_decisiones_clave.md" in filenames
     assert "bloque_01.md" in filenames
-    print(f"✓ 4 archivos generados: {filenames}")
+    print(f"[OK] 4 archivos generados: {filenames}")
 
     # Test 2: estado tiene 8 secciones
     estado_file = next(f for f in files if f.filename == "00_estado_actual.md")
     for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
         assert f"Sección {section}" in estado_file.content, f"Falta sección {section}"
-    print(f"✓ Estado con 8 secciones")
+    print(f"[OK] Estado con 8 secciones")
 
     # Test 3: índice tiene tabla mapeo
     indice_file = next(f for f in files if f.filename == "01_indice_recuperacion.md")
-    assert "Mapeo tema → archivo" in indice_file.content
+    assert "Mapeo tema -> archivo" in indice_file.content
     assert "validaciones" in indice_file.content
-    print(f"✓ Índice con mapeo tema → archivo")
+    print(f"[OK] Indice con mapeo tema -> archivo")
 
     # Test 4: decisiones en modo offline (sin extractor)
     dec_file = next(f for f in files if f.filename == "02_decisiones_clave.md")
     assert "Sin decisiones registradas" in dec_file.content
-    print(f"✓ Decisiones en modo offline (placeholder)")
+    print(f"[OK] Decisiones en modo offline (placeholder)")
 
     # Test 5: bloque con intercambio formateado
     bloque_file = next(f for f in files if f.filename == "bloque_01.md")
     assert "Ejecuta pytest de server.py" in bloque_file.content
     assert "5 passed" in bloque_file.content
-    print(f"✓ Bloque con intercambios formateados")
+    print(f"[OK] Bloque con intercambios formateados")
 
     # Test 6: todos los archivos tienen token_limit correcto
     assert estado_file.token_limit == 20_000
     assert indice_file.token_limit == 8_000
     assert dec_file.token_limit == 12_000
     assert bloque_file.token_limit == 70_000
-    print(f"✓ Límites v3.2: estado=20K, indice=8K, decisiones=12K, bloque=70K")
+    print(f"[OK] Limites v3.2: estado=20K, indice=8K, decisiones=12K, bloque=70K")
 
-    print("\n✅ recovery_generator.py: todos los tests pasaron")
+    print("\n[PASS] recovery_generator.py: todos los tests pasaron")

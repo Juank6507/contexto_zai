@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/subagents/launcher.py
+# contexto_zai/subagents/launcher.py -- Lanzador de subagentes efimeros: wrapper sobre Task de Z.ai con inyeccion de invoker.
 """Lanzador de subagentes efímeros (v3.2).
 
 Wrapper sobre la herramienta Task de Z.ai para lanzar subagentes
@@ -20,7 +20,6 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class SubagentRequest:
     """Petición de lanzamiento de un subagente.
@@ -34,7 +33,6 @@ class SubagentRequest:
     prompt: str
     files_to_read: list[str]
     description: str = ""
-
 
 @dataclass
 class SubagentResponse:
@@ -50,10 +48,8 @@ class SubagentResponse:
     success: bool = True
     error: str = ""
 
-
 # Tipo del invocador de Task (para inyección de dependencias y tests)
 TaskInvoker = Callable[[str], str]
-
 
 class SubagentLauncher:
     """Lanza subagentes efímeros para leer archivos temáticos.
@@ -84,7 +80,7 @@ class SubagentLauncher:
             max_response_chars,
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def launch(
         self,
@@ -134,7 +130,7 @@ class SubagentLauncher:
             )
 
         logger.info(
-            "Subagente completado: %d chars (descripción: %s)",
+            "Subagente completado: %d chars (descripcion: %s)",
             len(content), description,
         )
 
@@ -169,7 +165,7 @@ class SubagentLauncher:
     def __repr__(self) -> str:
         return f"SubagentLauncher(max_response={self._max_response_chars})"
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _build_prompt(
         self,
@@ -217,10 +213,18 @@ Respuesta:"""
         )
         return "[Subagente no disponible: no hay task_invoker configurado]"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de launcher.py ──
-    print("=== Validación de subagents/launcher.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de launcher.py --
+    print("=== Validacion de subagents/launcher.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -237,7 +241,7 @@ if __name__ == "__main__":
     )
     assert response.success
     assert response.content == "Respuesta simulada del subagente"
-    print(f"✓ Lanzamiento con invoker simulado: OK")
+    print(f"[OK] Lanzamiento con invoker simulado: OK")
 
     # Test 2: prompt bien formado
     captured_prompt = []
@@ -255,7 +259,7 @@ if __name__ == "__main__":
     assert "¿Qué decide el planificador?" in captured_prompt[0]
     assert "/tmp/bloque_01.md" in captured_prompt[0]
     assert "/tmp/bloque_02.md" in captured_prompt[0]
-    print(f"✓ Prompt bien formado: incluye pregunta y archivos")
+    print(f"[OK] Prompt bien formado: incluye pregunta y archivos")
 
     # Test 3: truncado de respuesta larga
     def long_invoker(prompt: str) -> str:
@@ -265,7 +269,7 @@ if __name__ == "__main__":
     response3 = launcher3.launch("pregunta", ["/tmp/x"])
     assert len(response3.content) <= 100 + 30  # 100 + truncation note
     assert "truncado" in response3.content
-    print(f"✓ Truncado: respuesta larga limitada a {launcher3.max_response_chars} chars")
+    print(f"[OK] Truncado: respuesta larga limitada a {launcher3.max_response_chars} chars")
 
     # Test 4: invoker que falla
     def failing_invoker(prompt: str) -> str:
@@ -275,7 +279,7 @@ if __name__ == "__main__":
     response4 = launcher4.launch("pregunta", ["/tmp/x"])
     assert not response4.success
     assert "Task invoker error" in response4.error
-    print(f"✓ Error del invoker: capturado correctamente")
+    print(f"[OK] Error del invoker: capturado correctamente")
 
     # Test 5: launch_many
     def many_invoker(prompt: str) -> str:
@@ -290,7 +294,7 @@ if __name__ == "__main__":
     responses = launcher5.launch_many(requests)
     assert len(responses) == 3
     assert all(r.success for r in responses)
-    print(f"✓ launch_many: {len(responses)} respuestas")
+    print(f"[OK] launch_many: {len(responses)} respuestas")
 
     # Test 6: archivo existente no genera error
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
@@ -300,13 +304,13 @@ if __name__ == "__main__":
 
     response6 = launcher.launch("pregunta", [existing_file])
     assert response6.success
-    print(f"✓ Archivo existente: no genera warnings")
+    print(f"[OK] Archivo existente: no genera warnings")
 
     # Test 7: invocador por defecto (placeholder)
     launcher_default = SubagentLauncher()  # sin task_invoker
     response7 = launcher_default.launch("pregunta", [])
     assert response7.success
     assert "no disponible" in response7.content.lower()
-    print(f"✓ Invocador por defecto: placeholder devuelto")
+    print(f"[OK] Invocador por defecto: placeholder devuelto")
 
-    print("\n✅ subagents/launcher.py: todos los tests pasaron")
+    print("\n[PASS] subagents/launcher.py: todos los tests pasaron")

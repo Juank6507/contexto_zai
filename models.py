@@ -1,3 +1,4 @@
+# contexto_zai/models.py -- Modelos de datos Pydantic (Message, Exchange, ThematicBlock, RecoveryFile, etc.).
 """Modelos de datos del sistema Contexto Z.ai.
 
 Usa Pydantic v2 para validación estricta y serialización.
@@ -10,22 +11,18 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-
-# ── Enums ──────────────────────────────────────────────────────────
-
+# -- Enums ----------------------------------------------------------
 
 class MessageRole(str, Enum):
     USER = "user"
     ASSISTANT = "assistant"
     SYSTEM = "system"
 
-
 class FileCategory(str, Enum):
     ESTADO = "estado_actual"
     INDICE = "indice_recuperacion"
     DECISIONES = "decisiones_clave"
     BLOQUE = "bloque_tematico"
-
 
 class PipelinePhase(str, Enum):
     AUTH = "auth"
@@ -34,15 +31,12 @@ class PipelinePhase(str, Enum):
     GENERATION = "generation"
     VERIFICATION = "verification"
 
-
 class Verdict(str, Enum):
     OK = "ok"
     WARNING = "warning"
     ERROR = "error"
 
-
-# ── Mensajes ───────────────────────────────────────────────────────
-
+# -- Mensajes -------------------------------------------------------
 
 class Message(BaseModel):
     """Un mensaje individual del chat.
@@ -85,7 +79,6 @@ class Message(BaseModel):
     def estimated_tokens(self) -> float:
         return len(self.content) / 3.5
 
-
 class Exchange(BaseModel):
     """Unidad de conversación: mensaje del Director + respuestas del agente.
 
@@ -120,7 +113,7 @@ class Exchange(BaseModel):
 
     @property
     def period_str(self) -> str:
-        return f"{self.start_datetime.strftime('%Y-%m-%d')} → {self.end_datetime.strftime('%Y-%m-%d')}"
+        return f"{self.start_datetime.strftime('%Y-%m-%d')} -> {self.end_datetime.strftime('%Y-%m-%d')}"
 
     @property
     def datetime_str(self) -> str:
@@ -146,9 +139,7 @@ class Exchange(BaseModel):
     def agent_count(self) -> int:
         return len(self.agent_msgs)
 
-
-# ── Bloques temáticos ──────────────────────────────────────────────
-
+# -- Bloques temáticos ----------------------------------------------
 
 class ThematicBlock(BaseModel):
     """Bloque de exchanges agrupados por tamaño (v3.2).
@@ -194,7 +185,7 @@ class ThematicBlock(BaseModel):
             return "sin datos"
         first = self.exchanges[0].start_datetime.strftime("%Y-%m-%d")
         last = self.exchanges[-1].end_datetime.strftime("%Y-%m-%d")
-        return f"{first} → {last}"
+        return f"{first} -> {last}"
 
     @property
     def full_filename(self) -> str:
@@ -211,9 +202,7 @@ class ThematicBlock(BaseModel):
         new_chars = self.total_chars + exchange.total_chars
         return (new_chars / 3.5) > max_tokens
 
-
-# ── Archivos de recuperación ───────────────────────────────────────
-
+# -- Archivos de recuperación ---------------------------------------
 
 class RecoveryFile(BaseModel):
     """Archivo de recuperación generado.
@@ -248,9 +237,7 @@ class RecoveryFile(BaseModel):
             return 0.0
         return (self.estimated_tokens / self.token_limit) * 100
 
-
-# ── Regla de clasificación ─────────────────────────────────────────
-
+# -- Regla de clasificación -----------------------------------------
 
 class ClassificationRule(BaseModel):
     """Regla para clasificar exchanges por tema.
@@ -269,9 +256,7 @@ class ClassificationRule(BaseModel):
     block_filename: str = ""
     description: str = ""
 
-
-# ── Resultados de verificación ─────────────────────────────────────
-
+# -- Resultados de verificación -------------------------------------
 
 class FileVerification(BaseModel):
     """Resultado de verificación de un archivo.
@@ -289,7 +274,6 @@ class FileVerification(BaseModel):
     token_limit: int
     verdict: Verdict = Verdict.OK
     message: str = ""
-
 
 class VerificationReport(BaseModel):
     """Reporte completo de verificación.
@@ -315,9 +299,7 @@ class VerificationReport(BaseModel):
     def has_warnings(self) -> bool:
         return any(f.verdict == Verdict.WARNING for f in self.files)
 
-
-# ── Resultado del pipeline ─────────────────────────────────────────
-
+# -- Resultado del pipeline -----------------------------------------
 
 class PipelineResult(BaseModel):
     """Resultado completo de la ejecución del pipeline.
@@ -344,9 +326,7 @@ class PipelineResult(BaseModel):
     output_dir: str = ""
     error: str = ""
 
-
-# ── Modelos v3.2: Metadata, Decisiones, Detección ─────────────────
-
+# -- Modelos v3.2: Metadata, Decisiones, Detección -----------------
 
 class Decision(BaseModel):
     """Una decisión operativa extraída de la conversación.
@@ -369,7 +349,6 @@ class Decision(BaseModel):
     impact: str = ""
     tema: str = ""
 
-
 class RecoveryMetadata(BaseModel):
     """Metadata de recuperación (archivo _metadata.json).
 
@@ -378,7 +357,7 @@ class RecoveryMetadata(BaseModel):
         share_id: UUID del share.
         ultimo_timestamp: Último mensaje procesado (para incremental).
         total_exchanges: Total de exchanges procesados.
-        tema_a_archivo: Mapeo tema → archivo (unicidad garantizada).
+        tema_a_archivo: Mapeo tema -> archivo (unicidad garantizada).
         subtemas_derivados: Registro de subtemas creados al subdividir.
         ultima_activacion: ISO timestamp de la última activación.
     """
@@ -416,7 +395,6 @@ class RecoveryMetadata(BaseModel):
         if subtema not in self.subtemas_derivados[tema_padre]:
             self.subtemas_derivados[tema_padre].append(subtema)
 
-
 class DetectionTrigger(str, Enum):
     """Tipos de disparador de la recuperación de contexto."""
 
@@ -424,7 +402,6 @@ class DetectionTrigger(str, Enum):
     CONTADOR = "contador"
     AUTO_PREGUNTAS = "auto_preguntas"
     EXPLICITO = "explicito"
-
 
 class DetectionEvent(BaseModel):
     """Evento de detección de pérdida de contexto.
@@ -441,16 +418,24 @@ class DetectionEvent(BaseModel):
     timestamp: float = 0.0
     tokens_estimados: int = 0
 
-
 if __name__ == "__main__":
-    # ── Validación interna de models.py (atómico standalone) ─────────
-    print("=== Validación de models.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de models.py (atómico standalone) ---------
+    print("=== Validacion de models.py ===\n")
 
     # Test 1: Message básico
     m = Message(seq=1, role=MessageRole.USER, timestamp=1788482829, content="hola")
     assert m.is_user and not m.is_assistant
     assert m.estimated_tokens > 0
-    print(f"✓ Message: role={m.role.value}, datetime={m.datetime_str}")
+    print(f"[OK] Message: role={m.role.value}, datetime={m.datetime_str}")
 
     # Test 2: Exchange
     ex = Exchange(
@@ -464,7 +449,7 @@ if __name__ == "__main__":
     assert ex.director_count == 1
     assert ex.agent_count == 1
     assert ex.estimated_tokens > 0
-    print(f"✓ Exchange: id={ex.id}, tema={ex.topic}, tokens={ex.estimated_tokens:.0f}")
+    print(f"[OK] Exchange: id={ex.id}, tema={ex.topic}, tokens={ex.estimated_tokens:.0f}")
 
     # Test 3: ThematicBlock v3.2 (varios temas por archivo)
     bloque = ThematicBlock(filename="bloque_01.md")
@@ -473,7 +458,7 @@ if __name__ == "__main__":
     bloque.add_exchange(ex2)
     assert set(bloque.temas) == {"general", "validaciones"}
     assert not bloque.would_exceed_limit(ex, max_tokens=100_000)
-    print(f"✓ ThematicBlock v3.2: {bloque.exchange_count} exchanges, {len(bloque.temas)} temas en 1 archivo")
+    print(f"[OK] ThematicBlock v3.2: {bloque.exchange_count} exchanges, {len(bloque.temas)} temas en 1 archivo")
 
     # Test 4: RecoveryMetadata con unicidad
     meta = RecoveryMetadata(chat_id="abc", share_id="def")
@@ -486,23 +471,23 @@ if __name__ == "__main__":
         meta.registrar_tema("validaciones", "bloque_02.md")
         assert False, "Debería haber lanzado ValueError"
     except ValueError as e:
-        print(f"✓ Unicidad temática: violación detectada correctamente")
+        print(f"[OK] Unicidad tematica: violacion detectada correctamente")
     meta.registrar_subtema("validaciones", "validaciones_server", "bloque_02.md")
     assert "validaciones_server" in meta.subtemas_derivados["validaciones"]
-    print(f"✓ Subtema derivado: 'validaciones_server' registrado en bloque_02.md")
+    print(f"[OK] Subtema derivado: 'validaciones_server' registrado en bloque_02.md")
 
     # Test 5: Decision
     d = Decision(id="D01", timestamp=1788482829, title="Test", decision="X", reason="Y", impact="Z")
     assert d.id == "D01"
-    print(f"✓ Decision: {d.id} - {d.title}")
+    print(f"[OK] Decision: {d.id} - {d.title}")
 
     # Test 6: DetectionEvent
     de = DetectionEvent(trigger=DetectionTrigger.LEXICO, reason="ya te dije")
     assert de.trigger == DetectionTrigger.LEXICO
-    print(f"✓ DetectionEvent: trigger={de.trigger.value}")
+    print(f"[OK] DetectionEvent: trigger={de.trigger.value}")
 
     # Test 7: límites actualizados
     assert VerificationReport().main_load_limit == 40_000
-    print(f"✓ VerificationReport: main_load_limit=40K (v3.2)")
+    print(f"[OK] VerificationReport: main_load_limit=40K (v3.2)")
 
-    print("\n✅ models.py: todos los tests pasaron")
+    print("\n[PASS] models.py: todos los tests pasaron")

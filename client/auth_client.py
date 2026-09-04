@@ -1,3 +1,4 @@
+# contexto_zai/client/auth_client.py -- Cliente de autenticacion y creacion de shares en chat.z.ai (modo legacy y v3.2).
 """Cliente de autenticación para chat.z.ai (v3.2).
 
 Dos modos de operación:
@@ -13,6 +14,21 @@ Utiliza httpx para solicitudes HTTP síncronas en modo token directo.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import json
 import logging
 from typing import Optional
@@ -24,18 +40,14 @@ from contexto_zai.config import API_CONFIG
 
 logger = logging.getLogger(__name__)
 
-
 class AuthClientError(Exception):
     """Error base del AuthClient."""
-
 
 class AuthenticationError(AuthClientError):
     """El token no es válido o fue rechazado."""
 
-
 class ShareCreationError(AuthClientError):
     """Error al crear el share del chat."""
-
 
 class AuthClient:
     """Gestiona autenticación y creación de shares en chat.z.ai.
@@ -79,7 +91,7 @@ class AuthClient:
             },
         )
 
-    # ── Propiedades públicas ───────────────────────────────────
+    # -- Propiedades públicas -----------------------------------
 
     @property
     def token(self) -> str:
@@ -96,7 +108,7 @@ class AuthClient:
         """True si opera en modo navegador (v3.2)."""
         return self._browser_session is not None and not self._token
 
-    # ── Autenticación vía navegador (v3.2) ──────────────────────
+    # -- Autenticación vía navegador (v3.2) ----------------------
 
     def authenticate(self, chat_id: str, jwt_director: str) -> bool:
         """Aplica el protocolo de inyección de cookie (modo v3.2).
@@ -130,7 +142,7 @@ class AuthClient:
         cookie = self._browser_session.get_token_cookie()
         return cookie.value if cookie and not cookie.is_guest else None
 
-    # ── Métodos públicos ───────────────────────────────────────
+    # -- Métodos públicos ---------------------------------------
 
     def validate_token(self) -> dict:
         """Verifica que el token es válido consultando /api/v1/auths/.
@@ -156,7 +168,7 @@ class AuthClient:
         response.raise_for_status()
         data = response.json()
         logger.info(
-            "Token válido. Usuario: %s (role: %s)",
+            "Token valido. Usuario: %s (role: %s)",
             data.get("email", "desconocido"),
             data.get("role", "desconocido"),
         )
@@ -225,10 +237,18 @@ class AuthClient:
         token_preview = self._token[:12] + "..." if len(self._token) > 12 else self._token
         return f"AuthClient(token={token_preview!r})"
 
-
 if __name__ == "__main__":
-    # ── Validación interna de auth_client.py (atómico standalone) ──
-    print("=== Validación de auth_client.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de auth_client.py (atómico standalone) --
+    print("=== Validacion de auth_client.py ===\n")
 
     import tempfile
     from pathlib import Path
@@ -239,7 +259,7 @@ if __name__ == "__main__":
     assert auth_legacy.token == "eyJhbG.test.payload.signature"
     assert not auth_legacy.is_browser_mode
     assert auth_legacy.browser_session is None
-    print(f"✓ Modo legacy: {auth_legacy!r}")
+    print(f"[OK] Modo legacy: {auth_legacy!r}")
 
     # Test 2: modo navegador v3.2
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -248,7 +268,7 @@ if __name__ == "__main__":
         assert auth_v3.is_browser_mode
         assert auth_v3.browser_session is session
         assert auth_v3.token == ""
-        print(f"✓ Modo navegador v3.2: {auth_v3!r}")
+        print(f"[OK] Modo navegador v3.2: {auth_v3!r}")
 
     # Test 3: authenticate() sin browser_session lanza error
     auth_no_browser = AuthClient(token="some_token")
@@ -256,22 +276,22 @@ if __name__ == "__main__":
         auth_no_browser.authenticate(chat_id="x", jwt_director="y")
         assert False, "Debería haber lanzado AuthClientError"
     except AuthClientError as e:
-        print(f"✓ authenticate() sin browser_session: error correcto")
+        print(f"[OK] authenticate() sin browser_session: error correcto")
 
     # Test 4: get_browser_cookie_token en modo legacy devuelve None
     assert auth_legacy.get_browser_cookie_token() is None
-    print(f"✓ get_browser_cookie_token() en modo legacy: None")
+    print(f"[OK] get_browser_cookie_token() en modo legacy: None")
 
     # Test 5: excepciones de autenticación
     assert issubclass(AuthenticationError, AuthClientError)
     assert issubclass(ShareCreationError, AuthClientError)
-    print(f"✓ Jerarquía de excepciones: AuthClientError -> Auth/Share")
+    print(f"[OK] Jerarquia de excepciones: AuthClientError -> Auth/Share")
 
     # Cerrar clientes
     auth_legacy.close()
     auth_v3.close()
     auth_no_browser.close()
 
-    print("\n✅ auth_client.py: todos los tests pasaron")
+    print("\n[PASS] auth_client.py: todos los tests pasaron")
     print("\nNota: para validar create_share/validate_token contra la API real,")
     print("      ejecutar tests/test_auth_client.py con JWT del Director")

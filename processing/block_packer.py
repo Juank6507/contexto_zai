@@ -1,4 +1,4 @@
-# Destino: /home/z/my-project/contexto_zai/processing/block_packer.py
+# contexto_zai/processing/block_packer.py -- Empaquetador de bloques: agrupa varios temas en un archivo hasta llenar 70K tokens (unicidad garantizada).
 """Empaquetador de intercambios en bloques temáticos por tamaño (v3.2).
 
 Diferencia crítica respecto a v1.0 (BlockManager):
@@ -19,6 +19,21 @@ Atómico standalone: importa config y models, nada más del proyecto.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+for _ in range(5):
+    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
+        if _candidate not in _sys.path:
+            _sys.path.insert(0, _candidate)
+        break
+    _candidate = _os.path.dirname(_candidate)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import logging
 from typing import Optional
 
@@ -26,7 +41,6 @@ from contexto_zai.config import TOKEN_LIMITS
 from contexto_zai.models import Exchange, ThematicBlock
 
 logger = logging.getLogger(__name__)
-
 
 class BlockPacker:
     """Empaqueta intercambios clasificados en bloques por tamaño.
@@ -52,7 +66,7 @@ class BlockPacker:
             max_tokens_per_block * 3.5,
         )
 
-    # ── API pública ────────────────────────────────────────────────
+    # -- API pública ------------------------------------------------
 
     def pack(
         self,
@@ -105,7 +119,7 @@ class BlockPacker:
                         current_block.add_exchange(ex)
                     added = True
                     logger.debug(
-                        "Tema '%s' añadido a bloque existente %s (%d intercambios)",
+                        "Tema '%s' anadido a bloque existente %s (%d intercambios)",
                         tema, current_block.filename, len(exchanges),
                     )
 
@@ -127,7 +141,7 @@ class BlockPacker:
                     current_block.add_exchange(ex)
                 blocks.append(current_block)
                 logger.debug(
-                    "Tema '%s' inició nuevo bloque %s (%d intercambios, %.0f tokens)",
+                    "Tema '%s' inicio nuevo bloque %s (%d intercambios, %.0f tokens)",
                     tema, current_block.filename, len(exchanges), tema_tokens,
                 )
 
@@ -157,7 +171,7 @@ class BlockPacker:
             by_topic.setdefault(ex.topic, []).append(ex)
         return self.pack(by_topic)
 
-    # ── Propiedades ────────────────────────────────────────────────
+    # -- Propiedades ------------------------------------------------
 
     @property
     def max_tokens(self) -> int:
@@ -172,7 +186,7 @@ class BlockPacker:
     def __repr__(self) -> str:
         return f"BlockPacker(max_tokens={self._max_tokens})"
 
-    # ── Métodos privados ───────────────────────────────────────────
+    # -- Métodos privados -------------------------------------------
 
     def _tema_fits_in_block(
         self,
@@ -183,10 +197,18 @@ class BlockPacker:
         new_tokens = sum(ex.estimated_tokens for ex in exchanges)
         return (block.estimated_tokens + new_tokens) <= self._max_tokens
 
-
 if __name__ == "__main__":
-    # ── Validación interna de block_packer.py (atómico standalone) ──
-    print("=== Validación de block_packer.py ===\n")
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validación interna de block_packer.py (atómico standalone) --
+    print("=== Validacion de block_packer.py ===\n")
 
     from contexto_zai.models import Message, MessageRole
 
@@ -205,7 +227,7 @@ if __name__ == "__main__":
     blocks1 = packer.pack_from_exchanges(exchanges_1)
     assert len(blocks1) == 1
     assert "validaciones" in blocks1[0].temas
-    print(f"✓ Un tema, un bloque: {blocks1[0].filename} con {blocks1[0].exchange_count} intercambio")
+    print(f"[OK] Un tema, un bloque: {blocks1[0].filename} con {blocks1[0].exchange_count} intercambio")
 
     # Test 2: varios temas en un solo bloque (si caben)
     exchanges_2 = [
@@ -215,9 +237,9 @@ if __name__ == "__main__":
     blocks2 = packer.pack_from_exchanges(exchanges_2)
     assert len(blocks2) == 1, f"Esperaba 1 bloque, obtuve {len(blocks2)}"
     assert set(blocks2[0].temas) == {"configuracion_proyecto", "validaciones"}
-    print(f"✓ Varios temas en un bloque: {blocks2[0].temas}")
+    print(f"[OK] Varios temas en un bloque: {blocks2[0].temas}")
 
-    # Test 3: tema que supera el límite → ValueError
+    # Test 3: tema que supera el límite -> ValueError
     big_exchanges = [
         Exchange(id=i, director_msg=Message(seq=i, role=MessageRole.USER, timestamp=i, content="x" * 5000), topic="general", start_timestamp=i, end_timestamp=i+1)
         for i in range(1, 6)  # 5 intercambios de ~1428 tokens cada uno = 7140 tokens
@@ -227,7 +249,7 @@ if __name__ == "__main__":
         assert False, "Debería haber lanzado ValueError"
     except ValueError as e:
         assert "supera el límite" in str(e)
-        print(f"✓ Tema que supera límite: ValueError correcto")
+        print(f"[OK] Tema que supera limite: ValueError correcto")
 
     # Test 4: cuando un tema llena el bloque, el siguiente tema va a bloque nuevo
     exchanges_4 = [
@@ -239,7 +261,7 @@ if __name__ == "__main__":
     packer_4 = BlockPacker(max_tokens_per_block=1500)
     blocks4 = packer_4.pack_from_exchanges(exchanges_4)
     assert len(blocks4) >= 2, f"Esperaba >=2 bloques, obtuve {len(blocks4)}"
-    print(f"✓ Tema que llena bloque, siguiente tema en bloque nuevo: {len(blocks4)} bloques")
+    print(f"[OK] Tema que llena bloque, siguiente tema en bloque nuevo: {len(blocks4)} bloques")
 
     # Test 5: unicidad temática (un tema vive en un solo archivo)
     exchanges_5 = [
@@ -251,7 +273,7 @@ if __name__ == "__main__":
     # Todas los intercambios de "validaciones" deben estar en un solo bloque
     all_tema_files = [b.filename for b in blocks5 if "validaciones" in b.temas]
     assert len(all_tema_files) == 1, f"El tema aparece en {len(all_tema_files)} bloques, debería ser 1"
-    print(f"✓ Unicidad temática: 'validaciones' en un solo bloque ({all_tema_files[0]})")
+    print(f"[OK] Unicidad tematica: 'validaciones' en un solo bloque ({all_tema_files[0]})")
 
     # Test 6: ningún bloque supera el límite
     packer_real = BlockPacker()  # 70K tokens por defecto
@@ -264,10 +286,10 @@ if __name__ == "__main__":
         assert b.estimated_tokens <= packer_real.max_tokens, (
             f"Bloque {b.filename} supera el límite: {b.estimated_tokens:.0f} > {packer_real.max_tokens}"
         )
-    print(f"✓ Ningún bloque supera el límite: {len(blocks6)} bloques generados")
+    print(f"[OK] Ningun bloque supera el limite: {len(blocks6)} bloques generados")
 
     # Test 7: max_chars es correcto
     assert packer_real.max_chars == int(70_000 * 3.5)
-    print(f"✓ max_chars: {packer_real.max_chars}")
+    print(f"[OK] max_chars: {packer_real.max_chars}")
 
-    print("\n✅ block_packer.py: todos los tests pasaron")
+    print("\n[PASS] block_packer.py: todos los tests pasaron")
