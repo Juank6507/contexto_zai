@@ -109,16 +109,23 @@ class RecoveryCycle:
         self._metadata_mgr = MetadataManager(output_dir=self._workspace_dir)
 
     def _build_decisiones_generator(self):
-        """Construye el generador de decisiones con extractor LLM si está disponible."""
+        """Construye el generador de decisiones con extractor real."""
         from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+        from contexto_zai.processing.decision_extractor import DecisionExtractor
+
+        # Usar extractor real por defecto (v3.3)
         if self._decision_extractor:
-            # Si es DecisionesSubagent, usar su método extract como extractor
+            # Si se proporciona un extractor personalizado, usarlo
             if hasattr(self._decision_extractor, "extract"):
                 extractor = self._decision_extractor.extract
             else:
                 extractor = self._decision_extractor
-            return DecisionesGenerator(extractor=extractor)
-        return DecisionesGenerator()
+        else:
+            # Extractor real por defecto
+            real_extractor = DecisionExtractor()
+            extractor = real_extractor.extract
+
+        return DecisionesGenerator(extractor=extractor)
 
     # -- API pública ------------------------------------------------
 
@@ -166,7 +173,8 @@ class RecoveryCycle:
             for ex in exchanges:
                 by_topic.setdefault(ex.topic, []).append(ex)
 
-            # Subdividir temas que superen el límite
+            # Subdividir temas que superen el limite
+            # Iterar hasta que ningun tema necesite subdivision (puede requerir varias pasadas)
             expanded: dict = {}
             for tema, exs in by_topic.items():
                 if self._subdivider.needs_subdivision(tema, exs):
@@ -178,7 +186,27 @@ class RecoveryCycle:
                 else:
                     expanded[tema] = exs
 
-            # Empaquetar en bloques por tamaño
+            # Segunda pasada: verificar si algun subtema sigue necesitando subdivision
+            # (puede ocurrir si la subdivision lexica genero subtemas con multiples intercambios grandes)
+            max_pasadas = 5
+            for pasada in range(max_pasadas):
+                needs_more = False
+                new_expanded: dict = {}
+                for tema, exs in expanded.items():
+                    if self._subdivider.needs_subdivision(tema, exs):
+                        needs_more = True
+                        result = self._subdivider.subdivide(tema, exs)
+                        for name, sub_exs in result.subtemas:
+                            for ex in sub_exs:
+                                ex.topic = name
+                            new_expanded[name] = sub_exs
+                    else:
+                        new_expanded[tema] = exs
+                expanded = new_expanded
+                if not needs_more:
+                    break
+
+            # Empaquetar en bloques por tamano
             blocks = self._packer.pack(expanded)
 
             # Actualizar metadata con mapeo tema->archivo
@@ -195,6 +223,10 @@ class RecoveryCycle:
             from datetime import datetime, timezone
             metadata.ultima_activacion = datetime.now(timezone.utc).isoformat()
             self._metadata_mgr.write(metadata)
+
+            # PASO 6b (v3.3): Detectar y versionar scripts
+            logger.info("Paso 6b: Detectando scripts y construyendo grafos de cambios...")
+            self._detect_and_version_scripts(exchanges)
 
             # PASO 7: Generación de los 3 archivos + bloques
             logger.info("Paso 7: Generando archivos de recuperacion...")
@@ -238,6 +270,55 @@ class RecoveryCycle:
             return RecoveryCycleResult(success=False, error=str(e))
 
     # -- Métodos privados -------------------------------------------
+
+    def _detect_and_version_scripts(self, exchanges: list) -> None:
+        """Detecta scripts en los intercambios y construye grafos de cambios (v3.3).
+
+        Para cada intercambio, usa CodeDetector para identificar scripts.
+        Agrupa versiones del mismo script y construye un ChangeGraph
+        con diffs forward y reverse.
+        """
+        try:
+            from contexto_zai.processing.code_detector import CodeDetector
+            from contexto_zai.processing.version_graph import VersionGraphBuilder
+        except ImportError as e:
+            logger.warning("CodeDetector o VersionGraph no disponibles: %s", e)
+            return
+
+        detector = CodeDetector()
+        builder = VersionGraphBuilder()
+
+        # Recopilar todas las versiones de cada script
+        script_versions: dict[str, list[tuple[str, float, int, str]]] = {}
+
+        for ex in exchanges:
+            if not ex.agent_msgs:
+                continue
+            for msg in ex.agent_msgs:
+                scripts = detector.detect_scripts(msg.content, exchange_id=ex.id)
+                for script in scripts:
+                    name = script.name
+                    if name not in script_versions:
+                        script_versions[name] = []
+                    version_id = f"v{len(script_versions[name]) + 1}"
+                    script_versions[name].append((
+                        version_id,
+                        msg.timestamp,
+                        ex.id,
+                        script.content,
+                    ))
+
+        # Construir y guardar grafos
+        if script_versions:
+            for name, versions in script_versions.items():
+                graph = builder.build(name, versions)
+                builder.save_graph(graph, self._workspace_dir)
+                logger.info(
+                    "Script '%s' versionado: %d versiones",
+                    name, len(versions),
+                )
+        else:
+            logger.info("No se detectaron scripts versionables en el chat")
 
     def _write_files(
         self,

@@ -76,10 +76,28 @@ class BloqueGenerator:
             f"({block.director_count} del Director, {block.agent_count} del agente)",
             f"**Temas en este archivo:** {len(block.temas)} ({temas_str})",
             f"**Tamano estimado:** ~{block.estimated_tokens / 1000:.1f}K tokens",
+        ]
+
+        # v3.3: si hay temas que parecen scripts, anadir nota de versionado
+        script_temas = [
+            t for t in block.temas
+            if "_server" in t or "_router" in t or "_config" in t
+            or "_auth" in t or "_pipeline" in t or "_client" in t
+            or "_bloque" in t or "_seccion" in t
+        ]
+        if script_temas:
+            lines.extend([
+                "",
+                f"**Scripts versionados:** {len(script_temas)} "
+                f"({', '.join(script_temas)})",
+                f"Ver grafo de cambios en `_grafos_cambios.json` para retroceder a versiones anteriores.",
+            ])
+
+        lines.extend([
             "",
             "---",
             "",
-        ]
+        ])
 
         # Cada intercambio formateado
         for i, exchange in enumerate(block.exchanges, start=1):

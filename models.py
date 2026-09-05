@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -418,6 +419,52 @@ class DetectionEvent(BaseModel):
     timestamp: float = 0.0
     tokens_estimados: int = 0
 
+
+# ── Modelos v3.3: Scripts versionados ─────────────────────────
+
+
+class ScriptVersion(BaseModel):
+    """Una version de un script en un punto del chat.
+
+    Attributes:
+        version_id: Identificador unico (ej: "v1", "v2").
+        timestamp: Cuando aparecio en el chat.
+        exchange_id: ID del intercambio donde aparecio.
+        content: Contenido del script en esta version.
+        parent_version: Version padre en el grafo (None para v1).
+    """
+
+    version_id: str
+    timestamp: float = 0.0
+    exchange_id: int = 0
+    content: str = ""
+    parent_version: Optional[str] = None
+
+
+class Script(BaseModel):
+    """Un script o artefacto versionable identificado en el chat.
+
+    Attributes:
+        name: Nombre propio (ej: "server", "router").
+        full_path: Ruta completa (DNI/apellido si hay duplicados).
+        versions: Lista de ScriptVersion ordenadas cronologicamente.
+    """
+
+    name: str
+    full_path: str = ""
+    versions: list[ScriptVersion] = Field(default_factory=list)
+
+    @property
+    def version_count(self) -> int:
+        """Numero de versiones del script."""
+        return len(self.versions)
+
+    @property
+    def current_version(self) -> Optional[ScriptVersion]:
+        """Ultima version del script."""
+        return self.versions[-1] if self.versions else None
+
+
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
     import io as _io, sys as _sys
@@ -428,7 +475,7 @@ if __name__ == "__main__":
             _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
     except (AttributeError, _io.UnsupportedOperation):
         pass
-    # -- Validación interna de models.py (atómico standalone) ---------
+    # -- Validacion interna de models.py (atomico standalone) ---------
     print("=== Validacion de models.py ===\n")
 
     # Test 1: Message básico

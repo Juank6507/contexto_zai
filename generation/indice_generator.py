@@ -146,7 +146,25 @@ class IndiceGenerator:
                 "",
             ])
             for padre, subtemas in metadata.subtemas_derivados.items():
-                lines.append(f"- **{padre}** se subdividió en: {', '.join(f'`{s}`' for s in subtemas)}")
+                lines.append(f"- **{padre}** se subdividio en: {', '.join(f'`{s}`' for s in subtemas)}")
+            lines.append("")
+
+        # v3.3: seccion de scripts versionados
+        script_temas = [
+            tema for tema in tema_a_archivo.keys()
+            if any(suf in tema for suf in [
+                "_server", "_router", "_config", "_auth", "_pipeline",
+                "_client", "_bloque", "_seccion",
+            ])
+        ]
+        if script_temas:
+            lines.extend([
+                "## Scripts versionados (v3.3)",
+                "",
+            ])
+            for tema in sorted(script_temas):
+                archivo = tema_a_archivo[tema]
+                lines.append(f"- `{tema}` -> `{archivo}` (ver grafo en `_grafos_cambios.json`)")
             lines.append("")
 
         content = "\n".join(lines)
