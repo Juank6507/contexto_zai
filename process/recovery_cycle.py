@@ -187,11 +187,19 @@ class RecoveryCycle:
             RecoveryCycleResult con el resultado.
         """
         try:
+            # PASO 4b (v3.6): Verificar/obtener JWT automáticamente
+            jwt = self._ensure_jwt()
+            if not jwt:
+                return RecoveryCycleResult(
+                    success=False,
+                    error="No se pudo obtener el JWT del Director. Ejecuta el script .bat.",
+                )
+
             # PASO 5: Extracción de mensajes
             logger.info("Paso 5: Extrayendo mensajes...")
-            with AuthClient(token=self._jwt) as auth:
+            with AuthClient(token=jwt) as auth:
                 share_id = auth.create_share(self._chat_id)
-            with ChatClient(token=self._jwt) as client:
+            with ChatClient(token=jwt) as client:
                 messages, raw_messages = client.extract_all_with_raw(
                     share_id=share_id, chat_id=self._chat_id
                 )
@@ -340,6 +348,36 @@ class RecoveryCycle:
 
     # -- Métodos privados -------------------------------------------
 
+    def _ensure_jwt(self) -> Optional[str]:
+        """Obtiene el JWT del Director desde CredentialManager (única fuente de verdad) (v3.6).
+
+        Flujo:
+        1. Si se pasó jwt en el constructor, usarlo.
+        2. Si hay JWT en CredentialManager y es válido, usarlo.
+        3. Si no, devolver None (el Director debe ejecutar el .bat).
+
+        Returns:
+            JWT string, o None si no se pudo obtener.
+        """
+        # 1. JWT explícito del constructor
+        if self._jwt:
+            return self._jwt
+
+        # 2. JWT desde CredentialManager (única fuente de verdad)
+        try:
+            from contexto_zai.client.credential_manager import CredentialManager
+            cm = CredentialManager()
+            jwt = cm.get_jwt()
+            if jwt:
+                logger.info("JWT obtenido de CredentialManager")
+                return jwt
+        except Exception as e:
+            logger.debug("CredentialManager no disponible: %s", e)
+
+        # 3. No hay JWT disponible
+        logger.warning("No hay JWT disponible. El Director debe ejecutar el script .bat.")
+        return None
+
     def _index_attachments(self, raw_messages: dict) -> list[DocumentoIndexResult]:
         """Detecta y procesa attachments del chat (v3.5).
 
@@ -379,7 +417,19 @@ class RecoveryCycle:
         results: list[DocumentoIndexResult] = []
         for att in attachments:
             try:
-                result = indexer.run(att)
+                # v3.6: elegir flujo según tamaño
+                from contexto_zai.config import PARTITION_THRESHOLD_TOKENS
+                estimated_tokens = int(att.estimated_tokens)
+                if estimated_tokens > PARTITION_THRESHOLD_TOKENS:
+                    # Documento grande → flujo de 3 niveles
+                    logger.info(
+                        "Attachment grande: %s (%d tokens > %d) → flujo de 3 niveles",
+                        att.filename, estimated_tokens, PARTITION_THRESHOLD_TOKENS,
+                    )
+                    result = indexer.run_3_levels(att)
+                else:
+                    # Documento mediano → subagente único
+                    result = indexer.run(att)
                 if result.success:
                     results.append(result)
                     logger.info(

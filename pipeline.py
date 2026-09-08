@@ -293,6 +293,70 @@ def index_document(
         logger.error("Error indexando documento %s: %s", file_id, e)
         return None
 
+
+def index_document_large(
+    file_id: str,
+    jwt: str,
+    filename: str = "",
+    content_type: str = "application/pdf",
+    size: int = 0,
+) -> Optional[object]:
+    """Indexa un documento grande (>50K tokens) usando 3 niveles de subagentes (v3.6).
+
+    Usa el flujo de 3 niveles (N1 Divisor → N2×N Clasificadores paralelos → N3 Conciliador)
+    para procesar documentos que superan los 50K tokens.
+
+    Args:
+        file_id: UUID del archivo en Z.ai.
+        jwt: JWT del Director.
+        filename: Nombre del archivo (opcional).
+        content_type: Tipo MIME (opcional).
+        size: Tamaño en bytes (opcional).
+
+    Returns:
+        DocumentoIndexResult con el resumen, temas y ruta, o None si falló.
+    """
+    from contexto_zai.client.attachment_client import AttachmentClient
+    from contexto_zai.config import PARTITION_THRESHOLD_TOKENS
+    from contexto_zai.models import Attachment
+    from contexto_zai.subagents.documento_indexer_subagent import (
+        DocumentoIndexerSubagent,
+    )
+    from contexto_zai.subagents.launcher import SubagentLauncher
+
+    # Construir Attachment
+    attachment = Attachment(
+        file_id=file_id,
+        filename=filename or f"doc_{file_id[:8]}",
+        content_type=content_type,
+        size=size,
+        url=f"/api/v1/files/{file_id}/content",
+    )
+
+    # Si el documento no es grande, usar index_document normal
+    if attachment.estimated_tokens <= PARTITION_THRESHOLD_TOKENS:
+        logger.info(
+            "Documento %s (%d tokens <= %d) → usando index_document normal",
+            attachment.filename, int(attachment.estimated_tokens), PARTITION_THRESHOLD_TOKENS,
+        )
+        return index_document(file_id, jwt, filename, content_type, size)
+
+    # Documento grande → flujo de 3 niveles
+    try:
+        client = AttachmentClient(token=jwt)
+        launcher = SubagentLauncher()
+        indexer = DocumentoIndexerSubagent(
+            launcher=launcher,
+            attachment_client=client,
+        )
+        result = indexer.run_3_levels(attachment)
+        client.close()
+        return result
+    except Exception as e:
+        logger.error("Error indexando documento grande %s: %s", file_id, e)
+        return None
+
+
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
     import io as _io, sys as _sys
@@ -402,5 +466,23 @@ if __name__ == "__main__":
         hasattr(result_invalid, "success") and not result_invalid.success
     ), "index_document debe manejar errores gracefully"
     print(f"[OK] index_document() con file_id inválido: maneja error correctamente")
+
+    # Test 11 (v3.6): index_document_large disponible
+    assert callable(index_document_large), "index_document_large debe ser callable"
+    sig_large = inspect.signature(index_document_large)
+    assert {"file_id", "jwt", "filename", "content_type", "size"} <= set(sig_large.parameters.keys())
+    print(f"[OK] index_document_large(): disponible con {len(sig_large.parameters)} params")
+
+    # Test 12 (v3.6): index_document_large con file_id inválido
+    result_large_invalid = index_document_large(
+        file_id="invalid-uuid",
+        jwt="fake-jwt",
+        filename="large.pdf",
+        size=1652025,  # ~165K tokens → documento grande
+    )
+    assert result_large_invalid is None or (
+        hasattr(result_large_invalid, "success") and not result_large_invalid.success
+    ), "index_document_large debe manejar errores gracefully"
+    print(f"[OK] index_document_large() con file_id inválido: maneja error")
 
     print("\n[PASS] pipeline.py: todos los tests pasaron")

@@ -234,14 +234,41 @@ class BrowserSession:
         logger.info("Autenticacion exitosa: %s", cookie.email)
         return True
 
-    def ensure_authenticated(self, jwt_director: str, chat_id: str) -> bool:
-        """Asegura que la sesión está autenticada, cargando estado si existe.
+    def ensure_authenticated(self, jwt_director: str = "", chat_id: str = "") -> bool:
+        """Asegura que la sesión está autenticada (v3.6: JWT desde CredentialManager).
 
         Flujo:
-        1. Si hay estado guardado, cargarlo y verificar.
-        2. Si sigue siendo invitado, aplicar protocolo de inyección.
-        3. Guardar estado tras autenticación exitosa.
+        1. Si no se pasa jwt_director, leer de CredentialManager.
+        2. Si hay estado guardado del navegador, cargarlo y verificar.
+        3. Si sigue siendo invitado, aplicar protocolo de inyección con el JWT.
+        4. Guardar estado del navegador tras autenticación exitosa.
+
+        Args:
+            jwt_director: JWT del Director (opcional, si vacío lee de CredentialManager).
+            chat_id: UUID interno del chat.
+
+        Returns:
+            True si la autenticación fue exitosa.
         """
+        # v3.6: Obtener JWT de CredentialManager si no se pasa explícitamente
+        if not jwt_director:
+            try:
+                from contexto_zai.client.credential_manager import CredentialManager
+                cm = CredentialManager()
+                jwt_director = cm.get_jwt() or ""
+                if jwt_director:
+                    logger.info("JWT obtenido de CredentialManager")
+            except Exception as e:
+                logger.debug("No se pudo leer JWT de CredentialManager: %s", e)
+
+        if not jwt_director:
+            logger.error("No hay JWT disponible en CredentialManager ni explícito")
+            return False
+
+        if not chat_id:
+            logger.error("chat_id requerido para autenticación")
+            return False
+
         # Intentar cargar estado guardado primero
         if self.has_saved_state():
             self.load_state()

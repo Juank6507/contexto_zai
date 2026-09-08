@@ -377,6 +377,113 @@ Respuesta:"""
             f"temp={self._temp_dir.name}, indexed={self._indexed_dir.name})"
         )
 
+    # ── v3.6: Flujo de 3 niveles para documentos grandes ────────
+
+    def run_3_levels(self, attachment: Attachment) -> DocumentoIndexResult:
+        """Flujo de 3 niveles para documentos >50K tokens (v3.6).
+
+        1. Descarga el documento y lo guarda en temp/.
+        2. Nivel 1 (DivisorSubagent): particiona + lanza N2 en paralelo.
+        3. Nivel 2 (N2 subagentes): cada uno lee su porción y devuelve índice parcial.
+        4. Nivel 3 (ConciliadorSubagent): consolida índices + genera resumen final.
+        5. Mueve el documento de temp/ a indexed/.
+
+        Args:
+            attachment: Objeto Attachment con file_id y filename.
+
+        Returns:
+            DocumentoIndexResult con resumen final y temas consolidados.
+        """
+        # Lazy imports para evitar import circular
+        from contexto_zai.config import MAX_SUBAGENTES_N2_PARALELOS
+        from contexto_zai.processing.divisor import DocumentoDivisor
+        from contexto_zai.subagents.divisor_subagent import DivisorSubagent
+        from contexto_zai.subagents.conciliador_subagent import ConciliadorSubagent
+
+        # 1. Descargar el archivo
+        try:
+            content_bytes = self._attachment_client.download(attachment.file_id)
+        except Exception as e:
+            logger.error("Error descargando attachment %s: %s", attachment.file_id, e)
+            return DocumentoIndexResult(
+                attachment_id=attachment.file_id,
+                filename=attachment.filename,
+                success=False,
+                error=f"Download error: {e}",
+            )
+
+        # 2. Guardar en temp/
+        self._temp_dir.mkdir(parents=True, exist_ok=True)
+        safe_filename = self._sanitize_filename(attachment.filename)
+        temp_path = self._temp_dir / f"{attachment.file_id}_{safe_filename}"
+        try:
+            temp_path.write_bytes(content_bytes)
+        except Exception as e:
+            logger.error("Error guardando archivo temporal %s: %s", temp_path, e)
+            return DocumentoIndexResult(
+                attachment_id=attachment.file_id,
+                filename=attachment.filename,
+                success=False,
+                error=f"Temp file error: {e}",
+            )
+
+        # 3. Nivel 1: DivisorSubagent (particionar + lanzar N2 en paralelo)
+        try:
+            n1 = DivisorSubagent(
+                launcher=self._launcher,
+                divisor=DocumentoDivisor(),
+                max_paralelos=MAX_SUBAGENTES_N2_PARALELOS,
+            )
+            indices_parciales = n1.run(attachment, temp_path)
+        except Exception as e:
+            logger.error("Error en N1 (DivisorSubagent): %s", e)
+            return DocumentoIndexResult(
+                attachment_id=attachment.file_id,
+                filename=attachment.filename,
+                archivo_indexado_path=temp_path,
+                success=False,
+                error=f"N1 error: {e}",
+            )
+
+        if not indices_parciales:
+            logger.warning("N1 no devolvió índices parciales. Fallback a subagente único.")
+            return self.run(attachment)
+
+        # 4. Nivel 3: ConciliadorSubagent (consolidar + resumen final)
+        try:
+            n3 = ConciliadorSubagent(launcher=self._launcher)
+            result = n3.run(indices_parciales, attachment, archivo_indexado_path=temp_path)
+        except Exception as e:
+            logger.error("Error en N3 (ConciliadorSubagent): %s", e)
+            # Fallback: usar el primer índice parcial como resultado
+            return DocumentoIndexResult(
+                attachment_id=attachment.file_id,
+                filename=attachment.filename,
+                resumen_breve=indices_parciales[0].resumen_parcial if indices_parciales else "",
+                temas_detectados=indices_parciales[0].temas if indices_parciales else [],
+                archivo_indexado_path=temp_path,
+                success=True,
+            )
+
+        # 5. Mover de temp/ a indexed/
+        self._indexed_dir.mkdir(parents=True, exist_ok=True)
+        indexed_path = self._indexed_dir / temp_path.name
+        try:
+            if indexed_path.exists():
+                indexed_path.unlink()
+            temp_path.rename(indexed_path)
+            result.archivo_indexado_path = indexed_path
+        except Exception as e:
+            logger.warning("Error moviendo a indexed/: %s. Queda en temp/", e)
+
+        logger.info(
+            "Documento indexado (3 niveles): %s (%d índices parciales, %d temas, resumen=%d chars)",
+            attachment.filename, len(indices_parciales),
+            len(result.temas_detectados), len(result.resumen_breve),
+        )
+
+        return result
+
 
 # ── Auto-tests atómicos ───────────────────────────────────────────
 
@@ -630,5 +737,26 @@ SECCIONES: cadena_descubrimiento, protocolo_cookie, endpoints_api"""
         assert "DocumentoIndexerSubagent" in r
         assert "max_resumen=" in r
         print(f"[OK] repr: {r}")
+
+    # Test 13 (v3.6): run_3_levels disponible
+    assert hasattr(sub, "run_3_levels"), "Debe tener método run_3_levels"
+    print(f"[OK] run_3_levels(): disponible")
+
+    # Test 14 (v3.6): run_3_levels con error de descarga
+    with tempfile.TemporaryDirectory() as tmpdir:
+        launcher_err = SubagentLauncher(task_invoker=lambda p: "ok")
+        client_err = MockAttachmentClient(content=b"%PDF test")
+        sub_err = DocumentoIndexerSubagent(
+            launcher=launcher_err, attachment_client=client_err,
+            temp_dir=Path(tmpdir) / "temp", indexed_dir=Path(tmpdir) / "indexed",
+        )
+        att_err = Attachment(
+            file_id="fail-download", filename="err.pdf",
+            content_type="application/pdf", size=100,
+        )
+        result_err = sub_err.run_3_levels(att_err)
+        assert not result_err.success
+        assert "Download error" in result_err.error
+        print(f"[OK] run_3_levels() error de descarga: capturado")
 
     print("\n[PASS] documento_indexer_subagent.py: todos los tests pasaron")

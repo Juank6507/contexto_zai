@@ -69,11 +69,11 @@ def _check_task_available() -> bool:
 
 
 def launch_task(prompt: str) -> str:
-    """Lanza un subagente con la herramienta Task de Z.ai.
+    """Lanza un subagente con la herramienta Task de Z.ai (v3.6: vía Task Bridge Server).
 
     Esta funcion es llamada por SubagentLauncher._default_invoker.
-    Usa la herramienta Task del agente para lanzar un subagente
-    efimero que procese el prompt y devuelva una respuesta.
+    Usa el Task Bridge Server HTTP para enviar el prompt al agente
+    (que tiene acceso al Task tool real) y recibir la respuesta.
 
     Args:
         prompt: Prompt completo para el subagente.
@@ -91,31 +91,72 @@ def launch_task(prompt: str) -> str:
             "En Windows, usa un task_invoker simulado en los tests."
         )
 
-    # Usar la herramienta Task real del agente.
-    # Esta llamada solo funciona cuando el codigo se ejecuta
-    # dentro del sandbox de Z.ai, donde la herramienta Task
-    # esta disponible globalmente.
-    #
-    # La herramienta Task acepta:
-    # - prompt: el texto del subagente
-    # - subagent_type: tipo de agente (por defecto "general-purpose")
-    #
-    # Devuelve el resultado del subagente como string.
+    # v3.6: Usar Task Bridge Server HTTP
+    # El pipeline Python envía el prompt al server HTTP
+    # El agente (que tiene Task tool) lee el pending, ejecuta el Task, y envía el resultado
     try:
-        # Intentar importar la herramienta Task del entorno Z.ai
-        # En el sandbox, Task esta disponible como una funcion global
-        # del framework del agente.
+        import httpx
+        import uuid
+
+        task_id = str(uuid.uuid4())[:8]
+
+        # Extraer files_to_read y description del prompt (si están embebidos)
+        files_to_read = []
+        description = "Subagente task"
+        # Buscar líneas de archivos en el prompt
+        for line in prompt.split("\n"):
+            if line.strip().startswith("- /") or line.strip().startswith("- C:"):
+                files_to_read.append(line.strip().lstrip("- ").strip())
+
+        # Enviar request al Task Bridge Server
+        bridge_url = "http://localhost:8087"
+        resp = httpx.post(
+            f"{bridge_url}/task-request",
+            json={
+                "prompt": prompt,
+                "files_to_read": files_to_read,
+                "description": description,
+            },
+            timeout=10.0,
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Task Bridge Server error: {resp.status_code}")
+        task_id = resp.json().get("id", task_id)
+
+        # Polling: esperar a que el agente ejecute el Task y devuelva el resultado
+        max_wait = 300  # 5 minutos máximo
+        waited = 0
+        while waited < max_wait:
+            import time
+            time.sleep(2)
+            waited += 2
+            try:
+                resp = httpx.get(f"{bridge_url}/task-result/{task_id}", timeout=5)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("success", True):
+                        return data.get("result", "")
+                    else:
+                        raise RuntimeError(f"Task failed: {data.get('error', 'unknown')}")
+                # 202 = still pending, seguir esperando
+            except httpx.HTTPError:
+                pass
+
+        raise RuntimeError(f"Timeout esperando Task {task_id} ({max_wait}s)")
+
+    except ImportError:
+        pass
+
+    # Fallback: intentar el método antiguo (scope global)
+    try:
         import importlib
         task_module = importlib.import_module("tools")
 
-        # Buscar la funcion Task o task_launcher
         if hasattr(task_module, "Task"):
             task_fn = task_module.Task
         elif hasattr(task_module, "launch_task"):
             task_fn = task_module.launch_task
         else:
-            # Si no se encuentra en el modulo tools, intentar llamada directa
-            # Esto funciona en algunos entornos donde Task esta en el scope global
             raise ImportError("Modulo tools encontrado pero sin Task")
 
         result = task_fn(prompt=prompt, subagent_type="general-purpose")
