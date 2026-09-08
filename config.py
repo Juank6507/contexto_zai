@@ -277,6 +277,79 @@ SELF_QUESTIONS: list[str] = [
     "¿Sé qué sigue?",
 ]
 
+# -- v3.4: Patrones para links externos y clasificación por intención ----
+
+import re as _re
+
+# Patrón regex para detectar URLs http(s) en texto.
+# Captura URLs completas (con esquido) para que web_reader las descargue.
+# No captura URLs relativas ni fragmentos sueltos.
+URL_PATTERN: _re.Pattern = _re.compile(
+    r"\bhttps?://[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+\b",
+    _re.IGNORECASE,
+)
+
+# Temas de intención para la Capa 2 (IntentionClassifier).
+# Cada tema es una categoría de la intención del mensaje del Director.
+# Centralizado en config.py para configuración sin tocar el código.
+INTENTION_THEMES: dict[str, list[str]] = {
+    "solicitud_documentacion": [
+        "describe", "explica", "paso a paso", "dime que entiendes",
+        "que entiendes", "resumen", "resume",
+    ],
+    "solicitud_implementacion": [
+        "implementa", "ejecuta", "a ejecutar", "a implementar",
+        "codifica", "programa", "desarrolla",
+    ],
+    "aprobacion": [
+        "correcto", "aprobado", "ok", "adelante", "continua",
+        "sigue", "procede",
+    ],
+    "rechazo": [
+        "no estoy de acuerdo", "incorrecto", "no sirve",
+        "no me gusta", "negado", "descarta",
+    ],
+    "correccion": [
+        "no lo que te pedi", "mejor hacer", "en lugar de",
+        "cambiemos", "no es eso",
+    ],
+    "consulta_estado": [
+        "como vamos", "estado", "que falta", "donde quedamos",
+        "progreso", "avance",
+    ],
+    "handoff": [
+        "relee el worklog", "perdiste contexto", "ya te dije",
+        "no repitas", "estas olvidando",
+    ],
+    "priorizacion": [
+        "entrega primero", "necesito que", "primero haz",
+        "prioriza", "urgente",
+    ],
+}
+
+# Límites para el subagente discriminador (Capa 3)
+DISCRIMINATOR_MAX_SUBTEMAS: int = 5
+DISCRIMINATOR_MIN_EXCHANGES_PER_SUBTEMA: int = 2
+
+# -- v3.5: Delegación de lectura de documentos adjuntos ----------------
+
+# Umbral en tokens: documentos > DELEGATION_THRESHOLD_TOKENS se delegan al subagente
+DELEGATION_THRESHOLD_TOKENS: int = 5000
+
+# Porcentaje de contexto del agente: si está > 80% ocupado, delega aunque el doc sea mediano
+DELEGATION_CONTEXT_LIMIT_PCT: int = 80
+
+# Tamaño trivial: documentos < TRIVIAL_SIZE_TOKENS se incorporan directo (no delegar)
+TRIVIAL_SIZE_TOKENS: int = 1000
+
+# Tamaño máximo del resumen breve que devuelve el DocumentoIndexerSubagent
+DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS: int = 500
+
+# Directorios para attachments (temporales y definitivos)
+ATTACHMENTS_TEMP_DIR = WORKSPACE_ROOT / "download" / "uploads" / "temp"
+ATTACHMENTS_INDEXED_DIR = WORKSPACE_ROOT / "download" / "uploads" / "indexed"
+
+
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
     import io as _io, sys as _sys
@@ -341,5 +414,44 @@ if __name__ == "__main__":
     print(f"[OK] Rutas multiplataforma: WORKSPACE_ROOT={WORKSPACE_ROOT}")
     print(f"  WORKSPACE_OUTPUT_DIR={WORKSPACE_OUTPUT_DIR}")
     print(f"  DOWNLOAD_OUTPUT_DIR={DOWNLOAD_OUTPUT_DIR}")
+
+    # Test 8 (v3.4): URL_PATTERN detecta URLs
+    urls = URL_PATTERN.findall(
+        "Mira esto: https://example.com/doc y http://test.org/page?x=1"
+    )
+    assert len(urls) == 2, f"URL_PATTERN debe detectar 2 URLs: {urls}"
+    assert urls[0] == "https://example.com/doc"
+    assert urls[1] == "http://test.org/page?x=1"
+    # No captura fragmentos sueltos
+    urls2 = URL_PATTERN.findall("Esto no es URL: ftp://foo ni //example.com")
+    assert len(urls2) == 0, f"No debe capturar URLs sin esquema http(s): {urls2}"
+    print(f"[OK] URL_PATTERN: detecta {len(urls)} URLs correctamente")
+
+    # Test 9 (v3.4): INTENTION_THEMES cargados
+    assert len(INTENTION_THEMES) == 8, f"INTENTION_THEMES debe tener 8 temas: {len(INTENTION_THEMES)}"
+    assert "solicitud_documentacion" in INTENTION_THEMES
+    assert "aprobacion" in INTENTION_THEMES
+    assert "rechazo" in INTENTION_THEMES
+    assert "handoff" in INTENTION_THEMES
+    assert all(len(kws) >= 4 for kws in INTENTION_THEMES.values()), \
+        "Cada tema debe tener al menos 4 keywords"
+    print(f"[OK] INTENTION_THEMES: {len(INTENTION_THEMES)} temas cargados")
+
+    # Test 10 (v3.4): límites del discriminador
+    assert DISCRIMINATOR_MAX_SUBTEMAS >= 2
+    assert DISCRIMINATOR_MIN_EXCHANGES_PER_SUBTEMA >= 1
+    print(f"[OK] Discriminador: max_subtemas={DISCRIMINATOR_MAX_SUBTEMAS}, min_exchanges={DISCRIMINATOR_MIN_EXCHANGES_PER_SUBTEMA}")
+
+    # Test 11 (v3.5): constantes de delegación
+    assert DELEGATION_THRESHOLD_TOKENS == 5000
+    assert TRIVIAL_SIZE_TOKENS == 1000
+    assert DELEGATION_CONTEXT_LIMIT_PCT == 80
+    assert DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS == 500
+    print(f"[OK] Delegación: threshold={DELEGATION_THRESHOLD_TOKENS} tokens, trivial<{TRIVIAL_SIZE_TOKENS}")
+
+    # Test 12 (v3.5): directorios de attachments
+    assert ATTACHMENTS_TEMP_DIR.name == "temp"
+    assert ATTACHMENTS_INDEXED_DIR.name == "indexed"
+    print(f"[OK] Attachments dirs: temp={ATTACHMENTS_TEMP_DIR.name}, indexed={ATTACHMENTS_INDEXED_DIR.name}")
 
     print("\n[PASS] config.py: todos los tests pasaron")

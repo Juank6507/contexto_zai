@@ -107,11 +107,16 @@ def run_atomic_tests() -> tuple[int, int]:
         "client/browser_session.py",
         "client/auth_client.py",
         "client/chat_client.py",
+        "client/web_reader.py",                          # v3.4 F1
+        "client/attachment_client.py",                   # v3.5 G2
         "processing/exchange_builder.py",
         "processing/content_cleaner.py",
         "processing/classifier.py",
         "processing/block_packer.py",
         "processing/subdivider.py",
+        "processing/intention_classifier.py",            # v3.4 F3
+        "processing/attachment_detector.py",             # v3.5 G3
+        "processing/content_delegator.py",               # v3.5 G4
         "metadata/manager.py",
         "generation/bloque_generator.py",
         "generation/estado_generator.py",
@@ -126,6 +131,10 @@ def run_atomic_tests() -> tuple[int, int]:
         "subagents/barrido_subagent.py",
         "subagents/decisiones_subagent.py",
         "subagents/mantenimiento_subagent.py",
+        "subagents/discriminator_subagent.py",           # v3.4 F5
+        "subagents/documento_indexer_subagent.py",       # v3.5 G5
+        "context/exporter.py",                           # v3.4 F10
+        "context/importer.py",                           # v3.4 F11
         "process/recovery_cycle.py",
         "process/incremental_cycle.py",
         "process/orchestrator.py",

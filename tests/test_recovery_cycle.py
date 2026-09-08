@@ -73,7 +73,7 @@ def test_recovery_cycle_success_with_mocked_api():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="fake-share-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
 
             cycle = RecoveryCycle(
                 jwt="fake-jwt",
@@ -104,7 +104,7 @@ def test_recovery_cycle_writes_files_in_workspace_and_download():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=dl)
             result = cycle.run()
 
@@ -127,7 +127,7 @@ def test_recovery_cycle_metadata_correct():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="chat-abc", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -154,7 +154,7 @@ def test_recovery_cycle_estado_8_secciones():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -176,7 +176,7 @@ def test_recovery_cycle_indice_with_mapping():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -199,7 +199,7 @@ def test_recovery_cycle_unicity():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -242,7 +242,7 @@ def test_recovery_cycle_empty_messages():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=[])
+            _patched_context_manager(mock_chat_cls, extract_all=[], extract_all_with_raw=([], {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=Path(tmpdir), download_dir=Path(tmpdir) / "dl")
             result = cycle.run()
 
@@ -270,7 +270,7 @@ def test_recovery_cycle_no_block_exceeds_70k():
         with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages)
+            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             result = cycle.run()
 

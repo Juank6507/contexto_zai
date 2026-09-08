@@ -465,6 +465,79 @@ class Script(BaseModel):
         return self.versions[-1] if self.versions else None
 
 
+# ── Modelos v3.5: Attachments y documentos indexados ─────────────
+
+
+class Attachment(BaseModel):
+    """Un archivo adjunto en un mensaje del chat de Z.ai (v3.5).
+
+    Representa archivos entregados por el Director mediante el botón "+"
+    del chat. La descarga se realiza mediante /api/v1/files/{id}/content.
+
+    Attributes:
+        file_id: UUID del archivo en Z.ai.
+        filename: Nombre original del archivo.
+        content_type: Tipo MIME (application/pdf, text/plain, etc.).
+        size: Tamaño en bytes.
+        url: Endpoint de descarga (/api/v1/files/{id}/content).
+        cdn_url: URL directa del CDN (opcional, suele expirar).
+        ref_msg_id: ID del mensaje del Director que adjuntó el archivo.
+        media: Tipo de media ("doc", "file", "image").
+        status: Estado ("uploaded", "indexed", "error").
+        created_at: Timestamp de subida.
+    """
+
+    file_id: str
+    filename: str
+    content_type: str = "application/octet-stream"
+    size: int = 0
+    url: str = ""
+    cdn_url: str = ""
+    ref_msg_id: str = ""
+    media: str = "file"
+    status: str = "uploaded"
+    created_at: float = 0.0
+
+    @property
+    def estimated_tokens(self) -> float:
+        """Estimación de tokens del contenido.
+
+        Para PDFs, la densidad de texto es menor (~10 bytes por token)
+        debido al overhead estructural. Para texto plano, 3.5 chars/token.
+        """
+        if self.content_type == "application/pdf":
+            return self.size / 10.0
+        if "zip" in self.content_type or "officedocument" in self.content_type:
+            # DOCX, XLSX, PPTX (archivos ZIP con XML)
+            return self.size / 8.0
+        if "image" in self.content_type:
+            return 1000  # estimación para imágenes (OCR)
+        return self.size / 3.5  # texto plano
+
+    @property
+    def is_pdf(self) -> bool:
+        return self.content_type == "application/pdf"
+
+    @property
+    def is_text(self) -> bool:
+        return self.content_type in (
+            "text/plain", "text/markdown", "application/octet-stream",
+        )
+
+    @property
+    def is_docx(self) -> bool:
+        return "officedocument" in self.content_type or "wordprocessingml" in self.content_type
+
+    @property
+    def is_image(self) -> bool:
+        return "image" in self.content_type
+
+    @property
+    def is_trivially_small(self) -> bool:
+        """True si el contenido es trivialmente pequeño (<1000 tokens)."""
+        return self.estimated_tokens < 1000
+
+
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
     import io as _io, sys as _sys
@@ -536,5 +609,30 @@ if __name__ == "__main__":
     # Test 7: límites actualizados
     assert VerificationReport().main_load_limit == 40_000
     print(f"[OK] VerificationReport: main_load_limit=40K (v3.2)")
+
+    # Test 8 (v3.5): Attachment con propiedades
+    att = Attachment(
+        file_id="abc-123",
+        filename="doc.pdf",
+        content_type="application/pdf",
+        size=1652025,
+        url="/api/v1/files/abc-123/content",
+        media="doc",
+    )
+    assert att.is_pdf
+    assert not att.is_text
+    assert att.estimated_tokens > 5000
+    assert not att.is_trivially_small
+    print(f"[OK] Attachment PDF: {att.estimated_tokens:.0f} tokens, delega=True")
+
+    att2 = Attachment(
+        file_id="xyz-789",
+        filename="notas.txt",
+        content_type="text/plain",
+        size=500,
+    )
+    assert att2.is_text
+    assert att2.is_trivially_small
+    print(f"[OK] Attachment TXT: {att2.estimated_tokens:.0f} tokens, trivial=True")
 
     print("\n[PASS] models.py: todos los tests pasaron")

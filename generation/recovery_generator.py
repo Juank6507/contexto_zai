@@ -15,15 +15,23 @@ límite de tokens según la configuración.
 from __future__ import annotations
 
 # Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+# Soporta Estructura A (<workspace>/contexto_zai/) y Estructura B (workspace=contexto_zai/)
 import os as _os, sys as _sys
 _here = _os.path.dirname(_os.path.abspath(__file__))
 _candidate = _here
-for _ in range(5):
-    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
-        if _candidate not in _sys.path:
-            _sys.path.insert(0, _candidate)
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break  # salimos del paquete
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
         break
-    _candidate = _os.path.dirname(_candidate)
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
 else:
     _parent = _os.path.dirname(_here)
     if _parent not in _sys.path:
@@ -86,6 +94,7 @@ class RecoveryGenerator:
         metadata: Optional["RecoveryMetadata"] = None,
         existing_decisions_content: Optional[str] = None,
         from_timestamp: float = 0.0,
+        attachments_indexados: list = None,
     ) -> list[RecoveryFile]:
         """Genera todos los archivos de recuperación.
 
@@ -98,6 +107,9 @@ class RecoveryGenerator:
                 (para modo incremental de decisiones).
             from_timestamp: Si > 0, las decisiones solo se procesan para
                 intercambios nuevos (modo incremental).
+            attachments_indexados: Lista de DocumentoIndexResult (v3.5).
+                Se pasan al IndiceGenerator para incluir la sección
+                "Documentos indexados" en el índice.
 
         Returns:
             Lista de RecoveryFile con todos los archivos generados.
@@ -138,6 +150,7 @@ class RecoveryGenerator:
             chat_label=chat_label,
             metadata=metadata,
             decisiones_summary=decisiones_summary,
+            attachments_indexados=attachments_indexados or [],
         )
         recovery_files.append(
             RecoveryFile(

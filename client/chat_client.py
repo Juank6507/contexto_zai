@@ -12,15 +12,23 @@ desde v2.2.
 from __future__ import annotations
 
 # Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+# Soporta Estructura A (<workspace>/contexto_zai/) y Estructura B (workspace=contexto_zai/)
 import os as _os, sys as _sys
 _here = _os.path.dirname(_os.path.abspath(__file__))
 _candidate = _here
-for _ in range(5):
-    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
-        if _candidate not in _sys.path:
-            _sys.path.insert(0, _candidate)
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break  # salimos del paquete
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
         break
-    _candidate = _os.path.dirname(_candidate)
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
 else:
     _parent = _os.path.dirname(_here)
     if _parent not in _sys.path:
@@ -294,6 +302,89 @@ class ChatClient:
             chat_id,
         )
         return messages
+
+    def extract_all_with_raw(
+        self,
+        share_id: str,
+        chat_id: Optional[str] = None,
+    ) -> tuple[list[Message], dict]:
+        """Extrae mensajes y devuelve también el JSON crudo del batch (v3.5).
+
+        Igual que extract_all(), pero además devuelve el JSON crudo
+        del batch endpoint (que contiene el campo `files` con los
+        attachments detectados).
+
+        Args:
+            share_id: UUID del share link.
+            chat_id: UUID interno del chat. Si es None, se obtiene del árbol.
+
+        Returns:
+            Tupla (messages, raw_messages) donde:
+            - messages: lista de Message parseados.
+            - raw_messages: dict con la respuesta cruda del batch endpoint.
+
+        Raises:
+            ChatClientError: Si cualquier paso falla.
+        """
+        # Paso 1: Obtener árbol
+        tree_data = self.get_message_tree(share_id)
+
+        chat_data = tree_data.get("chat", {})
+        resolved_chat_id = chat_id or chat_data.get("id", "")
+        if not resolved_chat_id:
+            raise ChatClientError(
+                "No se pudo determinar el chat_id. "
+                "Proporciónalo explícitamente: extract_all_with_raw(share_id=..., chat_id=...)"
+            )
+
+        messages_map = chat_data.get("history", {}).get("messages", {})
+        if not messages_map:
+            logger.warning("El chat %s no tiene mensajes en el arbol.", resolved_chat_id)
+            return [], {"data": {}}
+
+        # Paso 2: Ordenar IDs cronológicamente
+        sorted_ids = sorted(
+            messages_map.keys(),
+            key=lambda mid: messages_map[mid].get("timestamp", 0),
+        )
+
+        # Paso 3: Extraer contenido en batch
+        batch_data = self.get_messages_batch(resolved_chat_id, sorted_ids, share_id=share_id)
+        content_map = batch_data.get("data", {})
+
+        # Paso 4: Construir objetos Message
+        messages: list[Message] = []
+        for seq, msg_id in enumerate(sorted_ids, start=1):
+            msg_raw = content_map.get(msg_id)
+            if not msg_raw:
+                logger.debug("Mensaje %s sin contenido, saltando.", msg_id)
+                continue
+
+            content = self._extract_content(msg_raw)
+            role_str = msg_raw.get("role", "user")
+            try:
+                role = MessageRole(role_str)
+            except ValueError:
+                role = MessageRole.USER
+
+            model_name = msg_raw.get("model_name") or msg_raw.get("model") or ""
+
+            messages.append(
+                Message(
+                    seq=seq,
+                    role=role,
+                    timestamp=msg_raw.get("timestamp", 0),
+                    model=model_name,
+                    content=content,
+                )
+            )
+
+        logger.info(
+            "Extraccion completa (con raw): %d mensajes de chat %s, %d con files",
+            len(messages), chat_id,
+            sum(1 for m in content_map.values() if m.get("files")),
+        )
+        return messages, batch_data
 
     def load_from_file(self, file_path: str | Path) -> list[Message]:
         """Carga mensajes desde un archivo JSON previamente exportado.

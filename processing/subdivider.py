@@ -21,15 +21,23 @@ Atómico standalone: importa config y models, nada más del proyecto.
 from __future__ import annotations
 
 # Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+# Soporta Estructura A (<workspace>/contexto_zai/) y Estructura B (workspace=contexto_zai/)
 import os as _os, sys as _sys
 _here = _os.path.dirname(_os.path.abspath(__file__))
 _candidate = _here
-for _ in range(5):
-    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
-        if _candidate not in _sys.path:
-            _sys.path.insert(0, _candidate)
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break  # salimos del paquete
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
         break
-    _candidate = _os.path.dirname(_candidate)
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
 else:
     _parent = _os.path.dirname(_here)
     if _parent not in _sys.path:
@@ -39,8 +47,10 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
+from contexto_zai.processing.content_delegator import ContentDelegator
 from contexto_zai.config import TOKEN_LIMITS
 from contexto_zai.models import Exchange
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +68,12 @@ class SubdivisionResult:
     subtemas: list[tuple[str, list[Exchange]]]
     razon: str = ""
 
-class Subdivider:
+class Subdivider(ContentDelegator):
     """Subdivide temas grandes en subtemas derivados únicos.
+
+    Implementa la interfaz `ContentDelegator` (v3.5) para que pueda
+    usarse de forma intercambiable con `DocumentDelegator` en el
+    proceso de decisión de delegación.
 
     Args:
         max_tokens_per_block: Límite de tokens por bloque.
@@ -135,6 +149,30 @@ class Subdivider:
         effective_max = self._effective_max_tokens
         total_tokens = sum(ex.estimated_tokens for ex in exchanges)
         return total_tokens > effective_max
+
+    def should_delegate(
+        self,
+        content_size_tokens: int,
+        agent_context_available_pct: float,
+        director_override: Optional[str] = None,
+    ) -> bool:
+        """Implementa la interfaz ContentDelegator (v3.5).
+
+        Para el Subdivider, la "delegación" significa subdividir un tema.
+        Devuelve True si el contenido debería subdividirse.
+
+        Args:
+            content_size_tokens: Tamaño del contenido en tokens.
+            agent_context_available_pct: Porcentaje de contexto del agente ocupado.
+            director_override: Override del Director (no se usa en Subdivider,
+                se respeta pero no afecta la decisión de subdivisión).
+
+        Returns:
+            True si el contenido supera el límite efectivo del bloque.
+        """
+        # Override del Director no afecta la subdivisión de temas (sí afecta
+        # a documentos adjuntos vía DocumentDelegator)
+        return content_size_tokens > self._effective_max_tokens
 
     def subdivide(
         self,

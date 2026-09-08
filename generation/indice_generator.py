@@ -15,15 +15,23 @@ Tamaño máximo: 8K tokens (~28KB chars).
 from __future__ import annotations
 
 # Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+# Soporta Estructura A (<workspace>/contexto_zai/) y Estructura B (workspace=contexto_zai/)
 import os as _os, sys as _sys
 _here = _os.path.dirname(_os.path.abspath(__file__))
 _candidate = _here
-for _ in range(5):
-    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
-        if _candidate not in _sys.path:
-            _sys.path.insert(0, _candidate)
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break  # salimos del paquete
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
         break
-    _candidate = _os.path.dirname(_candidate)
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
 else:
     _parent = _os.path.dirname(_here)
     if _parent not in _sys.path:
@@ -66,6 +74,7 @@ class IndiceGenerator:
         chat_label: str = "",
         metadata: Optional[RecoveryMetadata] = None,
         decisiones_summary: str = "",
+        attachments_indexados: list = None,
     ) -> str:
         """Genera el contenido markdown del índice de recuperación.
 
@@ -76,6 +85,8 @@ class IndiceGenerator:
                 Si se proporciona, se usa para construir la tabla.
                 Si no, se construye a partir de los blocks.
             decisiones_summary: Resumen de decisiones (opcional).
+            attachments_indexados: Lista de DocumentoIndexResult con
+                documentos indexados por subagente (v3.5).
 
         Returns:
             Contenido markdown del índice.
@@ -165,6 +176,36 @@ class IndiceGenerator:
             for tema in sorted(script_temas):
                 archivo = tema_a_archivo[tema]
                 lines.append(f"- `{tema}` -> `{archivo}` (ver grafo en `_grafos_cambios.json`)")
+            lines.append("")
+
+        # v3.5: sección de documentos indexados (attachments)
+        if attachments_indexados:
+            lines.extend([
+                "## Documentos indexados (v3.5)",
+                "",
+                "Documentos adjuntos por el Director e indexados por subagentes efímeros.",
+                "El agente principal no consumió su contexto con estos documentos; solo tiene",
+                "el resumen. Si necesitas detalle de una sección, lanza un subagente para releerla.",
+                "",
+                "| Documento | Temas | Resumen | Ruta |",
+                "|-----------|-------|---------|------|",
+            ])
+            for doc in attachments_indexados:
+                # doc es un DocumentoIndexResult
+                if not getattr(doc, "success", False):
+                    continue
+                temas_str = ", ".join(
+                    f"`{t.tema}`" for t in doc.temas_detectados[:3]
+                )
+                if len(doc.temas_detectados) > 3:
+                    temas_str += f" (+{len(doc.temas_detectados) - 3} más)"
+                resumen_corto = doc.resumen_breve[:80].replace("|", "\\|").replace("\n", " ")
+                if len(doc.resumen_breve) > 80:
+                    resumen_corto += "..."
+                ruta = str(getattr(doc, "archivo_indexado_path", "")).replace("|", "\\|")
+                lines.append(
+                    f"| `{doc.filename}` | {temas_str} | {resumen_corto} | `{ruta}` |"
+                )
             lines.append("")
 
         content = "\n".join(lines)

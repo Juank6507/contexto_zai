@@ -18,15 +18,23 @@ Atómico standalone: importa config y models, nada más del proyecto.
 from __future__ import annotations
 
 # Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+# Soporta Estructura A (<workspace>/contexto_zai/) y Estructura B (workspace=contexto_zai/)
 import os as _os, sys as _sys
 _here = _os.path.dirname(_os.path.abspath(__file__))
 _candidate = _here
-for _ in range(5):
-    if _os.path.isdir(_os.path.join(_candidate, 'contexto_zai')):
-        if _candidate not in _sys.path:
-            _sys.path.insert(0, _candidate)
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break  # salimos del paquete
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
         break
-    _candidate = _os.path.dirname(_candidate)
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
 else:
     _parent = _os.path.dirname(_here)
     if _parent not in _sys.path:
@@ -411,31 +419,72 @@ class EstadoGenerator:
 """
 
     def _truncate(self, content: str, max_chars: int) -> str:
-        """Trunca el contenido preservando las secciones críticas."""
-        # Si el contenido excede el límite, truncar D2 y A1 (las más largas)
-        # buscando preservar D1, A3 y A4
+        """Truncamiento logico (v3.4).
+
+        Si el contenido supera el limite:
+        1. Identifica la parte mas antigua que no cabe (la que va al final).
+        2. Resume esa parte sin perder informacion clave.
+        3. Anade el resumen al final del estado actual.
+        4. Mantiene el orden cronologico: primero lo mas reciente, luego el resumen.
+        """
         overage = len(content) - max_chars
         if overage <= 0:
             return content
 
-        # Estrategia simple: cortar D2 por la mitad si es muy larga
         logger.warning(
-            "Estado actual excede limite (%d > %d chars), truncando D2",
+            "Estado actual excede limite (%d > %d chars), aplicando truncamiento logico",
             len(content), max_chars,
         )
-        # Encontrar el inicio y fin de D2
-        d2_start = content.find("## Sección D2")
-        d2_end = content.find("## Sección D3")
-        if d2_start != -1 and d2_end != -1:
-            d2_content = content[d2_start:d2_end]
-            if len(d2_content) > overage + 1000:
-                # Truncar D2 a la mitad + nota
-                truncated_d2 = d2_content[:len(d2_content) - overage - 200]
-                truncated_d2 += "\n... (contenido truncado por límite de tamaño)\n\n"
-                return content[:d2_start] + truncated_d2 + content[d2_end:]
 
-        # Fallback: cortar por el final
-        return content[:max_chars - 50] + "\n\n... (truncado por límite)\n"
+        # Calcular cuanto espacio necesitamos para el resumen
+        # El resumen ocupa ~500 chars, dejamos margen
+        resumen_space = 1000
+        chars_to_keep = max_chars - resumen_space
+
+        # La parte que se mantiene (mas reciente, al inicio del contenido)
+        kept_part = content[:chars_to_keep]
+
+        # La parte que se excluye (mas antigua, al final del contenido)
+        excluded_part = content[chars_to_keep:]
+
+        # Resumir la parte excluida
+        # Extraer las lineas clave: decisiones, archivos, errores, rutas
+        excluded_lines = excluded_part.split("\n")
+        key_lines = []
+        for line in excluded_lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            # Preservar lineas con informacion clave
+            if any(kw in stripped.lower() for kw in [
+                "decision", "archivo", "error", "ruta", "bug",
+                "fix", "cambio", "modificado", "entregado",
+                "pendiente", "fallo", "correcto",
+            ]):
+                key_lines.append(stripped)
+
+        # Construir el resumen
+        if key_lines:
+            resumen = "\n".join(key_lines[:20])  # Maximo 20 lineas clave
+        else:
+            # Si no hay lineas clave, tomar las primeras y ultimas lineas
+            if len(excluded_lines) > 10:
+                resumen = "\n".join(excluded_lines[:5]) + "\n...\n" + "\n".join(excluded_lines[-5:])
+            else:
+                resumen = "\n".join(excluded_lines)
+
+        # Construir el contenido final
+        result = kept_part
+        result += "\n\n## Resumen del contexto excluido (truncamiento logico)\n\n"
+        result += f"**Período excluido:** contenido anterior al punto de corte.\n"
+        result += f"**Motivo:** El contenido del tema activo supera los {max_chars} chars.\n\n"
+        result += resumen
+
+        logger.info(
+            "Truncamiento logico aplicado: %d chars mantenidos + %d chars de resumen",
+            len(kept_part), len(resumen),
+        )
+        return result
 
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
