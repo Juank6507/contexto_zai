@@ -349,6 +349,31 @@ DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS: int = 500
 ATTACHMENTS_TEMP_DIR = WORKSPACE_ROOT / "download" / "uploads" / "temp"
 ATTACHMENTS_INDEXED_DIR = WORKSPACE_ROOT / "download" / "uploads" / "indexed"
 
+# -- v3.6: Particionado de documentos grandes (flujo de 3 niveles) ----------
+
+# Umbral para activar el flujo de 3 niveles (N1 → N2×N → N3)
+PARTITION_THRESHOLD_TOKENS: int = 50000
+
+# Tamaño máximo que un subagente N2 puede procesar cómodamente
+MAX_TOKENS_POR_SUBAGENTE_N2: int = 30000
+
+# Límites de subagentes paralelos por tipo de tarea
+MAX_SUBAGENTES_LECTURA_ARCHIVOS: int = 5
+MAX_SUBAGENTES_BUSQUEDA_PUNTUAL: int = 8
+MAX_SUBAGENTES_CLASIFICACION_PROFUNDA: int = 3  # N2 usa este límite
+
+# El N2 hace clasificación profunda, así que usa el límite más restrictivo
+MAX_SUBAGENTES_N2_PARALELOS: int = MAX_SUBAGENTES_CLASIFICACION_PROFUNDA  # = 3
+
+# -- v3.6: JWT Bridge Server (mini HTTP server en sandbox) --------------------
+
+JWT_BRIDGE_SERVER_PORT: int = 8086
+JWT_BRIDGE_SERVER_HOST: str = "0.0.0.0"  # accesible desde fuera del sandbox
+
+# Ruta donde se persiste el JWT del Director (v3.6)
+CREDENTIALS_DIR = Path.home() / ".czai"
+CREDENTIALS_FILE = CREDENTIALS_DIR / "credentials.json"
+
 
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
@@ -453,5 +478,16 @@ if __name__ == "__main__":
     assert ATTACHMENTS_TEMP_DIR.name == "temp"
     assert ATTACHMENTS_INDEXED_DIR.name == "indexed"
     print(f"[OK] Attachments dirs: temp={ATTACHMENTS_TEMP_DIR.name}, indexed={ATTACHMENTS_INDEXED_DIR.name}")
+
+    # Test 13 (v3.6): constantes de particionado
+    assert PARTITION_THRESHOLD_TOKENS == 50000
+    assert MAX_TOKENS_POR_SUBAGENTE_N2 == 30000
+    assert MAX_SUBAGENTES_N2_PARALELOS == 3
+    print(f"[OK] Particionado: threshold={PARTITION_THRESHOLD_TOKENS}, max_tokens_n2={MAX_TOKENS_POR_SUBAGENTE_N2}, max_paralelos={MAX_SUBAGENTES_N2_PARALELOS}")
+
+    # Test 14 (v3.6): JWT Bridge Server
+    assert JWT_BRIDGE_SERVER_PORT == 8086
+    assert JWT_BRIDGE_SERVER_HOST == "0.0.0.0"
+    print(f"[OK] JWT Bridge: port={JWT_BRIDGE_SERVER_PORT}, host={JWT_BRIDGE_SERVER_HOST}")
 
     print("\n[PASS] config.py: todos los tests pasaron")

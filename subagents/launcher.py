@@ -158,6 +158,65 @@ class SubagentLauncher:
             responses.append(resp)
         return responses
 
+    def launch_parallel(
+        self,
+        requests: list[SubagentRequest],
+        max_workers: int = 3,
+    ) -> list[SubagentResponse]:
+        """Lanza múltiples subagentes en paralelo (v3.6).
+
+        Usa ThreadPoolExecutor para invocar el Task en paralelo.
+        Cada Task se ejecuta en un thread independiente.
+        max_workers limita cuántos Tasks corren simultáneamente.
+
+        Args:
+            requests: Lista de peticiones de subagente.
+            max_workers: Número máximo de subagentes en paralelo.
+
+        Returns:
+            Lista de respuestas en el mismo orden que las requests.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
+        if not requests:
+            return []
+
+        max_workers = min(max_workers, len(requests))
+        responses: list[SubagentResponse] = [None] * len(requests)  # type: ignore
+
+        def _launch_one(idx: int, req: SubagentRequest) -> tuple[int, SubagentResponse]:
+            """Lanza un subagente y devuelve (índice, respuesta)."""
+            try:
+                resp = self.launch(
+                    prompt=req.prompt,
+                    files_to_read=req.files_to_read,
+                    description=req.description,
+                )
+                return idx, resp
+            except Exception as e:
+                logger.error("Error lanzando subagente %d: %s", idx, e)
+                return idx, SubagentResponse(
+                    content="",
+                    success=False,
+                    error=f"Parallel launch error: {e}",
+                )
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_launch_one, i, req): i
+                for i, req in enumerate(requests)
+            }
+            for future in as_completed(futures):
+                idx, resp = future.result()
+                responses[idx] = resp
+
+        logger.info(
+            "launch_parallel completado: %d subagentes en paralelo (max_workers=%d)",
+            len(requests), max_workers,
+        )
+        return responses
+
     @property
     def max_response_chars(self) -> int:
         return self._max_response_chars
@@ -318,5 +377,71 @@ if __name__ == "__main__":
     else:
         # Task fallo y el error fue capturado
         print(f"[OK] Invocador por defecto: error capturado correctamente")
+
+    # Test 8 (v3.6): launch_parallel con 3 subagentes en paralelo
+    def parallel_invoker(prompt: str) -> str:
+        import time
+        time.sleep(0.1)  # simular latencia
+        # El prompt incluye "Pregunta del agente principal:\nq0" etc.
+        # Extraer la pregunta original del prompt completo
+        if "q0" in prompt:
+            return "respuesta_q0"
+        elif "q1" in prompt:
+            return "respuesta_q1"
+        elif "q2" in prompt:
+            return "respuesta_q2"
+        return "ok"
+
+    launcher8 = SubagentLauncher(task_invoker=parallel_invoker)
+    requests8 = [
+        SubagentRequest(prompt=f"q{i}", files_to_read=[f"/tmp/a{i}"], description=f"d{i}")
+        for i in range(3)
+    ]
+    import time as _time
+    t0 = _time.time()
+    responses8 = launcher8.launch_parallel(requests8, max_workers=3)
+    t_parallel = _time.time() - t0
+    assert len(responses8) == 3
+    assert all(r.success for r in responses8)
+    # Verificar que cada respuesta contiene el identificador correcto
+    assert "q0" in responses8[0].content
+    assert "q1" in responses8[1].content
+    assert "q2" in responses8[2].content
+    print(f"[OK] launch_parallel: 3 subagentes en paralelo ({t_parallel:.2f}s), orden preservado")
+
+    # Test 9 (v3.6): launch_parallel con más requests que max_workers
+    requests9 = [
+        SubagentRequest(prompt=f"p{i}", files_to_read=[], description=f"desc{i}")
+        for i in range(5)
+    ]
+    responses9 = launcher8.launch_parallel(requests9, max_workers=2)
+    assert len(responses9) == 5
+    assert all(r.success for r in responses9)
+    print(f"[OK] launch_parallel: 5 subagentes con max_workers=2 (lotes de 2)")
+
+    # Test 10 (v3.6): launch_parallel con invoker que falla
+    def failing_parallel_invoker(prompt: str) -> str:
+        if "fail" in prompt:
+            raise RuntimeError("Error simulado")
+        return "ok"
+
+    launcher10 = SubagentLauncher(task_invoker=failing_parallel_invoker)
+    requests10 = [
+        SubagentRequest(prompt="ok1", files_to_read=[], description="d1"),
+        SubagentRequest(prompt="fail1", files_to_read=[], description="d2"),
+        SubagentRequest(prompt="ok2", files_to_read=[], description="d3"),
+    ]
+    responses10 = launcher10.launch_parallel(requests10, max_workers=3)
+    assert len(responses10) == 3
+    assert responses10[0].success
+    assert not responses10[1].success
+    # El error puede venir de _default_invoker o de _launch_one
+    assert responses10[1].error  # cualquier mensaje de error
+    assert responses10[2].success
+    print(f"[OK] launch_parallel: error en 1 subagente capturado, otros OK")
+
+    # Test 11 (v3.6): launch_parallel con lista vacía
+    assert launcher8.launch_parallel([], max_workers=3) == []
+    print(f"[OK] launch_parallel: lista vacía devuelve []")
 
     print("\n[PASS] subagents/launcher.py: todos los tests pasaron")

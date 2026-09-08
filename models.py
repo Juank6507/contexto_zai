@@ -538,6 +538,62 @@ class Attachment(BaseModel):
         return self.estimated_tokens < 1000
 
 
+# ── Modelos v3.6: Particionado y conciliación de documentos grandes ─────────
+
+
+class Porcion(BaseModel):
+    """Una porción de un documento grande para procesar por un subagente N2 (v3.6).
+
+    Attributes:
+        id: Índice de la porción (1-based).
+        contenido_path: Ruta del archivo temporal con la porción.
+        tokens_estimados: Tokens estimados de la porción.
+        pagina_inicio: Página de inicio (solo para PDFs, 1-based).
+        pagina_fin: Página de fin (solo para PDFs).
+    """
+
+    id: int
+    contenido_path: str = ""
+    tokens_estimados: int = 0
+    pagina_inicio: int = 0
+    pagina_fin: int = 0
+
+    @property
+    def paginas_str(self) -> str:
+        """String descriptivo del rango de páginas."""
+        if self.pagina_inicio and self.pagina_fin:
+            return f"páginas {self.pagina_inicio}-{self.pagina_fin}"
+        return "sin páginas"
+
+
+class IndiceParcial(BaseModel):
+    """Índice parcial devuelto por un subagente N2 (v3.6).
+
+    Attributes:
+        porcion_id: ID de la porción que se procesó.
+        temas: Lista de temas detectados en la porción.
+        resumen_parcial: Resumen breve de la porción.
+    """
+
+    porcion_id: int
+    temas: list = Field(default_factory=list)  # list[ThemeSection] pero se evita import circular
+    resumen_parcial: str = ""
+
+
+class IndiceConsolidado(BaseModel):
+    """Índice consolidado tras conciliar todos los índices parciales (v3.6).
+
+    Attributes:
+        temas_consolidados: Lista de temas consolidados (sin duplicados).
+        resumen_final: Resumen final del documento completo.
+        indices_parciales: Lista de índices parciales que se consolidaron.
+    """
+
+    temas_consolidados: list = Field(default_factory=list)
+    resumen_final: str = ""
+    indices_parciales: list[IndiceParcial] = Field(default_factory=list)
+
+
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
     import io as _io, sys as _sys
@@ -634,5 +690,23 @@ if __name__ == "__main__":
     assert att2.is_text
     assert att2.is_trivially_small
     print(f"[OK] Attachment TXT: {att2.estimated_tokens:.0f} tokens, trivial=True")
+
+    # Test 9 (v3.6): Porcion e IndiceParcial
+    p = Porcion(id=1, contenido_path="/tmp/p1.pdf", tokens_estimados=25000, pagina_inicio=1, pagina_fin=50)
+    assert p.id == 1
+    assert p.tokens_estimados == 25000
+    assert p.paginas_str == "páginas 1-50"
+    print(f"[OK] Porcion: {p.paginas_str}, {p.tokens_estimados} tokens")
+
+    ip = IndiceParcial(porcion_id=1, resumen_parcial="Resumen de la porción 1")
+    assert ip.porcion_id == 1
+    print(f"[OK] IndiceParcial: porcion_id={ip.porcion_id}")
+
+    ic = IndiceConsolidado(
+        resumen_final="Resumen final consolidado",
+        indices_parciales=[ip],
+    )
+    assert len(ic.indices_parciales) == 1
+    print(f"[OK] IndiceConsolidado: {len(ic.indices_parciales)} índices parciales")
 
     print("\n[PASS] models.py: todos los tests pasaron")
