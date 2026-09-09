@@ -1,0 +1,150 @@
+============================================================
+  CZAI v2.0 - INSTRUCCIONES DE INSTALACION
+============================================================
+
+Este zip contiene TODOS los archivos modificados de CZAI.
+No necesitas nada más. Todo está aquí adentro.
+
+------------------------------------------------------------
+  QUÉ HAY EN ESTE ZIP
+------------------------------------------------------------
+
+Este zip tiene 3 cosas:
+
+1. Este archivo de instrucciones (el que estás leyendo)
+
+2. Una carpeta llamada "para-repo-contexto_zai"
+   Contiene los archivos que van en tu repositorio contexto_zai
+
+3. Una carpeta llamada "para-repo-estrategia"
+   Contiene 1 archivo que va en tu repositorio estrategia
+
+------------------------------------------------------------
+  QUÉ DEBES HACER (3 PASOS)
+------------------------------------------------------------
+
+PASO 1: Sube los archivos al repositorio contexto_zai
+-----------------------------------------------------
+
+a) Abre la carpeta "para-repo-contexto_zai" de este zip
+
+b) Dentro de ella hay 4 cosas:
+   - setup-czai.sh              (un archivo)
+   - sandbox-src/               (una carpeta con archivos dentro)
+   - download/                  (una carpeta con 2 archivos .bat y .ps1)
+   - Documentación/             (una carpeta con 1 archivo .md)
+
+c) Copia estas 4 cosas a la raíz de tu repositorio contexto_zai
+   en tu computadora. Es decir, si tu repositorio está en:
+   C:\Usuarios\juanc\contexto_zai\
+   
+   Debes copiar así:
+   C:\Usuarios\juanc\contexto_zai\setup-czai.sh
+   C:\Usuarios\juanc\contexto_zai\sandbox-src\
+   C:\Usuarios\juanc\contexto_zai\download\czai-installer.bat
+   C:\Usuarios\juanc\contexto_zai\download\czai-installer.ps1
+   C:\Usuarios\juanc\contexto_zai\Documentación\metodologia_obtencion_jwt.md
+
+d) Si las carpetas "download" o "Documentación" ya existen en tu repo,
+   simplemente copia los archivos DENTRO de ellas (no borres lo que ya hay).
+
+e) Abre una terminal (cmd o PowerShell) en la carpeta del repositorio
+   y ejecuta estos 3 comandos:
+
+   git add .
+   git commit -m "CZAI v2.0: persistencia localStorage + setup portable + metodologia"
+   git push origin main
+
+
+PASO 2: Sube el archivo al repositorio estrategia
+--------------------------------------------------
+
+a) Abre la carpeta "para-repo-estrategia" de este zip
+
+b) Dentro hay 1 archivo:
+   - worklog_template.md
+
+c) Copia este archivo a la raíz de tu repositorio estrategia
+   en tu computadora. Es decir, si tu repositorio está en:
+   C:\Usuarios\juanc\estrategia-agentes-zai\
+   
+   Debes copiar así:
+   C:\Usuarios\juanc\estrategia-agentes-zai\worklog_template.md
+
+   Esto REEMPLAZA el archivo worklog_template.md que ya existe ahí.
+
+d) Abre una terminal en la carpeta del repositorio estrategia
+   y ejecuta estos 3 comandos:
+
+   git add worklog_template.md
+   git commit -m "CZAI v2.0: paso 2b obligatorio con flujo de 3 sub-pasos"
+   git push origin main
+
+
+PASO 3: Verifica que todo quedó bien
+-------------------------------------
+
+a) Entra a GitHub en tu navegador:
+   https://github.com/Juank6507/contexto_zai
+   
+   Verás el último commit con el mensaje:
+   "CZAI v2.0: persistencia localStorage + setup portable + metodologia"
+
+b) Entra a:
+   https://github.com/Juank6507/estrategia-agentes-zai
+   
+   Verás el último commit con el mensaje:
+   "CZAI v2.0: paso 2b obligatorio con flujo de 3 sub-pasos"
+
+Si ves ambos commits en GitHub, está todo listo.
+
+
+------------------------------------------------------------
+  QUÉ ES CADA COSA (por si te lo preguntas)
+------------------------------------------------------------
+
+setup-czai.sh
+   Es un script que el agente Z.ai ejecuta al inicio de cada sesión nueva.
+   Lo que hace: copia el código de CZAI al sandbox vacío para que los
+   endpoints funcionen. Sin esto, el sandbox da error 404.
+
+sandbox-src/ (carpeta)
+   Es el código fuente de CZAI: los endpoints, el componente de la página,
+   y las librerías. El script setup-czai.sh copia estos archivos al sandbox.
+
+czai-installer.bat y czai-installer.ps1
+   Es el instalador que el Director ejecuta en su PC (doble clic) para
+   crear el favorito "Conectar CZAI" en su navegador.
+
+metodologia_obtencion_jwt.md
+   Es el documento que explica cómo obtener el JWT y cómo persiste entre
+   sesiones. Es para nuevos Directores.
+
+worklog_template.md
+   Es la plantilla que el agente lee al iniciar cada sesión. Ahora tiene
+   el paso 2b obligatorio: el agente DEBE ejecutar setup-czai.sh y verificar
+   el JWT antes de continuar.
+
+
+------------------------------------------------------------
+  SI TIENES PROBLEMAS
+------------------------------------------------------------
+
+Si algo falla al hacer git push, probablemente es porque no tienes
+configuradas tus credenciales de GitHub en tu computadora.
+
+Para configurarlas, ejecuta en la terminal:
+
+   git config --global user.name "Tu Nombre"
+   git config --global user.email "tu@email.com"
+
+Y cuando hagas git push, te pedirá tu usuario y contraseña de GitHub
+(o un token de acceso personal si tienes autenticación de 2 factores).
+
+Si necesitas ayuda, dile al agente Z.ai:
+"No pude hacer git push. Ayúdame a configurar mis credenciales de GitHub."
+
+
+============================================================
+  FIN DE LAS INSTRUCCIONES
+============================================================
