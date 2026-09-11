@@ -394,6 +394,9 @@ SUBDIVIDER_NAMER_MAX_PALABRAS: int = 5
 # query_context (M8): límites de la consulta bajo demanda.
 QUERY_MAX_RESULTS: int = 3
 QUERY_MAX_RESPONSE_TOKENS: int = 5000
+# v4.0 revisada: umbral para elegir modo directo vs distribuido.
+# Si los bloques candidatos juntos superan este umbral, se usa modo distribuido.
+QUERY_DIRECT_MODE_THRESHOLD_TOKENS: int = 100000
 
 # ampliar_contexto (M9): umbrales para clasificar fuentes externas.
 AMPLIAR_SMALL_FILE_THRESHOLD_TOKENS: int = 5000

@@ -117,24 +117,45 @@ Estructura nueva del archivo (5 secciones, no 8):
 - Las subclases se diferencian por el input, no por la lógica de invocación.
 - No se mantienen clases paralelas con fallback regex.
 
-### Mejora M8 — Consulta bajo demanda al proceso
+### Mejora M8 — Consulta bajo demanda al proceso (v4.0 revisada tras pruebas reales)
 
 **Objetivo:** el agente consulta al proceso con una pregunta concreta y recibe una respuesta completa y abarcadora de lo que se preguntó, sin leer bloques en su ventana.
 
-**Mecanismo:**
+**Hallazgo crítico (Sesión 16):** Se probó con datos reales que los subagentes NO tienen acceso al Task tool. Solo el agente principal puede lanzar subagentes. Por lo tanto, el diseño de N1→N2×N→N3 con subagentes anidados no es viable para consultas. Se probó también que un subagente SÍ tiene acceso a `Read` y `Bash`, por lo que puede leer archivos directamente.
 
-- Se agrega una función `query_context(question, max_results=3)` en `pipeline.py` (junto a las otras funciones públicas).
-- La función lee `01_indice_recuperacion.md` y `_metadata.json` para identificar qué bloques pueden contener la respuesta (búsqueda por keyword en `tema_a_archivo` y en las secciones de cada bloque).
-- Lanza un subagente por cada bloque candidato en paralelo vía `SubagentLauncher`. Cada subagente lee solo su bloque y responde a la pregunta concreta, con una respuesta completa y abarcadora.
-- La función consolida las respuestas (si hay una sola, la devuelve; si hay varias, las fusiona eliminando duplicados).
-- Devuelve al agente la respuesta consolidada.
-- No se crea mini-servicio HTTP nuevo. Es una función Python directa que el agente llama cuando la necesita.
-- Si el `SubagentLauncher` falla (no hay `TaskBridgeServer` activo o el Task tool no responde), el error sube al Director.
+Se probó además que un solo subagente que lee varios bloques con `Read` produce respuestas más completas que múltiples subagentes leyendo un bloque cada uno, y requiere una sola invocación del Task tool en lugar de múltiples.
+
+**Limitación descubierta:** un subagente tiene ~128K tokens de contexto. Si los bloques candidatos juntos superan ese límite, un solo subagente no puede leerlos todos.
+
+**Mecanismo — dos modos según tamaño:**
+
+La función `query_context(question, max_results=3)` en `pipeline.py` elige el modo automáticamente:
+
+**Modo directo (pocos bloques, contenidos juntos < 100K tokens):**
+1. La función identifica bloques candidatos (búsqueda por keyword en nombres de temas, contenido del índice, y contenido de los bloques).
+2. La función lanza **un solo subagente** con el Task tool (una invocación).
+3. El subagente recibe la pregunta y la lista de rutas de los bloques candidatos.
+4. El subagente lee los bloques con `Read`, busca la respuesta, consolida.
+5. El subagente devuelve la respuesta final.
+6. La función devuelve la respuesta al agente.
+- **Intervención del agente principal: 1 invocación del Task tool.** Sin polling, sin TaskBridgeServer.
+
+**Modo distribuido (muchos bloques, contenidos juntos > 100K tokens):**
+1. La función identifica bloques candidatos.
+2. La función divide los bloques en lotes que quepan en el contexto de un subagente (~100K tokens por lote).
+3. La función lanza **un subagente por lote** con el Task tool (múltiples invocaciones en paralelo en un solo mensaje).
+4. Cada subagente lee los bloques de su lote y responde.
+5. La función consolida las respuestas de todos los lotes (elimina duplicados, fusiona).
+6. La función devuelve la respuesta consolidada al agente.
+- **Intervención del agente principal: N invocaciones del Task tool en paralelo (en un solo mensaje).** Sin polling, sin TaskBridgeServer.
+
+**Umbral de decisión:** `QUERY_DIRECT_MODE_THRESHOLD_TOKENS` (configurable en `config.py`, default 100K). Si los bloques candidatos juntos superan este umbral, se usa modo distribuido.
 
 **Reglas:**
-- El agente nunca ve el contenido del bloque, solo la respuesta consolidada.
+- El agente nunca ve el contenido de los bloques, solo la respuesta.
 - Si ningún bloque tiene match, la función responde que no hay información relevante.
-- El subagente que responde por cada bloque es el `IntercambiosClasificadorSubagent` (M7).
+- Si el subagente falla, el error sube al Director (no silencioso).
+- No se usa TaskBridgeServer ni `_task_bridge.py` para consultas. El agente principal lanza los subagentes directamente con el Task tool.
 
 ### Mejora M9 — Ampliación de contexto desde fuentes externas
 

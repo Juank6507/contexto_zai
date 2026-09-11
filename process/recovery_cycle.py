@@ -138,7 +138,7 @@ class RecoveryCycle:
         self._delegator = DocumentDelegator() if enable_attachments else None
         self._exchange_builder = ExchangeBuilder(delegator=self._delegator)
         self._classifier = MessageClassifier()
-        self._subdivider = Subdivider()
+        self._subdivider = Subdivider(launcher=subagent_launcher)
         self._packer = BlockPacker()
         self._recovery_gen = RecoveryGenerator(
             decisiones_generator=self._build_decisiones_generator(),
@@ -151,6 +151,18 @@ class RecoveryCycle:
         if enable_capa3:
             self._discriminator = DiscriminatorSubagent(
                 launcher=subagent_launcher or SubagentLauncher(),
+            )
+
+        # v4.0: pasar launcher al RecoveryGenerator para que EstadoGenerator
+        # y DecisionesGenerator puedan usar subagentes (D4, A1 truncado, decisiones con alcance)
+        if subagent_launcher is not None:
+            from contexto_zai.generation.estado_generator import EstadoGenerator
+            from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+            estado_gen = EstadoGenerator(launcher=subagent_launcher)
+            decisiones_gen = DecisionesGenerator(launcher=subagent_launcher)
+            self._recovery_gen = RecoveryGenerator(
+                estado_generator=estado_gen,
+                decisiones_generator=decisiones_gen,
             )
 
     def _build_decisiones_generator(self):

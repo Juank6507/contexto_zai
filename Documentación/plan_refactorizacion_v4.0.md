@@ -136,39 +136,56 @@ cd /home/z/my-project && PYTHONPATH=/home/z/my-project python3 contexto_zai/gene
 
 ---
 
-## H4 — `query_context` para consulta bajo demanda (M8)
+## H4 — `query_context` para consulta bajo demanda (M8 revisado)
 
 **Prioridad:** ALTA — es el mecanismo central del bibliotecario.
-**Dependencias:** H1 (usa `IntercambiosClasificadorSubagent` para responder por bloque).
+**Dependencias:** ninguna (no depende de H1 porque no usa `IntercambiosClasificadorSubagent` ni `SubagentLauncher`).
 **Estimación:** 1 sesión.
+
+**Hallazgo de pruebas reales (Sesión 16):** Los subagentes no tienen Task tool. Un subagente SÍ tiene `Read` y `Bash`. Un solo subagente que lee varios bloques produce respuestas más completas y requiere una sola invocación del Task tool. El TaskBridgeServer y el polling manual NO son necesarios para consultas.
+
+### Diseño
+
+`query_context` funciona así:
+1. La función Python identifica bloques candidatos (keyword search en nombres de temas, índice y contenido de bloques).
+2. Calcula el tamaño total de los bloques candidatos.
+3. Si el tamaño total < `QUERY_DIRECT_MODE_THRESHOLD_TOKENS` (100K): **modo directo**.
+4. Si el tamaño total >= umbral: **modo distribuido**.
+5. En modo directo: lanza 1 subagente que lee los bloques con `Read` y responde.
+6. En modo distribuido: lanza N subagentes (uno por lote de bloques) en paralelo, consolida.
+7. La función devuelve la respuesta.
+
+**Importante:** el agente principal lanza los subagentes directamente con el Task tool. No usa TaskBridgeServer, no usa `_task_bridge.py`, no hace polling. La función `query_context` prepara los prompts y devuelve la información para que el agente principal lance los subagentes.
 
 ### Archivos intervenidos
 
-1. `contexto_zai/pipeline.py` — agregar función pública `query_context(question, max_results=3)`:
-   - Lee `01_indice_recuperacion.md` y `_metadata.json`.
-   - Identifica bloques candidatos por keyword en `tema_a_archivo` y en las secciones de cada bloque.
-   - Lanza un `IntercambiosClasificadorSubagent` por cada bloque candidato en paralelo vía `SubagentLauncher`.
-   - Cada subagente lee solo su bloque y responde a la pregunta con una respuesta completa y abarcadora.
-   - Consolida las respuestas (una sola: la devuelve; varias: las fusiona eliminando duplicados).
-   - Devuelve al agente la respuesta consolidada.
-2. `contexto_zai/config.py` — constantes `QUERY_MAX_RESULTS=3`, `QUERY_MAX_RESPONSE_TOKENS=5000`.
+1. `contexto_zai/pipeline.py` — reescribir `query_context`:
+   - Lee `_metadata.json` para identificar bloques candidatos.
+   - Busca keywords en nombres de temas, contenido del índice y contenido de los bloques.
+   - Calcula tamaño total de bloques candidatos.
+   - Elige modo (directo o distribuido) según el umbral.
+   - Prepara el prompt del subagente con la pregunta y las rutas de los bloques.
+   - En modo directo: devuelve el prompt para 1 subagente.
+   - En modo distribuido: devuelve N prompts para N subagentes en paralelo.
+   - El agente principal ejecuta el/los Task tool y consolida.
+2. `contexto_zai/config.py` — agregar `QUERY_DIRECT_MODE_THRESHOLD_TOKENS=100000`.
 
 ### Detalle
 
-- No se crea mini-servicio HTTP nuevo. Es una función Python directa.
-- No se crea módulo `ContextServer` separado.
-- Si el `SubagentLauncher` falla, el error sube al Director.
-- Si ningún bloque tiene match, responde que no hay información relevante.
+- No se crea mini-servicio HTTP.
+- No se usa TaskBridgeServer para consultas.
+- No se usa `SubagentLauncher` ni `_task_bridge.py` para consultas.
+- El subagente usa `Read` para leer los bloques directamente del filesystem.
+- Si el subagente falla, el error sube al Director (no silencioso).
 
 ### Validación
 
 ```bash
-cd /home/z/my-project && PYTHONPATH=/home/z/my-project python3 -c "
-from contexto_zai.pipeline import query_context
-# Test con contexto real generado
-answer = query_context('¿qué se decidió sobre el flujo de autenticación JWT?')
-print(answer)
-"
+# Auto-tests en pipeline.py (mock launcher para tests unitarios)
+cd /home/z/my-project/contexto_zai && python pipeline.py
+
+# Test real con datos del contexto recuperado
+# El agente principal lanza 1 subagente que lee los bloques y responde
 ```
 
 ---
