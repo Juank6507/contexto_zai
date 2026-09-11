@@ -2,7 +2,7 @@
 """Paquete de generación del sistema Contexto Z.ai (v3.2).
 
 Contiene los generadores de los 4 tipos de archivo de recuperación:
-- 00_estado_actual.md (8 secciones D1-D4 + A1-A4)
+- 00_estado_actual.md (5 secciones v4.0: D1, D4, A1, A2, A3, A4)
 - 01_indice_recuperacion.md (tabla tema -> archivo)
 - 02_decisiones_clave.md (delegador a subagente LLM)
 - bloque_XX.md (uno por bloque temático)

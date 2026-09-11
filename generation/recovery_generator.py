@@ -254,11 +254,14 @@ if __name__ == "__main__":
     assert "bloque_01.md" in filenames
     print(f"[OK] 4 archivos generados: {filenames}")
 
-    # Test 2: estado tiene 8 secciones
+    # Test 2: estado tiene 5 secciones (v4.0: D2 y D3 eliminadas)
     estado_file = next(f for f in files if f.filename == "00_estado_actual.md")
-    for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
+    for section in ["D1", "D4", "A1", "A2", "A3", "A4"]:
         assert f"Sección {section}" in estado_file.content, f"Falta sección {section}"
-    print(f"[OK] Estado con 8 secciones")
+    # D2 y D3 NO deben estar (eliminadas en v4.0)
+    assert "Sección D2" not in estado_file.content, "D2 no debe estar en v4.0"
+    assert "Sección D3" not in estado_file.content, "D3 no debe estar en v4.0"
+    print(f"[OK] Estado con 5 secciones (D2/D3 eliminadas en v4.0)")
 
     # Test 3: índice tiene tabla mapeo
     indice_file = next(f for f in files if f.filename == "01_indice_recuperacion.md")

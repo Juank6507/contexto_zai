@@ -1,9 +1,9 @@
-# tests/test_estado_indice_generation.py -- Test de integracion: generadores de estado (8 secciones), indice (mapeo) y decisiones.
+# tests/test_estado_indice_generation.py -- Test de integracion: generadores de estado (5 secciones v4.0), indice (mapeo) y decisiones.
 
 """Test de integración: generadores de estado, índice y decisiones (v3.2).
 
 Valida la funcionalidad colectiva de los 3 generadores principales:
-1. EstadoGenerator produce 8 secciones (D1-D4 + A1-A4).
+1. EstadoGenerator produce 5 secciones (D1, D4, A1, A2, A3, A4) — v4.0.
 2. IndiceGenerator produce tabla `tema -> archivo`.
 3. DecisionesGenerator funciona en modo offline (placeholder) y
    online (con extractor simulado).
@@ -77,16 +77,19 @@ def make_test_exchanges() -> list[Exchange]:
         ),
     ]
 
-def test_estado_generator_8_secciones():
-    """Test 1: estado_generator produce 8 secciones D1-D4 + A1-A4."""
-    print("\n=== Test 1: estado_generator con 8 secciones ===")
+def test_estado_generator_5_secciones():
+    """Test 1: estado_generator produce 5 secciones (D1, D4, A1, A2, A3, A4) v4.0."""
+    print("\n=== Test 1: estado_generator con 5 secciones (v4.0) ===")
     gen = EstadoGenerator()
     exchanges = make_test_exchanges()
     content = gen.generate(exchanges, chat_label="Test")
 
-    for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
+    for section in ["D1", "D4", "A1", "A2", "A3", "A4"]:
         assert f"Sección {section}" in content, f"Falta sección {section}"
-    print(f"  [OK] 8 secciones presentes (D1-D4, A1-A4)")
+    # D2 y D3 NO deben estar (eliminadas en v4.0)
+    assert "Sección D2" not in content, "D2 no debe estar en v4.0"
+    assert "Sección D3" not in content, "D3 no debe estar en v4.0"
+    print(f"  [OK] 5 secciones presentes (D2/D3 eliminadas en v4.0)")
     print(f"  [PASS] PASO")
 
 def test_estado_d1_literal_director():
@@ -95,8 +98,8 @@ def test_estado_d1_literal_director():
     gen = EstadoGenerator()
     exchanges = make_test_exchanges()
     content = gen.generate(exchanges, chat_label="Test")
-    # D1 debe contener el último mensaje del Director
-    assert "¿Por qué respondes eso si ya acordamos usar X?" in content
+    # D1 debe contener el último mensaje del Director (intercambio id=3)
+    assert "Lee el worklog del proyecto" in content
     print(f"  [OK] D1 contiene el ultimo mensaje del Director")
     print(f"  [PASS] PASO")
 
@@ -225,7 +228,7 @@ def main():
     print("TEST DE INTEGRACION: generadores de estado, indice, decisiones")
     print("=" * 60)
     tests = [
-        test_estado_generator_8_secciones,
+        test_estado_generator_5_secciones,
         test_estado_d1_literal_director,
         test_estado_a3_no_falsos_positivos,
         test_indice_with_tema_to_archivo_table,

@@ -137,9 +137,9 @@ def test_e2e_all_4_file_types_generated():
         print(f"  [OK] 4 tipos: estado, indice, decisiones, {len(bloques)} bloque(s)")
         print(f"  [PASS] PASO")
 
-def test_e2e_estado_with_8_sections():
-    """Test E2E 3: estado actual con 8 secciones D1-D4+A1-A4."""
-    print("\n=== Test E2E 3: estado actual con 8 secciones ===")
+def test_e2e_estado_with_5_sections():
+    """Test E2E 3: estado actual con 5 secciones (v4.0: D2/D3 eliminadas)."""
+    print("\n=== Test E2E 3: estado actual con 5 secciones (v4.0) ===")
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
@@ -150,9 +150,12 @@ def test_e2e_estado_with_8_sections():
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         estado = (ws / "00_estado_actual.md").read_text(encoding="utf-8")
-        for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
+        for section in ["D1", "D4", "A1", "A2", "A3", "A4"]:
             assert f"Sección {section}" in estado, f"Falta sección {section}"
-        print(f"  [OK] Estado con 8 secciones")
+        # D2 y D3 NO deben estar (eliminadas en v4.0)
+        assert "Sección D2" not in estado, "D2 no debe estar en v4.0"
+        assert "Sección D3" not in estado, "D3 no debe estar en v4.0"
+        print(f"  [OK] Estado con 5 secciones (D2/D3 eliminadas)")
         print(f"  [PASS] PASO")
 
 def test_e2e_indice_with_mapping_table():
@@ -653,7 +656,7 @@ def main():
     tests = [
         test_e2e_pipeline_run_success,
         test_e2e_all_4_file_types_generated,
-        test_e2e_estado_with_8_sections,
+        test_e2e_estado_with_5_sections,
         test_e2e_indice_with_mapping_table,
         test_e2e_metadata_correct,
         test_e2e_no_block_exceeds_70k_tokens,

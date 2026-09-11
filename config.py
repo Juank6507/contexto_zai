@@ -367,6 +367,41 @@ MAX_SUBAGENTES_N2_PARALELOS: int = MAX_SUBAGENTES_CLASIFICACION_PROFUNDA  # = 3
 
 # -- v3.6: JWT Bridge Server (mini HTTP server en sandbox) --------------------
 
+# -- v4.0: ClasificadorSubagent (clase base OOP para subagentes) -------------
+
+# Tamaño máximo de contexto (en tokens aprox) que se le pasa al subagente.
+# Aplica a IntercambiosClasificadorSubagent (M3 D4/A1, M4, M7, M8).
+CLASIFICADOR_MAX_CONTEXT_TOKENS: int = 15000
+
+# Timeout en segundos para esperar la respuesta del subagente.
+# Si se excede, el error sube al Director (no hay fallback silencioso).
+CLASIFICADOR_TIMEOUT_SECONDS: int = 60
+
+# Truncado inteligente del EstadoGenerator (M3 A1):
+# ~16K de texto textual del tema activo + ~4K de resumen del contenido truncado.
+# Las cifras son aproximadas, no rígidas.
+ESTADO_TRUNCADO_TEXTUAL_TOKENS: int = 16000
+ESTADO_TRUNCADO_RESUMEN_TOKENS: int = 4000
+
+# Lote de intercambios que se le pasa al subagente de decisiones (M4).
+DECISIONES_LOTE_SIZE: int = 30
+DECISIONES_MAX_CONTEXT_TOKENS: int = 12000
+
+# Subdivider (M7): nombre legible de subtemas vía subagente.
+SUBDIVIDER_NAMER_MAX_CONTEXT_TOKENS: int = 2000
+SUBDIVIDER_NAMER_MAX_PALABRAS: int = 5
+
+# query_context (M8): límites de la consulta bajo demanda.
+QUERY_MAX_RESULTS: int = 3
+QUERY_MAX_RESPONSE_TOKENS: int = 5000
+
+# ampliar_contexto (M9): umbrales para clasificar fuentes externas.
+AMPLIAR_SMALL_FILE_THRESHOLD_TOKENS: int = 5000
+AMPLIAR_URL_DOWNLOAD_TIMEOUT: int = 30
+AMPLIAR_URL_MAX_SIZE_BYTES: int = 50_000_000
+
+# -- v3.6: JWT Bridge Server (mini HTTP server en sandbox) --------------------
+
 JWT_BRIDGE_SERVER_PORT: int = 8086
 JWT_BRIDGE_SERVER_HOST: str = "0.0.0.0"  # accesible desde fuera del sandbox
 

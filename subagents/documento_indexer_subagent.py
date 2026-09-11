@@ -54,9 +54,12 @@ from typing import Callable, Optional
 from contexto_zai.config import (
     ATTACHMENTS_INDEXED_DIR,
     ATTACHMENTS_TEMP_DIR,
+    CLASIFICADOR_MAX_CONTEXT_TOKENS,
+    CLASIFICADOR_TIMEOUT_SECONDS,
     DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS,
 )
 from contexto_zai.models import Attachment
+from contexto_zai.subagents.clasificador_subagent import ClasificadorSubagent
 from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
 
 logger = logging.getLogger(__name__)
@@ -111,8 +114,15 @@ class DocumentoIndexResult:
 # ── Subagente indexador de documentos ─────────────────────────────
 
 
-class DocumentoIndexerSubagent:
+class DocumentoIndexerSubagent(ClasificadorSubagent[Attachment, "DocumentoIndexResult"]):
     """Subagente que lee, clasifica y resume un documento adjunto.
+
+    Hereda de ClasificadorSubagent (v4.0) para reutilizar el patrón de
+    manejo de errores (error sube al Director, no silencioso). El método
+    run() se sobreescribe porque el flujo de attachments del chat tiene
+    lógica propia: descargar el archivo, guardarlo en temp/, invocar el
+    subagente, mover a indexed/. Los métodos build_prompt() y
+    parse_response() implementan la interfaz de la clase base.
 
     Args:
         launcher: SubagentLauncher para invocar el Task de Z.ai.
@@ -120,6 +130,8 @@ class DocumentoIndexerSubagent:
         max_resumen_chars: Tamaño máximo del resumen breve.
         temp_dir: Directorio temporal para descargar el archivo.
         indexed_dir: Directorio definitivo para archivos indexados.
+        max_context_tokens: Heredado de ClasificadorSubagent (v4.0).
+        timeout_seconds: Heredado de ClasificadorSubagent (v4.0).
 
     Usage:
         >>> sub = DocumentoIndexerSubagent(launcher=launcher, attachment_client=client)
@@ -136,8 +148,15 @@ class DocumentoIndexerSubagent:
         max_resumen_chars: int = DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS,
         temp_dir: Path | str = ATTACHMENTS_TEMP_DIR,
         indexed_dir: Path | str = ATTACHMENTS_INDEXED_DIR,
+        max_context_tokens: int = CLASIFICADOR_MAX_CONTEXT_TOKENS,
+        timeout_seconds: int = CLASIFICADOR_TIMEOUT_SECONDS,
     ) -> None:
-        self._launcher = launcher
+        # Inicializar la clase base
+        super().__init__(
+            launcher=launcher,
+            max_context_tokens=max_context_tokens,
+            timeout_seconds=timeout_seconds,
+        )
         self._attachment_client = attachment_client
         self._max_resumen_chars = max_resumen_chars
         self._temp_dir = Path(temp_dir)
@@ -185,8 +204,8 @@ class DocumentoIndexerSubagent:
                 error=f"Temp file error: {e}",
             )
 
-        # 3. Construir prompt para el subagente
-        prompt = self._build_prompt(attachment, temp_path)
+        # 3. Construir prompt para el subagente (método histórico, mantiene firma)
+        prompt = self._build_prompt_historico(attachment, temp_path)
 
         # 4. Lanzar subagente
         try:
@@ -248,8 +267,44 @@ class DocumentoIndexerSubagent:
 
     # ── Métodos privados ─────────────────────────────────────────
 
-    def _build_prompt(self, attachment: Attachment, file_path: Path) -> str:
-        """Construye el prompt para el subagente indexador."""
+    def build_prompt(self, context: Attachment) -> tuple[str, list[str], bool]:
+        """Implementa la interfaz de ClasificadorSubagent.
+
+        Para DocumentoIndexerSubagent, el contexto es un Attachment y el
+        archivo ya está guardado en temp/ cuando se invoca. Esta función
+        delega al _build_prompt histórico que recibe (attachment, file_path).
+        Para mantener compatibilidad con la clase base, se usa el archivo
+        del attachment si ya existe en temp/; si no, devuelve error.
+        """
+        # En el flujo normal, _build_prompt se llama desde run() con el
+        # file_path ya resuelto. Este método existe para cumplir la interfaz
+        # de la clase base si se invoca directamente.
+        # Estimamos el file_path a partir del temp_dir.
+        safe_filename = self._sanitize_filename(context.filename)
+        file_path = self._temp_dir / f"{context.file_id}_{safe_filename}"
+        prompt = self._build_prompt_historico(context, file_path)
+        return prompt, [str(file_path)] if file_path.exists() else [], False
+
+    def parse_response(self, raw: str) -> "DocumentoIndexResult":
+        """Implementa la interfaz de ClasificadorSubagent.
+
+        Parsea la respuesta cruda en (resumen, temas) y los devuelve
+        empaquetados en un DocumentoIndexResult (sin archivo_indexado_path).
+        """
+        resumen, temas = self._parse_response(raw)
+        # Truncar resumen si excede el máximo
+        if len(resumen) > self._max_resumen_chars:
+            resumen = resumen[: self._max_resumen_chars - 3] + "..."
+        return DocumentoIndexResult(
+            attachment_id="",
+            filename="",
+            resumen_breve=resumen,
+            temas_detectados=temas,
+            success=True,
+        )
+
+    def _build_prompt_historico(self, attachment: Attachment, file_path: Path) -> str:
+        """Construye el prompt para el subagente indexador (método histórico)."""
         return f"""Eres un subagente indexador de documentos. Tu objetivo es leer
 un documento y generar un índice estructurado que permita al agente principal
 saber de qué trata sin haberlo leído.
@@ -684,13 +739,13 @@ SECCIONES: cadena_descubrimiento, protocolo_cookie, endpoints_api"""
             content_type="application/pdf", size=99999,
         )
         # Necesitamos guardar el archivo primero para que el prompt tenga la ruta
-        prompt = sub._build_prompt(att, Path("/fake/path/custom.pdf"))
+        prompt = sub._build_prompt_historico(att, Path("/fake/path/custom.pdf"))
         assert "custom.pdf" in prompt
         assert "application/pdf" in prompt
         assert "99,999" in prompt
         assert "RESUMEN:" in prompt
         assert "TEMA:" in prompt
-        print(f"[OK] _build_prompt: incluye filename, tipo, tamaño y formato esperado")
+        print(f"[OK] _build_prompt_historico: incluye filename, tipo, tamaño y formato esperado")
 
     # Test 10: DocumentoIndexResult.temas_nombres
     result = DocumentoIndexResult(

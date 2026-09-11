@@ -194,12 +194,10 @@ con todo el contenido del chat, y la metadata del proceso.
 1. **Descomprime este paquete** en `/home/z/my-project/contexto_recuperacion/`.
 
 2. **Lee `00_estado_actual.md`** para saber donde quedo el proyecto.
-   - Contiene 8 secciones: D1-D4 (Director) + A1-A4 (Agente).
+   - Contiene 5 secciones (v4.0): D1, D4, A1, A2, A3, A4.
    - D1: ultima instruccion del Director (literal).
-   - D2: contexto del tema activo.
-   - D3: decisiones pendientes.
-   - D4: restricciones activas.
-   - A1: que estaba haciendo el agente.
+   - D4: restricciones activas del ultimo tema.
+   - A1: que estaba haciendo el agente (con truncado inteligente).
    - A2: entregables producidos.
    - A3: errores abiertos.
    - A4: siguiente paso logico.

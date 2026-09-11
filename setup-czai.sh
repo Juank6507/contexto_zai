@@ -47,14 +47,14 @@ if [ ! -d "$SRC_DIR" ]; then
     exit 1
 fi
 
-echo -e "${YELLOW}[1/5] Verificando estructura de origen...${NC}"
+echo -e "${YELLOW}[1/6] Verificando estructura de origen...${NC}"
 echo "  Origen: $SRC_DIR"
 find "$SRC_DIR" -type f | while read -r f; do
     echo "  - ${f#$SRC_DIR/}"
 done
 echo ""
 
-echo -e "${YELLOW}[2/5] Creando directorios en el sandbox...${NC}"
+echo -e "${YELLOW}[2/6] Creando directorios en el sandbox...${NC}"
 mkdir -p "$SANDBOX_ROOT/src/lib/czai"
 mkdir -p "$SANDBOX_ROOT/src/components/czai"
 mkdir -p "$SANDBOX_ROOT/src/app/api/czai/jwt-status"
@@ -64,7 +64,7 @@ mkdir -p "$SANDBOX_ROOT/src/app/api/czai/installer-ps1"
 echo -e "  ${GREEN}Directorios creados.${NC}"
 echo ""
 
-echo -e "${YELLOW}[3/5] Copiando archivos fuente...${NC}"
+echo -e "${YELLOW}[3/6] Copiando archivos fuente...${NC}"
 
 # Librerías
 cp "$SRC_DIR/lib/czai/bookmarklet.ts" "$SANDBOX_ROOT/src/lib/czai/"
@@ -95,7 +95,32 @@ echo -e "  ${GREEN}✓ app/page.tsx${NC}"
 
 echo ""
 
-echo -e "${YELLOW}[4/5] Verificando que el dev server responde...${NC}"
+# -- Copiar mini-servicios al workspace del sandbox --
+# Los mini-servicios (jwt-bridge, task-bridge, pipeline-runner) son procesos
+# Python que corren en background en el sandbox. Se copian del repo al
+# workspace para que estén disponibles sin necesidad de clonar el repo.
+# El patrón doble setsid (en _launch.sh) asegura que sobrevivan entre
+# llamadas del Bash tool.
+echo ""
+echo -e "${YELLOW}[4/6] Copiando mini-servicios al workspace...${NC}"
+mkdir -p "$SANDBOX_ROOT/mini-services/jwt-bridge"
+mkdir -p "$SANDBOX_ROOT/mini-services/task-bridge"
+mkdir -p "$SANDBOX_ROOT/mini-services/pipeline-runner"
+cp "$SCRIPT_DIR/mini-services/_launch.sh" "$SANDBOX_ROOT/mini-services/"
+cp "$SCRIPT_DIR/mini-services/jwt-bridge/index.py" "$SANDBOX_ROOT/mini-services/jwt-bridge/"
+cp "$SCRIPT_DIR/mini-services/task-bridge/index.py" "$SANDBOX_ROOT/mini-services/task-bridge/"
+cp "$SCRIPT_DIR/mini-services/pipeline-runner/runner.py" "$SANDBOX_ROOT/mini-services/pipeline-runner/"
+cp "$SCRIPT_DIR/mini-services/pipeline-runner/launch.sh" "$SANDBOX_ROOT/mini-services/pipeline-runner/"
+chmod +x "$SANDBOX_ROOT/mini-services/_launch.sh"
+chmod +x "$SANDBOX_ROOT/mini-services/pipeline-runner/launch.sh"
+echo -e "  ${GREEN}✓ mini-services/_launch.sh${NC}"
+echo -e "  ${GREEN}✓ mini-services/jwt-bridge/index.py${NC}"
+echo -e "  ${GREEN}✓ mini-services/task-bridge/index.py${NC}"
+echo -e "  ${GREEN}✓ mini-services/pipeline-runner/runner.py${NC}"
+echo -e "  ${GREEN}✓ mini-services/pipeline-runner/launch.sh${NC}"
+echo ""
+
+echo -e "${YELLOW}[5/6] Verificando que el dev server responde...${NC}"
 
 # Esperar un momento a que Next.js recompile
 sleep 3
@@ -127,7 +152,7 @@ check_endpoint "/" "200" "Página principal (GET /)"
 check_endpoint "/api/czai/jwt-status" "200" "Endpoint JWT status"
 echo ""
 
-echo -e "${YELLOW}[5/5] Verificando estado del JWT...${NC}"
+echo -e "${YELLOW}[6/6] Verificando estado del JWT...${NC}"
 JWT_STATUS=$(curl -s http://localhost:3000/api/czai/jwt-status 2>/dev/null || echo '{"needs_jwt": true}')
 
 if echo "$JWT_STATUS" | grep -q '"needs_jwt":false'; then
@@ -152,4 +177,10 @@ echo "  GET  /api/czai/jwt-status       — Estado del JWT"
 echo "  POST /api/czai/recibir-jwt      — Recibir JWT (form POST o JSON)"
 echo "  GET  /api/czai/installer-bat    — Descargar instalador .bat"
 echo "  GET  /api/czai/installer-ps1    — Descargar instalador .ps1"
+echo ""
+echo "Mini-servicios disponibles:"
+echo "  mini-services/_launch.sh        — Lanzar jwt-bridge + task-bridge"
+echo "  mini-services/jwt-bridge/       — JwtBridgeServer (puerto 8086)"
+echo "  mini-services/task-bridge/      — TaskBridgeServer (puerto 8087)"
+echo "  mini-services/pipeline-runner/  — Lanzadera del pipeline"
 echo ""

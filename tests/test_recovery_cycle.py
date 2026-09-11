@@ -9,7 +9,7 @@ Cubre:
 1. Ciclo exitoso con mensajes simulados.
 2. Verificación de archivos escritos en workspace y download.
 3. Metadata generada correctamente (tema_a_archivo, ultimo_timestamp).
-4. Estado actual con 8 secciones.
+4. Estado actual con 5 secciones (v4.0: D2/D3 eliminadas).
 5. Índice con tabla mapeo.
 6. Unicidad temática.
 7. Error de API capturado.
@@ -142,9 +142,9 @@ def test_recovery_cycle_metadata_correct():
         print(f"  [OK] Metadata: chat_id={meta['chat_id']}, temas={len(meta['tema_a_archivo'])}")
         print(f"  [PASS] PASO")
 
-def test_recovery_cycle_estado_8_secciones():
-    """Test 4: estado actual con 8 secciones."""
-    print("\n=== Test 4: estado actual con 8 secciones ===")
+def test_recovery_cycle_estado_5_secciones():
+    """Test 4: estado actual con 5 secciones (v4.0: D2/D3 eliminadas)."""
+    print("\n=== Test 4: estado actual con 5 secciones (v4.0) ===")
     fake_messages = [
         Message(seq=1, role=MessageRole.USER, timestamp=100, content="pytest"),
         Message(seq=2, role=MessageRole.ASSISTANT, timestamp=110, content="OK"),
@@ -159,9 +159,12 @@ def test_recovery_cycle_estado_8_secciones():
             cycle.run()
 
         estado = (ws / "00_estado_actual.md").read_text(encoding="utf-8")
-        for section in ["D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4"]:
+        for section in ["D1", "D4", "A1", "A2", "A3", "A4"]:
             assert f"Sección {section}" in estado, f"Falta sección {section}"
-        print(f"  [OK] 8 secciones presentes")
+        # D2 y D3 NO deben estar (eliminadas en v4.0)
+        assert "Sección D2" not in estado, "D2 no debe estar en v4.0"
+        assert "Sección D3" not in estado, "D3 no debe estar en v4.0"
+        print(f"  [OK] 5 secciones presentes (D2/D3 eliminadas)")
         print(f"  [PASS] PASO")
 
 def test_recovery_cycle_indice_with_mapping():
@@ -291,7 +294,7 @@ def main():
         test_recovery_cycle_success_with_mocked_api,
         test_recovery_cycle_writes_files_in_workspace_and_download,
         test_recovery_cycle_metadata_correct,
-        test_recovery_cycle_estado_8_secciones,
+        test_recovery_cycle_estado_5_secciones,
         test_recovery_cycle_indice_with_mapping,
         test_recovery_cycle_unicity,
         test_recovery_cycle_api_error,
