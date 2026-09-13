@@ -594,6 +594,50 @@ class IndiceConsolidado(BaseModel):
     indices_parciales: list[IndiceParcial] = Field(default_factory=list)
 
 
+# -- Modelos v4.1 H9: Subagentes diferidos (two-phase pipeline) ----------
+
+
+class SubagentTask(BaseModel):
+    """Tarea de subagente diferida (H9).
+
+    Representa una llamada a un subagente que NO se ejecuta durante
+    ``pipeline.run()`` (porque causaría deadlock síncrono), sino que
+    se difiere para que el agente principal la ejecute con el Task tool
+    tras recibir el resultado del pipeline.
+
+    Attributes:
+        task_id: Identificador único (ej: "estado_d4", "decisiones_lote_0").
+        purpose: Propósito legible ("estado.d4", "estado.a1_resumen",
+            "decisiones", "subdivider.nombre").
+        prompt: Prompt completo para enviar al subagente.
+        context: Metadatos para aplicar la respuesta (ej: section, tema_actual).
+    """
+
+    task_id: str
+    purpose: str = ""
+    prompt: str = ""
+    context: dict = Field(default_factory=dict)
+
+
+class SubagentResponse(BaseModel):
+    """Respuesta de un subagente (H9).
+
+    Representa el resultado de ejecutar una ``SubagentTask`` vía el
+    Task tool del agente principal.
+
+    Attributes:
+        task_id: Identificador de la tarea que responde.
+        success: Si el subagente devolvió una respuesta válida.
+        response: Texto crudo devuelto por el subagente.
+        error: Mensaje de error si falló.
+    """
+
+    task_id: str
+    success: bool = True
+    response: str = ""
+    error: str = ""
+
+
 if __name__ == "__main__":
     # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
     import io as _io, sys as _sys
@@ -708,5 +752,43 @@ if __name__ == "__main__":
     )
     assert len(ic.indices_parciales) == 1
     print(f"[OK] IndiceConsolidado: {len(ic.indices_parciales)} índices parciales")
+
+    # Test 10 (v4.1 H9): SubagentTask y SubagentResponse
+    task = SubagentTask(
+        task_id="estado_d4",
+        purpose="estado.d4",
+        prompt="Eres un subagente...",
+        context={"section": "D4", "tema_actual": "jwt"},
+    )
+    assert task.task_id == "estado_d4"
+    assert task.context["section"] == "D4"
+    assert task.context["tema_actual"] == "jwt"
+    print(f"[OK] SubagentTask: task_id={task.task_id}, purpose={task.purpose}")
+
+    resp = SubagentResponse(
+        task_id="estado_d4",
+        success=True,
+        response="RESTRICCION: No usar colores indigo\nALCANCE: general",
+    )
+    assert resp.success
+    assert "indigo" in resp.response
+    print(f"[OK] SubagentResponse: success={resp.success}, response len={len(resp.response)}")
+
+    # Test 11 (v4.1 H9): SubagentTask con defaults (context vacío, purpose vacío)
+    task2 = SubagentTask(task_id="decisiones_lote_0", prompt="prompt")
+    assert task2.context == {}
+    assert task2.purpose == ""
+    print(f"[OK] SubagentTask defaults: context={task2.context}, purpose='{task2.purpose}'")
+
+    # Test 12 (v4.1 H9): SubagentResponse con error
+    resp_err = SubagentResponse(
+        task_id="estado_d4",
+        success=False,
+        error="Subagente falló: timeout",
+    )
+    assert not resp_err.success
+    assert resp_err.response == ""
+    assert "timeout" in resp_err.error
+    print(f"[OK] SubagentResponse error: success={resp_err.success}, error='{resp_err.error}'")
 
     print("\n[PASS] models.py: todos los tests pasaron")

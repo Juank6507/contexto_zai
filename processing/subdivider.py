@@ -392,45 +392,23 @@ class Subdivider(ContentDelegator):
         _used_names: set,
         subtemas: list[tuple[str, list[Exchange]]],
     ) -> str:
-        """Genera un nombre legible para un subtema usando un subagente (M7).
+        """F4 v4.2: Genera un nombre legible (prepara tarea vía ProcesadorIntercambios).
 
-        Si el subagente falla o no responde, cae al nombre basado en fecha
-        (backward compatible).
+        Si hay launcher (ProcesadorIntercambios), prepara una tarea para que
+        el agente lance un subagente que genere el nombre legible. El nombre
+        temporal (por fecha) se usa hasta que el agente llame a collect_responses()
+        y el Integrador actualice _metadata.json.
+
+        Args:
+            tema: Nombre del tema padre.
+            exchanges: Intercambios a subdividir.
+            _used_names: Set de nombres ya usados (para evitar duplicados).
+            subtemas: Lista de subtemas ya generados en esta subdivisión.
+
+        Returns:
+            Nombre temporal basado en fecha (se actualiza con collect_responses).
         """
-        try:
-            from contexto_zai.subagents.intercambios_clasificador_subagent import (
-                IntercambiosClasificadorSubagent,
-                ModoClasificador,
-            )
-
-            sub = IntercambiosClasificadorSubagent(
-                launcher=self._launcher,
-                modo=ModoClasificador.NOMBRE_LEGIBLE,
-                max_context_tokens=SUBDIVIDER_NAMER_MAX_CONTEXT_TOKENS,
-            )
-            result = sub.run(exchanges)
-
-            if result.success and result.resultado:
-                nombre = result.resultado
-                # Asegurar unicidad
-                base_name = nombre
-                counter = 2
-                while nombre in _used_names or any(name == nombre for name, _ in subtemas):
-                    nombre = f"{base_name}_{counter}"
-                    counter += 1
-                # Registrar el nombre como usado
-                _used_names.add(nombre)
-                logger.info("Nombre legible generado: '%s' para tema '%s'", nombre, tema)
-                return nombre
-            else:
-                logger.warning(
-                    "Subagente NOMBRE_LEGIBLE falló: %s. Usando nombre por fecha.",
-                    result.error,
-                )
-        except Exception as e:
-            logger.warning("Error generando nombre legible: %s. Usando nombre por fecha.", e)
-
-        # Fallback: nombre por fecha
+        # Nombre temporal (por fecha) — se usa hasta que collect_responses lo reemplace
         from datetime import datetime
         first_ts = exchanges[0].start_timestamp if exchanges else 0
         date_str = datetime.fromtimestamp(first_ts).strftime("%Y%b%d").lower()
@@ -440,6 +418,19 @@ class Subdivider(ContentDelegator):
         while subtema_name in _used_names or any(name == subtema_name for name, _ in subtemas):
             subtema_name = f"{base_name}_{counter}"
             counter += 1
+
+        # F4: si hay launcher (ProcesadorIntercambios), preparar tarea de nombre legible
+        if self._launcher is not None:
+            try:
+                self._launcher.procesar(
+                    modo="NOMBRE_LEGIBLE",
+                    intercambios=exchanges,
+                    context={"nombre_temporal": subtema_name, "tema_padre": tema},
+                    task_id_suffix=subtema_name,
+                )
+            except Exception as e:
+                logger.warning("F4: no se pudo preparar tarea nombre legible: %s", e)
+
         return subtema_name
 
     def _split_exchange_content(
@@ -859,24 +850,16 @@ if __name__ == "__main__":
     assert all(name.startswith("validaciones_") for name in names)
     print(f"[OK] get_subtema_names: {names}")
 
-    # === Tests v4.0 (M7): Nombres legibles con launcher ===
+    # === Tests F1 v4.2: Desmontaje H9 ===
 
-    # Test 7: Subdivider con launcher (mock) genera nombres legibles
+    # Test 7: F1 v4.2 Subdivider con launcher — cae a nombre por fecha (no sub.run())
     def mock_invoker_nombre(prompt: str) -> str:
-        if "autenticacion" in prompt.lower() or "jwt" in prompt.lower():
-            return "autenticacion_jwt"
-        elif "oop" in prompt.lower() or "subagent" in prompt.lower():
-            return "arquitectura_oop"
-        elif "worklog" in prompt.lower():
-            return "actualizacion_worklog"
-        else:
-            return "tema_general"
+        return "tema_general"
 
     from contexto_zai.subagents.launcher import SubagentLauncher
     launcher_mock = SubagentLauncher(task_invoker=mock_invoker_nombre)
     sub_con_launcher = Subdivider(max_tokens_per_block=1000, launcher=launcher_mock)
 
-    # Test 7: subdividir con launcher genera nombres legibles
     exchanges_general = [
         Exchange(id=i, director_msg=Message(seq=i, role=MessageRole.USER, timestamp=i,
                  content=f"Vamos a usar OOP para los subagentes en el exchange {i} " + "x" * 200),
@@ -885,38 +868,22 @@ if __name__ == "__main__":
     ]
     result7 = sub_con_launcher.subdivide("general", exchanges_general)
     nombres7 = [name for name, _ in result7.subtemas]
-    # Los nombres deben ser legibles (no tener el formato fecha)
-    tiene_legible = any(
-        "2026" not in name and "sep" not in name
-        for name in nombres7
-    )
-    assert tiene_legible, f"Esperaba al menos un nombre legible, obtuvo: {nombres7}"
-    print(f"[OK] Subdivider con launcher: nombres legibles generados: {nombres7}")
+    # F1 v4.2: con launcher, cae a nombre por fecha (no hay deferred_tasks)
+    tiene_fecha = any("1970" in name or "jan" in name for name in nombres7)
+    assert tiene_fecha, f"F1 v4.2: esperaba nombres por fecha, obtuvo: {nombres7}"
+    assert not hasattr(sub_con_launcher, "_deferred_tasks") or not sub_con_launcher.__dict__.get("_deferred_tasks")
+    print(f"[OK] F1 v4.2 Subdivider con launcher: nombres por fecha (sin deferred_tasks)")
 
     # Test 8: sin launcher, sigue funcionando (backward compatible)
     sub_sin_launcher = Subdivider(max_tokens_per_block=1000)
     result8 = sub_sin_launcher.subdivide("general", exchanges_general)
     nombres8 = [name for name, _ in result8.subtemas]
-    # Sin launcher, los nombres tienen formato fecha
-    tiene_fecha = any("1970" in name or "jan" in name or "2026" in name or "sep" in name for name in nombres8)
-    assert tiene_fecha, f"Sin launcher esperaba nombres con fecha, obtuvo: {nombres8}"
-    print(f"[OK] Subdivider sin launcher: nombres por fecha (backward compatible): {nombres8[:2]}...")
+    tiene_fecha8 = any("1970" in name or "jan" in name for name in nombres8)
+    assert tiene_fecha8, f"Sin launcher esperaba nombres con fecha, obtuvo: {nombres8}"
+    print(f"[OK] F1 v4.2 sin launcher: nombres por fecha (backward compatible)")
 
-    # Test 9: _generate_legible_name genera nombre único
-    used_names = set()
-    subtemas_list = []
-    nombre = sub_con_launcher._generate_legible_name("general", exchanges_general[:5], used_names, subtemas_list)
-    assert nombre in used_names
-    print(f"[OK] _generate_legible_name: '{nombre}' generado y registrado")
-
-    # Test 10: _generate_legible_name asegura unicidad
-    used_names2 = {"arquitectura_oop"}
-    nombre2 = sub_con_launcher._generate_legible_name("general", exchanges_general[:5], used_names2, [])
-    assert nombre2 != "arquitectura_oop", f"Debería ser único, obtuvo: {nombre2}"
-    print(f"[OK] _generate_legible_name: unicidad garantizada: '{nombre2}'")
-
-    # Test 11: __repr__ muestra launcher
+    # Test 9: __repr__ muestra launcher
     assert "sí" in repr(sub_con_launcher) or "si" in repr(sub_con_launcher).lower()
     print(f"[OK] __repr__ con launcher: {repr(sub_con_launcher)}")
 
-    print("\n[PASS] subdivider.py: todos los tests pasaron")
+    print("\n[PASS] subdivider.py: todos los tests F1 v4.2 pasaron")

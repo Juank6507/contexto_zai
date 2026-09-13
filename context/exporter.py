@@ -170,7 +170,7 @@ class ContextExporter:
             "total_intercambios": total_exchanges,
             "total_temas": total_temas,
             "total_archivos": len(context_files),
-            "version_spec": "3.4",
+            "version_spec": "4.2",
         }
 
     def _build_instrucciones(
@@ -178,7 +178,11 @@ class ContextExporter:
         chat_id: str,
         context_files: list[tuple[Path, str]],
     ) -> str:
-        """Genera las instrucciones de recuperacion para el agente nuevo."""
+        """Genera las instrucciones de recuperacion para el agente nuevo (v4.2 M10).
+
+        Orden correcto (M10): primero los tres puntos de entrada obligatorios
+        (estado, indice, decisiones), después recién lanzar subagentes para detalle.
+        """
         filenames = [arcname for _, arcname in context_files]
 
         return f"""# Instrucciones de Recuperacion de Contexto
@@ -191,9 +195,15 @@ con todo el contenido del chat, y la metadata del proceso.
 
 ## Como recuperar el contexto
 
-1. **Descomprime este paquete** en `/home/z/my-project/contexto_recuperacion/`.
+### Paso 1: Descomprimir el paquete
 
-2. **Lee `00_estado_actual.md`** para saber donde quedo el proyecto.
+Descomprime este paquete en `/home/z/my-project/contexto_recuperacion/`.
+
+### Paso 2: Leer los tres puntos de entrada (obligatorio)
+
+Lee estos tres archivos en orden. Son tus puntos de entrada para retomar el hilo:
+
+1. **Lee `00_estado_actual.md`** para saber donde quedo el proyecto.
    - Contiene 5 secciones (v4.0): D1, D4, A1, A2, A3, A4.
    - D1: ultima instruccion del Director (literal).
    - D4: restricciones activas del ultimo tema.
@@ -202,15 +212,17 @@ con todo el contenido del chat, y la metadata del proceso.
    - A3: errores abiertos.
    - A4: siguiente paso logico.
 
-3. **Lee `01_indice_recuperacion.md`** para saber que temas hay y en que bloque esta cada uno.
+2. **Lee `01_indice_recuperacion.md`** para saber que temas hay y en que bloque esta cada uno.
    - Tabla `tema -> archivo` con todos los temas mapeados.
 
-4. **Si necesitas detalle de un tema**, lanza un subagente con Task que lea el bloque.
-   - NO leas los bloques directamente (gastan tu memoria).
-   - Task(prompt="Lee /home/z/my-project/contexto_recuperacion/{{bloque}}.md y responde: {{tu pregunta}}")
-
-5. **Consultas `02_decisiones_clave.md`** para saber que decisiones ya se tomaron.
+3. **Lee `02_decisiones_clave.md`** para saber que decisiones ya se tomaron.
    - No re-decidas lo ya resuelto.
+
+### Paso 3: Lanzar subagentes para detalle (bajo demanda)
+
+Si necesitas detalle de un tema especifico, lanza un subagente con Task que lea el bloque.
+- NO leas los bloques directamente (gastan tu memoria).
+- Task(prompt="Lee /home/z/my-project/contexto_recuperacion/{{bloque}}.md y responde: {{tu pregunta}}")
 
 ## Archivos incluidos en este paquete
 
@@ -221,7 +233,7 @@ con todo el contenido del chat, y la metadata del proceso.
 - **chat_id origen:** {chat_id}
 - **Fecha de exportacion:** {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
 - **Total de archivos:** {len(context_files)}
-- **Version de spec:** v3.4
+- **Version de spec:** v4.2
 """
 
     @staticmethod
@@ -298,7 +310,7 @@ if __name__ == "__main__":
             assert paquete["chat_id"] == "test-123"
             assert paquete["total_intercambios"] == 10
             assert paquete["total_temas"] == 2
-            assert paquete["version_spec"] == "3.4"
+            assert paquete["version_spec"] == "4.2"
             print(f"[OK] _paquete.json: chat_id={paquete['chat_id']}, temas={paquete['total_temas']}")
 
             # Verificar instrucciones

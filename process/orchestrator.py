@@ -64,6 +64,11 @@ class OrchestratorResult:
     exchanges_processed: int = 0
     files_generated: int = 0
     error: str = ""
+    pending_tasks: list = None  # H9: SubagentTask diferidas para el agente principal
+
+    def __post_init__(self):
+        if self.pending_tasks is None:
+            self.pending_tasks = []
 
 class Orchestrator:
     """Orquesta la activación del proceso de recuperación.
@@ -147,13 +152,32 @@ class Orchestrator:
             )
         else:
             # Sin metadata -> ciclo completo de recuperación
-            logger.info("Sin metadata previa -> ejecutando RecoveryCycle")
+            # F4 v4.2: crear Orquestador + ProcesadorIntercambios y pasar al RecoveryCycle.
+            # Los generadores usan el ProcesadorIntercambios para publicar tareas,
+            # el agente las ejecuta con el Task tool, y collect_responses() las aplica.
+            from contexto_zai.coordinador.orquestador import Orquestador
+            from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+
+            logger.info("Sin metadata previa -> ejecutando RecoveryCycle (con Orquestador F4)")
+            orquestador = Orquestador(workspace_dir=self._workspace_dir)
+            procesador = ProcesadorIntercambios(
+                workspace_dir=self._workspace_dir,
+                orquestador=orquestador,
+            )
+            # F4 v4.2: enable_capa3=False y enable_attachments=False porque esos
+            # subagentes (DiscriminatorSubagent, DocumentoIndexerSubagent) usan
+            # launch() síncrono (legacy). Los generadores usan el patrón diferido
+            # vía ProcesadorIntercambios. Los attachments se procesan vía
+            # ampliar_contexto() que usa ProcesadorDocumento.
             cycle = RecoveryCycle(
                 jwt=self._jwt,
                 chat_id=self._chat_id,
                 workspace_dir=self._workspace_dir,
                 download_dir=self._download_dir,
                 decision_extractor=self._decision_extractor,
+                subagent_launcher=procesador,
+                enable_capa3=False,
+                enable_attachments=False,
             )
             result = cycle.run(chat_label=chat_label)
             return OrchestratorResult(
@@ -162,6 +186,7 @@ class Orchestrator:
                 exchanges_processed=result.exchanges_count,
                 files_generated=result.files_count,
                 error=result.error,
+                pending_tasks=result.pending_tasks,
             )
 
     def status(self) -> dict:

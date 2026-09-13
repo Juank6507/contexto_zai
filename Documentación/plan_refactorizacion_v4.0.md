@@ -1,12 +1,15 @@
 # contexto_zai/Documentación/plan_refactorizacion_v4.0.md
 # Plan v4.0 — Implementación del proceso contexto_zai como bibliotecario siempre disponible
 
-**Versión:** 4.0
-**Fecha:** 2026-09-09
-**Autor:** Agente CZAI (Sesión 11)
+**Versión:** 4.1 (enmienda H9)
+**Fecha:** 2026-09-13
+**Autor:** Agente CZAI (Sesión 17)
 **Estado:** Pendiente de validación por el Director.
-**Continúa de:** plan v3.6.
-**Spec asociada:** spec_recuperacion_contexto_v4.0.md.
+**Continúa de:** plan v4.0.
+**Spec asociada:** spec_recuperacion_contexto_v4.0.md (también enmendada a v4.1).
+**Enmienda H9:** introduce el patrón diferido para M3/M4/M7/M9-grande,
+cablea el `SubagentLauncher` en el `Orchestrator`, y cierra M6-bg (muerte
+silenciosa) porque su causa raíz se elimina.
 
 ---
 
@@ -286,7 +289,165 @@ from contexto_zai.pipeline import ampliar_contexto
 
 ---
 
-## H8 — Pulir export/import y testing del bookmarklet (M10 + M5)
+## H9 — Patrón diferido + cablear launcher (NUEVO, enmienda v4.1)
+
+**Prioridad:** ALTA — despierta la lógica de M3/M4/M7/M9-grande que quedó dormida.
+**Dependencias:** H1 (ClasificadorSubagent), H2 (EstadoGenerator), H3 (DecisionesGenerator), H6 (Subdivider).
+**Estimación:** 1.5 sesiones.
+
+### Contexto
+
+El diagnóstico de la Sesión 17 reveló que H2, H3 y H6 se implementaron
+en código pero su lógica de subagentes nunca se activaba por dos razones:
+
+1. El `Orchestrator` no pasa `SubagentLauncher` al `RecoveryCycle`, así que
+   los generadores se quedan en modo regex (backward compatible).
+2. Aunque se cableara el launcher, los generadores llaman `sub.run()`
+   síncronamente, lo que causa deadlock: el agente está bloqueado corriendo
+   el script Python y no puede lanzar subagentes con el Task tool al mismo
+tiempo.
+
+H9 resuelve ambas: cablea el launcher Y convierte las llamadas síncronas
+a llamadas diferidas (el proceso prepara prompts, el agente los ejecuta
+con el Task tool, el proceso aplica las respuestas).
+
+### Regla de oro (H9)
+
+**El agente principal es el único que lanza subagentes.** El proceso Python
+prepara el trabajo (prompts) y aplica las respuestas, pero nunca ejecuta
+subagentes él mismo. Esto elimina el TaskBridgeServer, el polling HTTP,
+y el deadlock síncrono de raíz.
+
+### Archivos nuevos
+
+1. `contexto_zai/models.py` — añade dos modelos:
+   - `SubagentTask`: prompt diferido con `task_id`, `purpose`, `prompt`, `context`.
+   - `SubagentResponse`: respuesta del subagente con `task_id`, `success`, `response`, `error`.
+   - Auto-tests en `__main__` para ambos.
+
+### Archivos intervenidos
+
+2. `contexto_zai/generation/estado_generator.py` — cambios quirúrgicos:
+   - Añade `self._deferred_tasks: list[SubagentTask] = []` en `__init__`.
+   - Añade propiedad `deferred_tasks`.
+   - En `_build_d4`: si hay launcher, construir prompt con `sub.build_prompt()`,
+     acumular como `SubagentTask(task_id="estado_d4", purpose="estado.d4", ...)`.
+     NO llamar `sub.run()`. Caer al regex para el output inmediato.
+   - En `_build_a1`: igual para el resumen del contenido truncado, acumular como
+     `SubagentTask(task_id="estado_a1_resumen", purpose="estado.a1_resumen", ...)`.
+   - Añade método `apply_responses(responses: list[SubagentResponse]) -> None`
+     que reescribe D4 y A1 en el archivo `00_estado_actual.md` del workspace
+     con las respuestas reales de los subagentes.
+
+3. `contexto_zai/generation/decisiones_generator.py` — cambios quirúrgicos:
+   - Añade `self._deferred_tasks: list[SubagentTask] = []` en `__init__`.
+   - Añade propiedad `deferred_tasks`.
+   - En `_extract_with_subagent`: para cada lote, construir prompt con
+     `sub.build_prompt()`, acumular como `SubagentTask(task_id=f"decisiones_lote_{i}", ...)`.
+     NO llamar `sub.run()`. Devuelve lista vacía para el output inmediato.
+   - Añade método `apply_responses(responses: list[SubagentResponse]) -> str`
+     que reescribe el contenido de `02_decisiones_clave.md` con las decisiones
+     reales parseadas de las respuestas.
+
+4. `contexto_zai/processing/subdivider.py` — cambios quirúrgicos:
+   - En `_subdivide_temporal`: cuando hay launcher y se necesita nombre legible,
+     construir prompt con `sub.build_prompt()`, acumular como `SubagentTask(task_id=f"subdivider_nombre_{i}", ...)`.
+     NO llamar `sub.run()`. Usar el nombre basado en fecha (backward compatible).
+   - Añade propiedad `deferred_tasks` para exponer las tareas acumuladas.
+   - Añade método `apply_responses(responses: list[SubagentResponse]) -> dict`
+     que devuelve un mapeo `{nombre_temporal → nombre_legible}` para que el
+     proceso renombre los bloques y actualice `_metadata.json`.
+
+5. `contexto_zai/process/recovery_cycle.py` — cambios quirúrgicos:
+   - En `run()`: tras llamar a `recovery_gen.generate_all()`, recolectar las
+     `SubagentTask` de `EstadoGenerator`, `DecisionesGenerator` y `Subdivider`.
+   - Las acumula en `RecoveryCycleResult.pending_tasks` (nuevo campo).
+   - Añade método `apply_subagent_responses(responses: list[SubagentResponse])`
+     que delega a los generadores y reescribe los archivos.
+
+6. `contexto_zai/process/orchestrator.py` — cambio quirúrgico:
+   - En `activate()`: crear `SubagentLauncher()` y pasarlo al `RecoveryCycle`
+     vía `subagent_launcher=launcher`.
+   - Devolver las `pending_tasks` en `OrchestratorResult` (nuevo campo).
+
+7. `contexto_zai/pipeline.py` — cambios quirúrgicos:
+   - `run()`: devolver las `pending_tasks` en el resultado.
+   - Nueva función `apply_subagent_responses(responses: list[SubagentResponse],
+     workspace_dir=...)` que invoca el `Orchestrator.apply_subagent_responses`
+     o directamente los generadores para reescribir los archivos.
+   - `ampliar_contexto()`: para archivos grandes, usar patrón diferido en vez
+     de llamar `sub.run()` síncrono.
+
+### Detalle
+
+- **No se elimina** `SubagentLauncher`, `_task_bridge.py`, ni `TaskBridgeServer`.
+  Se conservan por si se necesitan para otros casos (por ejemplo, lanzamiento
+  en background real con polling del agente). Pero no se usan en el flujo
+  principal de H9.
+- Los generadores mantienen el fallback regex para el output inmediato: el
+  archivo se escribe con regex primero, y se actualiza con las respuestas de
+  los subagentes cuando el agente llama a `apply_subagent_responses()`.
+- Si el agente no llama a `apply_subagent_responses()` (por ejemplo, no hay
+  subagentes pendientes), el archivo queda con regex (backward compatible).
+- **No se crea clase paralela** ni se duplica lógica. El patrón diferido
+  reutiliza `ClasificadorSubagent.build_prompt()` que ya existe.
+
+### Flujo del agente principal (patrón diferido)
+
+```
+1. Agente llama a pipeline.run(chat_id, jwt, ...)
+2. pipeline.run() devuelve result con result.pending_tasks: list[SubagentTask]
+3. Si pending_tasks está vacío: terminado (no hay subagentes pendientes).
+4. Si no: agente lanza los subagentes con el Task tool usando los prompts.
+   - Puede lanzarlos en paralelo (múltiples Task tools en un solo mensaje).
+   - Cada subagente devuelve su respuesta.
+5. Agente llama a pipeline.apply_subagent_responses(responses: list[SubagentResponse])
+6. El proceso reescribe los archivos con las respuestas reales.
+7. Done.
+```
+
+### Validación
+
+```bash
+# Auto-tests en models.py
+PYTHONPATH=/home/z/my-project python3 contexto_zai/models.py
+
+# Auto-tests en estado_generator.py (con y sin launcher)
+PYTHONPATH=/home/z/my-project python3 contexto_zai/generation/estado_generator.py
+
+# Auto-tests en decisiones_generator.py (con y sin launcher)
+PYTHONPATH=/home/z/my-project python3 contexto_zai/generation/decisiones_generator.py
+
+# Auto-tests en subdivider.py (con y sin launcher)
+PYTHONPATH=/home/z/my-project python3 contexto_zai/processing/subdivider.py
+
+# Test real: pipeline.run() con launcher, verificar pending_tasks
+# Test real: apply_subagent_responses() con respuestas mock
+# Test real: archivos 00_estado_actual.md y 02_decisiones_clave.md actualizados
+```
+
+---
+
+## Test E2E v4.1
+
+**Archivo:** `contexto_zai/tests/test_v41_e2e.py`
+
+**Cobertura:**
+1. `SubagentTask` y `SubagentResponse` modelos funcionan (H9).
+2. `EstadoGenerator` con launcher acumula `SubagentTask` diferidas (H9).
+3. `DecisionesGenerator` con launcher acumula `SubagentTask` diferidas (H9).
+4. `Subdivider` con launcher acumula `SubagentTask` diferidas (H9).
+5. `RecoveryCycle` devuelve `pending_tasks` en el resultado (H9).
+6. `Orchestrator` cablea el launcher y pasa `pending_tasks` al resultado (H9).
+7. `pipeline.run()` devuelve `pending_tasks` (H9).
+8. `pipeline.apply_subagent_responses()` reescribe los archivos con las
+   respuestas reales (H9).
+9. Flujo completo: `pipeline.run()` → agente lanza subagentes →
+   `pipeline.apply_subagent_responses()` → archivos actualizados con
+   D4 interpretado, A1 con truncado inteligente, decisiones reales,
+   nombres legibles.
+10. Comunicación de errores: si un subagente falla, el error sube al
+    Director (no silencioso).
 
 **Prioridad:** BAJA.
 **Dependencias:** ninguna.
@@ -350,19 +511,29 @@ instrucciones = import_context(zip_path=path)
 
 ## Orden de ejecución recomendado
 
-| Milestone | Sesión estimada | Dependencias |
-|---|---|---|
-| H1 — Clase base `ClasificadorSubagent` | Sesión 12 | ninguna |
-| H2 — `EstadoGenerator` 5 secciones + truncado inteligente | Sesión 12 (o 13) | H1 |
-| H3 — `DecisionesGenerator` con subagente y alcance | Sesión 13 | H1 |
-| H4 — `query_context` consulta bajo demanda | Sesión 13 (o 14) | H1 |
-| H5 — Diagnóstico del pipeline en background | Sesión 14 | ninguna |
-| H6 — `Subdivider` con nombres legibles | Sesión 14 | H1 |
-| H7 — `ampliar_contexto` fuentes externas | Sesión 15 | ninguna |
-| H8 — Pulir export/import + testing bookmarklet | Sesión 15 | ninguna |
-| Test E2E v4.0 | Sesión 15 | todos |
+| Milestone | Sesión estimada | Dependencias | Estado |
+|---|---|---|---|
+| H1 — Clase base `ClasificadorSubagent` | Sesión 12 | ninguna | ✅ Hecho |
+| H2 — `EstadoGenerator` 5 secciones + truncado inteligente | Sesión 12 (o 13) | H1 | ✅ Hecho (regex fallback) |
+| H3 — `DecisionesGenerator` con subagente y alcance | Sesión 13 | H1 | ✅ Hecho (regex fallback) |
+| H4 — `query_context` consulta bajo demanda | Sesión 13 (o 14) | H1 | ✅ Hecho (patrón diferido) |
+| H5 — ~~Diagnóstico del pipeline en background~~ | Sesión 14 | ninguna | ✅ Cerrado por H9 |
+| H6 — `Subdivider` con nombres legibles | Sesión 14 | H1 | ✅ Hecho (regex fallback) |
+| H7 — `ampliar_contexto` fuentes externas | Sesión 15 | ninguna | ✅ Hecho (small OK, grande pendiente H9) |
+| H8 — Pulir export/import + testing bookmarklet | Sesión 15 | ninguna | Pendiente |
+| **H9 — Patrón diferido + cablear launcher** (NUEVO) | Sesión 17 | H1, H2, H3, H6 | Pendiente |
+| Test E2E v4.1 | Sesión 17 | todos | Pendiente |
 
-**Total estimado:** 4 sesiones de implementación.
+**Total estimado:** 2 sesiones adicionales (H8 + H9 + E2E).
+
+**Notas sobre el estado de H2/H3/H6:** los hitos H2, H3 y H6 se
+implementaron en código, pero su lógica de subagentes (D4, A1 resumen,
+decisiones reales, nombres legibles) quedó dormida porque el `Orchestrator`
+no cableaba el `SubagentLauncher` y porque el patrón síncrono `sub.run()`
+causaba deadlock. H9 despierta esa lógica: cablea el launcher Y convierte
+las llamadas `sub.run()` síncronas a llamadas diferidas (construcción de
+prompt + acumulación como `SubagentTask` + respuesta aplicada por el
+agente principal vía `pipeline.apply_subagent_responses()`).
 
 ## Verificación final
 

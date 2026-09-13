@@ -144,6 +144,13 @@ def run_atomic_tests() -> tuple[int, int]:
         "process/recovery_cycle.py",
         "process/incremental_cycle.py",
         "process/orchestrator.py",
+        "coordinador/entregador_tareas.py",             # v4.2 F2
+        "coordinador/recogedor_respuestas.py",           # v4.2 F2
+        "coordinador/orquestador.py",                    # v4.2 F2
+        "coordinador/integrador_respuestas.py",          # v4.2 F4
+        "procesadores/procesador_documento.py",          # v4.2 F3
+        "procesadores/procesador_intercambios.py",       # v4.2 F3
+        "procesadores/procesador_consulta.py",            # v4.2 F3
         "pipeline.py",
     ]
 
@@ -189,6 +196,14 @@ def run_integration_tests() -> tuple[int, int]:
         "test_classifier_packer_subdivider.py",
         "test_estado_indice_generation.py",
         "test_recovery_cycle.py",
+        "test_code_detector.py",                          # v3.3
+        "test_version_graph.py",                           # v3.3
+        "test_subagent_lifecycle.py",                      # v3.4
+        "test_pipeline_background.py",                     # v3.6 M6
+        "test_v35_attachments.py",                         # v3.5
+        "test_v36_e2e.py",                                 # v3.6
+        "test_bookmarklet_persistencia.py",                # v4.2 H8/M5
+        "test_v42_e2e.py",                                 # v4.2
     ]
     passed = 0
     failed = 0

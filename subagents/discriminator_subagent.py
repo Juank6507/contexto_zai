@@ -187,37 +187,61 @@ class DiscriminatorSubagent:
         # Construir prompt con el contenido de los intercambios
         prompt = self._build_prompt(tema, exchanges)
 
-        # Lanzar subagente (sin archivos adicionales: el contenido va en el prompt)
-        response: SubagentResponse = self._launcher.launch(
-            prompt=prompt,
-            files_to_read=[],
-            description=f"Discriminar tema '{tema}' en subtemas específicos",
-        )
+        # F4 v4.2: si el launcher es un ProcesadorIntercambios, publicar la tarea
+        # vía el Orquestador (patrón diferido). Si es un SubagentLauncher legacy,
+        # usar launch() síncrono (backward compatible para tests).
+        from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
 
-        if not response.success:
-            logger.error(
-                "DiscriminatorSubagent falló para tema '%s': %s",
-                tema, response.error,
+        if isinstance(self._launcher, ProcesadorIntercambios):
+            # F4 v4.2: publicar tarea diferida (no ejecuta síncrono)
+            try:
+                self._launcher.procesar(
+                    modo="CLASIFICACION_TEMAS",
+                    intercambios=exchanges,
+                    context={"tema_padre": tema},
+                    task_id_suffix=f"capa3_{tema}",
+                )
+                # En modo diferido, no hay propuesta inmediata (se aplica con collect_responses)
+                # Devolvemos propuesta vacía para que el tema original se mantenga.
+                return SubdivisionProposal(tema_padre=tema, subtemas=[])
+            except Exception as e:
+                logger.error(
+                    "Capa 3 falló para tema '%s': %s. Manteniendo tema original.",
+                    tema, e,
+                )
+                return SubdivisionProposal(tema_padre=tema, subtemas=[])
+        else:
+            # Legacy: usar launch() síncrono (para tests con mock_invoker)
+            response: SubagentResponse = self._launcher.launch(
+                prompt=prompt,
+                files_to_read=[],
+                description=f"Discriminar tema '{tema}' en subtemas específicos",
             )
-            return SubdivisionProposal(
-                tema_padre=tema,
-                subtemas=[],
-                applied=False,
-                error=response.error,
+
+            if not response.success:
+                logger.error(
+                    "DiscriminatorSubagent falló para tema '%s': %s",
+                    tema, response.error,
+                )
+                return SubdivisionProposal(
+                    tema_padre=tema,
+                    subtemas=[],
+                    applied=False,
+                    error=response.error,
+                )
+
+            # Parsear la respuesta en una SubdivisionProposal
+            proposal = self._parse_response(response.content, tema, exchanges)
+
+            # Validar que la propuesta cubre todos los intercambios
+            self._validate_coverage(proposal, exchanges)
+
+            logger.info(
+                "DiscriminatorSubagent: tema '%s' subdividido en %d subtemas (cubre %d/%d intercambios)",
+                tema, len(proposal.subtemas), proposal.total_exchanges, len(exchanges),
             )
 
-        # Parsear la respuesta en una SubdivisionProposal
-        proposal = self._parse_response(response.content, tema, exchanges)
-
-        # Validar que la propuesta cubre todos los intercambios
-        self._validate_coverage(proposal, exchanges)
-
-        logger.info(
-            "DiscriminatorSubagent: tema '%s' subdividido en %d subtemas (cubre %d/%d intercambios)",
-            tema, len(proposal.subtemas), proposal.total_exchanges, len(exchanges),
-        )
-
-        return proposal
+            return proposal
 
     def apply(
         self,

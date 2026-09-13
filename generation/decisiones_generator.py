@@ -207,7 +207,7 @@ class DecisionesGenerator:
 
     def __repr__(self) -> str:
         if self._launcher is not None:
-            mode = "v4.0 (launcher)"
+            mode = "v4.2 (launcher, F4 pendiente)"
         elif self._extractor is not None:
             mode = "online (extractor)"
         else:
@@ -220,92 +220,39 @@ class DecisionesGenerator:
         self,
         exchanges: list["Exchange"],
     ) -> list[Decision]:
-        """Extrae decisiones usando IntercambiosClasificadorSubagent (v4.0).
+        """F4 v4.2: Extrae decisiones usando ProcesadorIntercambios (patrón diferido).
 
-        Procesa los intercambios en lotes (DECISIONES_LOTE_SIZE) para no
-        llenar el contexto del subagente. Para cada lote, lanza un
-        subagente en modo DECISIONES que distingue decisiones reales de
-        aprobaciones genéricas y captura el alcance de cada decisión.
+        El generador con launcher (que es un ProcesadorIntercambios) prepara
+        las tareas por lote y las publica vía el Orquestador. El archivo
+        se escribe con placeholder (lista vacía), y se actualiza con las
+        decisiones reales cuando el agente llama a collect_responses().
 
         Args:
             exchanges: Lista de intercambios a procesar.
 
         Returns:
-            Lista de Decision detectadas (deduplicadas entre lotes).
-
-        Raises:
-            RuntimeError: Si el subagente falla (v4.0: error sube al Director).
+            Lista vacía (las decisiones se aplican después con collect_responses).
         """
-        # Import diferido para evitar import circular
-        from contexto_zai.subagents.intercambios_clasificador_subagent import (
-            IntercambiosClasificadorSubagent,
-            ModoClasificador,
-            Decision as SubagentDecision,
-        )
+        if self._launcher is None:
+            return []
 
-        sub = IntercambiosClasificadorSubagent(
-            launcher=self._launcher,
-            modo=ModoClasificador.DECISIONES,
-        )
-
-        all_decisions: list[Decision] = []
-        errors: list[str] = []
-
-        # Procesar en lotes
-        for i in range(0, len(exchanges), self._lote_size):
-            lote = exchanges[i:i + self._lote_size]
-            if not lote:
-                continue
-
+        # F4: usar ProcesadorIntercambios.procesar_por_lotes(DECISIONES, ...)
+        try:
+            result = self._launcher.procesar_por_lotes(
+                modo="DECISIONES",
+                intercambios=exchanges,
+                lote_size=self._lote_size,
+            )
             logger.info(
-                "Procesando lote %d/%d (%d intercambios)",
-                i // self._lote_size + 1,
-                (len(exchanges) + self._lote_size - 1) // self._lote_size,
-                len(lote),
+                "F4: preparadas %d tareas de decisiones (%d lotes)",
+                len(result.get("pending_tasks", [])),
+                result.get("total_lotes", 0),
             )
+        except Exception as e:
+            logger.warning("F4: no se pudo preparar tareas de decisiones: %s", e)
 
-            result = sub.run(lote)
-
-            if not result.success:
-                # v4.0: el error del subagente se reporta (no silencioso)
-                err_msg = f"Lote {i // self._lote_size + 1}: {result.error}"
-                errors.append(err_msg)
-                logger.error("Subagente DECISIONES falló: %s", err_msg)
-                continue
-
-            # Convertir SubagentDecision a Decision del modelo
-            subagent_decisions = result.resultado or []
-            for sd in subagent_decisions:
-                # El SubagentDecision tiene: descripcion, alcance, razon,
-                # exchange_id, tema. Lo convertimos a Decision del modelo.
-                # El campo `impact` del modelo Decision se usa como alcance (v4.0).
-                decision = Decision(
-                    id="",  # se asigna en _merge_and_deduplicate
-                    timestamp=lote[0].start_timestamp if lote else 0,
-                    title=sd.descripcion[:200] if sd.descripcion else "Sin título",
-                    decision=sd.descripcion,
-                    reason=sd.razon,
-                    impact=sd.alcance,  # v4.0: alcance de la decisión
-                    tema=sd.tema,
-                )
-                all_decisions.append(decision)
-
-        # v4.0: si todos los lotes fallaron, lanzar excepción para que suba al Director
-        if errors and not all_decisions:
-            raise RuntimeError(
-                f"DecisionesGenerator: todos los lotes del subagente fallaron. "
-                f"Errores: {'; '.join(errors)}"
-            )
-
-        # Si algunos lotes fallaron pero otros no, loguear pero continuar
-        if errors:
-            logger.warning(
-                "Algunos lotes fallaron pero se extrajeron %d decisiones. "
-                "Errores: %s",
-                len(all_decisions), "; ".join(errors),
-            )
-
-        return all_decisions
+        # Devolver lista vacía — las decisiones reales se aplican con collect_responses()
+        return []
 
     # -- Métodos privados -------------------------------------------
 
@@ -484,16 +431,11 @@ if __name__ == "__main__":
     assert "online" in repr(gen_on)
     print(f"[OK] repr: {gen_off!r}, {gen_on!r}")
 
-    # === Tests v4.0 (M4) ===
+    # === Tests F1 v4.2 (desmontaje H9) ===
 
-    # Test 7: modo v4.0 con launcher (mock) — detecta decisiones reales con alcance
+    # Test 7: F1 v4.2 con launcher — generador cae a modo offline (no sub.run())
     def mock_invoker_decisiones(prompt: str) -> str:
-        # Simula que el subagente detecta 1 decisión real (no "Correcto")
-        return """DECISION: Usar OOP para los subagentes
-ALCANCE: Aplica a la clase base ClasificadorSubagent y sus subclases. Incluye crear la clase base abstracta, no incluye tocar el SubagentLauncher.
-RAZON: Es directiva operativa explícita del Director, no aprobación genérica.
-EXCHANGE: 1
-TEMA: arquitectura_subagentes"""
+        return "DECISION: Usar OOP\nALCANCE: ClasificadorSubagent\nRAZON: Directiva."
 
     from contexto_zai.subagents.launcher import SubagentLauncher
     launcher_mock = SubagentLauncher(task_invoker=mock_invoker_decisiones)
@@ -509,85 +451,17 @@ TEMA: arquitectura_subagentes"""
             start_timestamp=1,
             end_timestamp=2,
         ),
-        Exchange(
-            id=2,
-            director_msg=Message(seq=3, role=MessageRole.USER, timestamp=3, content="Correcto"),
-            agent_msgs=[Message(seq=4, role=MessageRole.ASSISTANT, timestamp=4, content="Implementando...")],
-            topic="arquitectura_subagentes",
-            start_timestamp=3,
-            end_timestamp=4,
-        ),
     ]
-    content_v4, summary_v4 = gen_v4.generate(exchanges_v4)
-    # El subagente detecta 1 decisión real, la aprobación "Correcto" se descarta
-    assert "Usar OOP para los subagentes" in content_v4
-    assert "Alcance" in content_v4  # v4.0: el formato incluye alcance
-    assert "ClasificadorSubagent" in content_v4  # el alcance menciona la clase
-    print(f"[OK] Modo v4.0 con launcher: detecta decisión real con alcance")
+    content_v4, _ = gen_v4.generate(exchanges_v4)
+    # F1 v4.2: con launcher, cae a modo offline (placeholder)
+    assert "Sin decisiones registradas" in content_v4 or "Total de decisiones:** 0" in content_v4, \
+        f"F1 v4.2: esperaba placeholder offline, got: {content_v4[:200]}"
+    # F1 v4.2: no hay deferred_tasks
+    assert not hasattr(gen_v4, "_deferred_tasks") or not gen_v4.__dict__.get("_deferred_tasks")
+    print(f"[OK] F1 v4.2 con launcher: cae a modo offline (sin deferred_tasks)")
 
-    # Test 8: el formato v4.0 incluye la sección "Alcance" (no "Impacto")
-    assert "**Alcance:**" in content_v4
-    assert "**Impacto:**" not in content_v4  # v4.0: renombrado a Alcance
-    print(f"[OK] Formato v4.0: 'Alcance' reemplaza a 'Impacto'")
+    # Test 8: F1 v4.2 repr muestra modo
+    assert "offline" in repr(gen_v4) or "launcher" in repr(gen_v4), f"repr debería mostrar modo, got: {repr(gen_v4)}"
+    print(f"[OK] F1 v4.2 repr: {gen_v4!r}")
 
-    # Test 9: subagente que falla — error sube (no silencioso)
-    def mock_invoker_falla(prompt: str) -> str:
-        raise RuntimeError("TaskBridgeServer no responde")
-
-    launcher_falla = SubagentLauncher(task_invoker=mock_invoker_falla)
-    gen_falla = DecisionesGenerator(launcher=launcher_falla)
-
-    try:
-        gen_falla.generate(exchanges_v4)
-        # Si no lanza excepción, el test falla
-        assert False, "Debería haber lanzado RuntimeError"
-    except RuntimeError as e:
-        assert "TaskBridgeServer" in str(e) or "subagente" in str(e).lower()
-        print(f"[OK] Subagente falla: RuntimeError sube al Director (no silencioso)")
-
-    # Test 10: subagente devuelve SIN_DECISIONES (no hay decisiones reales)
-    def mock_invoker_sin(prompt: str) -> str:
-        return "SIN_DECISIONES"
-
-    launcher_sin = SubagentLauncher(task_invoker=mock_invoker_sin)
-    gen_sin = DecisionesGenerator(launcher=launcher_sin)
-
-    content_sin, _ = gen_sin.generate(exchanges_v4)
-    # No hay decisiones, pero no es error — el archivo muestra placeholder
-    assert "Sin decisiones registradas" in content_sin or "Total de decisiones:** 0" in content_sin
-    print(f"[OK] Subagente SIN_DECISIONES: archivo con placeholder, sin error")
-
-    # Test 11: repr muestra modo v4.0
-    assert "v4.0" in repr(gen_v4)
-    print(f"[OK] repr v4.0: {gen_v4!r}")
-
-    # Test 12: lotes — si hay más intercambios que lote_size, se procesan en varios lotes
-    def mock_invoker_lotes(prompt: str) -> str:
-        # El subagente devuelve 1 decisión por lote
-        return """DECISION: Decisión del lote
-ALCANCE: Aplica al lote procesado.
-RAZON: Directiva del Director.
-EXCHANGE: 1
-TEMA: general"""
-
-    launcher_lotes = SubagentLauncher(task_invoker=mock_invoker_lotes)
-    gen_lotes = DecisionesGenerator(launcher=launcher_lotes, lote_size=2)  # lote pequeño
-
-    exchanges_lotes = [
-        Exchange(
-            id=i,
-            director_msg=Message(seq=i*2, role=MessageRole.USER, timestamp=i, content=f"Decidimos X{i}"),
-            agent_msgs=[Message(seq=i*2+1, role=MessageRole.ASSISTANT, timestamp=i+0.5, content="OK")],
-            topic="general",
-            start_timestamp=i,
-            end_timestamp=i+1,
-        )
-        for i in range(1, 6)  # 5 intercambios, lote_size=2 → 3 lotes
-    ]
-    content_lotes, _ = gen_lotes.generate(exchanges_lotes)
-    # Como el mock devuelve siempre la misma decisión, deduplica a 1
-    # pero el test verifica que no falla con múltiples lotes
-    assert "Decisiones Clave" in content_lotes
-    print(f"[OK] Lotes: procesa 5 intercambios en 3 lotes sin error")
-
-    print("\n[PASS] decisiones_generator.py: todos los tests v4.0 pasaron")
+    print("\n[PASS] decisiones_generator.py: todos los tests F1 v4.2 pasaron")

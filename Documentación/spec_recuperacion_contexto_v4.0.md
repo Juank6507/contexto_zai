@@ -1,12 +1,15 @@
 # contexto_zai/Documentación/spec_recuperacion_contexto_v4.0.md
 # Spec v4.0 — El proceso contexto_zai como bibliotecario siempre disponible
 
-**Versión:** 4.0
-**Fecha:** 2026-09-09
-**Autor:** Agente CZAI (Sesión 11)
+**Versión:** 4.1 (enmienda H9)
+**Fecha:** 2026-09-13
+**Autor:** Agente CZAI (Sesión 17)
 **Estado:** Pendiente de validación por el Director.
-**Especifica continuación de:** spec v3.6 (JWT automático + subagentes paralelos).
-**Concilia:** mejoras M3, M4, M6, M7, M8, M9, M10 acordadas con el Director en Sesión 11. (M5 descartado: el bookmarklet funciona como está.)
+**Especifica continuación de:** spec v4.0.
+**Enmienda:** introduce la regla de oro (el agente es el único orquestador de subagentes)
+y convierte M3, M4, M7 y M9-grande al patrón diferido. Elimina M6-bg (muerte
+silenciosa en background) como problema pendiente: su causa raíz era el patrón
+síncrono que se elimina en esta enmienda.
 
 ---
 
@@ -43,9 +46,14 @@ El `DocumentoIndexerSubagent` solo se activa cuando el pipeline detecta attachme
 
 El `Subdivider._subdivide_temporal` genera nombres compuestos ilegibles como `general_general_2026sep09_2026sep09_2_2026sep09_2_2026sep09_2` cuando subdivide recursivamente. Cuando el agente busca "¿dónde está lo de JWT?", el índice no puede responder porque los nombres no tienen semántica.
 
-### Problema 6 — El pipeline muere silenciosamente en background
+### Problema 6 — ~~El pipeline muere silenciosamente en background~~ (RESUELTO por enmienda H9)
 
-Cuando se lanza `pipeline.run()` en background (proceso Python separado con ThreadPoolExecutor + polling HTTP al TaskBridgeServer), el proceso puede morir sin dejar traceback. No hay mecanismo de diagnóstico para saber qué lo mata.
+**Enmienda H9:** la muerte silenciosa ocurría porque el pipeline intentaba
+llamar subagentes síncronamente vía TaskBridgeServer, lo que requería polling
+HTTP en background y causaba el bloqueo. Al convertir M3/M4/M7/M9-grande al
+patrón diferido (el proceso prepara prompts, el agente lanza los subagentes
+con el Task tool), el TaskBridgeServer y el polling desaparecen, y con ellos
+la causa raíz de la muerte silenciosa. Este problema queda cerrado.
 
 ### Problema 7 — Los subagentes fallan silenciosamente
 
@@ -72,10 +80,20 @@ Estructura nueva del archivo (5 secciones, no 8):
 - D2 (contexto del tema activo) — se reemplaza por A1 con truncado inteligente, que ya captura el contexto del tema activo de forma completa.
 - D3 (decisiones pendientes) — se elimina porque las decisiones ya viven en `02_decisiones_clave.md`. Para saber cuál fue la última decisión relevante, el agente consulta ese archivo.
 
+**Patrón de invocación (enmienda H9):** D4 y el resumen de A1 NO se ejecutan
+síncronamente durante `pipeline.run()`. El `EstadoGenerator` construye los
+prompts con `IntercambiosClasificadorSubagent.build_prompt()` (sin llamar
+`sub.run()`), los acumula como `SubagentTask` diferidas, y escribe el archivo
+con placeholders. Tras `pipeline.run()`, el agente principal lanza los
+subagentes con el Task tool usando los prompts devueltos, y llama a
+`pipeline.apply_subagent_responses()` para que el proceso reescriba las
+secciones D4 y A1 con las respuestas reales.
+
 **Reglas:**
 - El subagente que interpreta D4 y hace el truncado inteligente de A1 es el mismo que se usa en M4 y M8 (ver M7 para la clase base común).
 - Las cifras (~16K textual, ~4K resumen) son aproximadas, no rígidas, y se configuran en `config.py`.
 - Intervención quirúrgica del `EstadoGenerator`: no se crea clase nueva paralela.
+- **El agente principal es el único que lanza subagentes** (regla de oro H9).
 
 ### Mejora M4 — `02_decisiones_clave.md` con subagente que detecta decisiones reales y su alcance
 
@@ -93,6 +111,15 @@ Estructura nueva del archivo (5 secciones, no 8):
 - Para cada decisión real, el subagente describe el alcance: a qué tarea se refiere, qué incluye, qué no incluye.
 - El `DecisionesGenerator` arma el archivo final con la salida del subagente, deduplica (una decisión puede detectarse en varios lotes), y trunca al límite de tokens del archivo.
 - El subagente es el mismo que se usa en M3 (D4, A1) y M8 (ver M7).
+
+**Patrón de invocación (enmienda H9):** los subagentes de decisiones NO se
+llaman síncronamente durante `pipeline.run()`. El `DecisionesGenerator`
+construye los prompts de cada lote con `IntercambiosClasificadorSubagent.build_prompt()`
+(sin llamar `sub.run()`), los acumula como `SubagentTask` diferidas (una por
+lote), y escribe el archivo con placeholder. El agente principal lanza los
+subagentes con el Task tool y llama a `pipeline.apply_subagent_responses()`
+para que el proceso reescriba el archivo con las decisiones reales.
+
 - Si el subagente falla, el error sube al Director — no se cae a fallback regex.
 
 ### Mejora M7 — Clase base común OOP para subagentes clasificadores
@@ -178,25 +205,17 @@ La función `query_context(question, max_results=3)` en `pipeline.py` elige el m
 - Los archivos temporales van en `download/uploads/temp/`, los indexados en `download/uploads/indexed/`.
 - No se crea módulo nuevo: la función va en `pipeline.py`, la descarga con `requests` va inline.
 
-### Mejora M6 — Diagnosticar y arreglar la muerte silenciosa del pipeline en background
+### Mejora M6 — ~~Diagnosticar y arreglar la muerte silenciosa del pipeline en background~~ (CERRADO por enmienda H9)
 
-**Objetivo:** el pipeline muere silenciosamente cuando corre en background con subagentes en paralelo. Primero hay que diagnosticar qué lo mata, después intervenir lo que corresponda.
+**Enmienda H9:** este problema queda cerrado. La muerte silenciosa ocurría
+porque el pipeline llamaba `sub.run()` síncronamente, lo que requería el
+TaskBridgeServer y el polling HTTP en background. Al convertir M3/M4/M7/M9-grande
+al patrón diferido (el proceso prepara prompts, el agente lanza los subagentes
+con el Task tool), el TaskBridgeServer y el polling desaparecen, y con ellos
+la causa raíz del problema.
 
-**Mecanismo (diagnóstico primero):**
-
-- Se implementan tests que reproducen las condiciones reales:
-  - El pipeline corriendo en background (no en foreground con timeout corto).
-  - Subagentes lanzados en paralelo con `ThreadPoolExecutor`.
-  - Polling HTTP al `TaskBridgeServer` esperando respuestas.
-  - El Bash tool cerrando su process tree al terminar.
-- Se miden: uso de memoria (para descartar OOM), uso de CPU, duración (para descartar timeout del Bash tool de 2 minutos), presencia de SIGTERM/SIGKILL del entorno.
-- Se capturan logs en nivel DEBUG de los módulos `subagents._task_bridge`, `processing.divisor`, `process.recovery_cycle`, `subagents.divisor_subagent`.
-- Se documenta el hallazgo.
-- En función del diagnóstico, se interviene lo que corresponda (no se decide la intervención antes de saber qué falla).
-
-**Reglas:**
-- No se agrega handler de señales genérico ni heartbeat periódico antes del diagnóstico.
-- Los tests reproducen condiciones reales, no casos sintéticos simplificados.
+Los tests de diagnóstico (`tests/test_pipeline_background.py`) se conservan
+como tests de regresión, pero ya no son un hito pendiente.
 
 ### Mejora M10 — Pulir exportación/importación de contexto
 
