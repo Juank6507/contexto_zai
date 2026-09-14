@@ -155,6 +155,8 @@ class IntegradorRespuestas:
             return self._integrar_consulta
         elif "documento" in task_id:
             return self._integrar_documento
+        elif "clasificacion_temas" in task_id or "capa3_" in task_id:
+            return self._integrar_clasificacion_temas
         else:
             return None
 
@@ -269,11 +271,172 @@ class IntegradorRespuestas:
         logger.debug("Respuesta de consulta lista para entregar al agente")
         return True
 
+    def _integrar_clasificacion_temas(self, response: SubagentResponse, ws: Path) -> bool:
+        """Integra la respuesta de CLASIFICACION_TEMAS (Capa 3) al contexto.
+
+        La respuesta contiene subtemas propuestos con IDs de intercambios.
+        Se actualiza _metadata.json agregando los nuevos subtemas al mapeo
+        tema_a_archivo, manteniendo el archivo del bloque original (la
+        subdivisión física del archivo la hace el Subdivider en el próximo
+        ciclo de recuperación, no aquí).
+
+        Si el subagente respondió NO_SUBDIVISION, no se hace nada (el tema
+        original se conserva intacto).
+        """
+        if not response.success or not response.response:
+            logger.warning("CLASIFICACION_TEMAS: respuesta vacía: %s", response.task_id)
+            return False
+
+        raw = response.response.strip()
+        if "NO_SUBDIVISION" in raw.upper():
+            logger.info("CLASIFICACION_TEMAS: subagente respondió NO_SUBDIVISION, no se integra")
+            return False
+
+        # Parsear las propuestas de subtemas (mismo formato que IntercambiosClasificadorSubagent)
+        pattern = re.compile(
+            r"SUBTEMA:\s*(\S+)\s*\n\s*DESCRIPCION:\s*(.+?)\s*\n\s*EXCHANGES:\s*([\d,\s]+)",
+            re.IGNORECASE,
+        )
+        propuestas = []
+        for match in pattern.finditer(raw):
+            nombre_raw = match.group(1).strip().lower()
+            # Sanitizar a snake_case simple
+            nombre = re.sub(r"[^a-z0-9]+", "_", nombre_raw).strip("_")
+            descripcion = match.group(2).strip()
+            try:
+                ids = [
+                    int(x.strip())
+                    for x in match.group(3).split(",")
+                    if x.strip().isdigit()
+                ]
+            except ValueError:
+                ids = []
+            if nombre:
+                propuestas.append((nombre, descripcion, ids))
+
+        if not propuestas:
+            logger.warning("CLASIFICACION_TEMAS: no se parsearon subtemas de la respuesta")
+            return False
+
+        # Actualizar _metadata.json
+        metadata_path = ws / "_metadata.json"
+        if not metadata_path.exists():
+            logger.warning("CLASIFICACION_TEMAS: _metadata.json no existe en %s", ws)
+            return False
+
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error("CLASIFICACION_TEMAS: error leyendo metadata: %s", e)
+            return False
+
+        tema_a_archivo = metadata.get("tema_a_archivo", {})
+
+        # Extraer tema_padre del task_id (formato: intercambios_clasificacion_temas_capa3_{tema})
+        task_id = response.task_id
+        tema_padre = ""
+        if "capa3_" in task_id:
+            tema_padre = task_id.split("capa3_", 1)[1]
+        elif "clasificacion_temas_" in task_id:
+            tema_padre = task_id.split("clasificacion_temas_", 1)[1]
+
+        # Buscar el archivo del tema padre para asignarlo a los subtemas
+        archivo_padre = tema_a_archivo.get(tema_padre, "")
+
+        # Agregar cada subtema al mapeo (sin sobrescribir el tema padre:
+        # el Subdivider físico se ejecuta en el próximo ciclo).
+        nuevos = 0
+        for nombre, _desc, _ids in propuestas:
+            clave = f"{tema_padre}_{nombre}" if tema_padre else nombre
+            if clave not in tema_a_archivo and archivo_padre:
+                tema_a_archivo[clave] = archivo_padre
+                nuevos += 1
+
+        metadata["tema_a_archivo"] = tema_a_archivo
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        logger.info(
+            "CLASIFICACION_TEMAS: %d subtemas propuestos, %d nuevos en metadata (tema padre='%s')",
+            len(propuestas), nuevos, tema_padre,
+        )
+        return nuevos > 0
+
     def _integrar_documento(self, response: SubagentResponse, ws: Path) -> bool:
-        """Para documentos, la respuesta se procesa según F4 (pendiente)."""
-        # F4 (v4.2): aquí se actualizará el índice y los bloques con el contenido
-        # clasificado del documento. Por ahora, placeholder.
-        logger.debug("Respuesta de documento recibida (F4 lo procesará)")
+        """Integra la respuesta de un subagente de documento al contexto.
+
+        Guarda el resumen como un bloque temático en el workspace y
+        actualiza _metadata.json con el mapeo tema → archivo.
+        """
+        if not response.success or not response.response:
+            logger.warning("H9: respuesta de documento vacía o fallida: %s", response.task_id)
+            return False
+
+        # Extraer info del context de la tarea
+        task_id = response.task_id
+        filename = task_id
+        # Extraer nombre de archivo del task_id (formato: documento_{filename}_lote_N)
+        # o documento_{filename}
+        if "_lote_" in task_id:
+            parts = task_id.split("_lote_")
+            filename = parts[0].replace("documento_", "")
+            lote_idx = int(parts[1]) if len(parts) > 1 else 0
+        else:
+            filename = task_id.replace("documento_", "")
+            lote_idx = 0
+
+        # Crear un bloque con el resumen
+        bloque_filename = f"bloque_externo_{filename}_lote_{lote_idx}.md"
+        bloque_path = ws / bloque_filename
+
+        # Escribir el bloque
+        content = f"# Bloque externo: {filename} (lote {lote_idx})\n\n"
+        content += f"**Source:** ampliar_contexto (documento externo)\n"
+        content += f"**Lote:** {lote_idx}\n\n"
+        content += f"---\n\n{response.response}\n"
+        bloque_path.write_text(content, encoding="utf-8")
+
+        logger.info(
+            "H9: bloque externo creado: %s (%d chars)",
+            bloque_filename, len(response.response),
+        )
+
+        # Actualizar _metadata.json
+        metadata_path = ws / "_metadata.json"
+        if metadata_path.exists():
+            try:
+                import json as _json
+                metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (ValueError, _json.JSONDecodeError):
+                metadata = {}
+        else:
+            metadata = {}
+
+        # Registrar el tema en tema_a_archivo
+        tema_name = f"documento_externo_{filename}_lote_{lote_idx}"
+        if "tema_a_archivo" not in metadata:
+            metadata["tema_a_archivo"] = {}
+        metadata["tema_a_archivo"][tema_name] = bloque_filename
+
+        # Registrar el source
+        if "archivo_a_source" not in metadata:
+            metadata["archivo_a_source"] = {}
+        metadata["archivo_a_source"][bloque_filename] = {
+            "source_type": "file",
+            "filename": filename,
+            "lote": lote_idx,
+        }
+
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        logger.info(
+            "H9: metadata actualizada con tema '%s' → '%s'",
+            tema_name, bloque_filename,
+        )
         return True
 
     # -- Métodos de formato -----------------------------------------
@@ -489,5 +652,52 @@ if __name__ == "__main__":
     integrador_repr = IntegradorRespuestas(workspace_dir="/tmp/test_repr")
     assert "IntegradorRespuestas" in repr(integrador_repr)
     print(f"[OK] repr: {integrador_repr!r}")
+
+    # Test 10 (F4 v4.2): CLASIFICACION_TEMAS agrega subtemas a metadata
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        metadata_path.write_text(json.dumps({
+            "tema_a_archivo": {"validaciones": "bloque_03.md"}
+        }), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="intercambios_clasificacion_temas_capa3_validaciones",
+            success=True,
+            response="""SUBTEMA: validaciones_server
+DESCRIPCION: Validaciones del servidor backend
+EXCHANGES: 1, 2
+
+SUBTEMA: validaciones_router
+DESCRIPCION: Validaciones del router HTTP
+EXCHANGES: 3, 4""",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1, f"Esperaba 1 aplicada, obtuvo {result['total_applied']}"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        assert "validaciones_validaciones_server" in metadata["tema_a_archivo"]
+        assert "validaciones_validaciones_router" in metadata["tema_a_archivo"]
+        # El tema padre se mantiene (no se sobrescribe)
+        assert "validaciones" in metadata["tema_a_archivo"]
+        # Ambos subtemas apuntan al archivo del padre
+        assert metadata["tema_a_archivo"]["validaciones_validaciones_server"] == "bloque_03.md"
+        print(f"[OK] CLASIFICACION_TEMAS: 2 subtemas agregados a metadata")
+
+    # Test 11 (F4 v4.2): CLASIFICACION_TEMAS con NO_SUBDIVISION no actualiza metadata
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        original_metadata = {"tema_a_archivo": {"validaciones": "bloque_03.md"}}
+        metadata_path.write_text(json.dumps(original_metadata), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="intercambios_clasificacion_temas_capa3_validaciones",
+            success=True,
+            response="NO_SUBDIVISION",
+        )
+        result = integrador.integrar([resp])
+        # NO_SUBDIVISION no aplica nada (total_applied=0)
+        assert result["total_applied"] == 0
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        assert metadata == original_metadata, "Metadata no debe cambiar con NO_SUBDIVISION"
+        print(f"[OK] CLASIFICACION_TEMAS: NO_SUBDIVISION no modifica metadata")
 
     print("\n[PASS] integrador_respuestas.py: todos los tests pasaron")

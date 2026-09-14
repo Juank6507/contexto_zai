@@ -1,5 +1,19 @@
-# contexto_zai/subagents/_task_bridge.py -- Puente con la herramienta Task de Z.ai para lanzar subagentes reales.
-"""Puente con la herramienta Task de Z.ai.
+# contexto_zai/subagents/_task_bridge.py -- [DEPRECATED v4.2] Puente con la herramienta Task de Z.ai para lanzar subagentes reales.
+"""Puente con la herramienta Task de Z.ai — **DEPRECATED en v4.2**.
+
+.. deprecated:: v4.2
+    Este puente HTTP hacia el TaskBridgeServer (puerto 8087) ya no se usa
+    en el flujo principal del proceso v4.2. La coordinación proceso-agente
+    se hace por archivos (``_pending_tasks.json`` + ``_responses/``) vía
+    el ``Orquestador``, sin polling HTTP y sin deadlocks síncronos.
+
+    Se conserva como código legacy para:
+    - El ``SubagentLauncher`` que aún lo usa como ``_default_invoker`` para
+      tests de integración con mocks.
+    - Cualquier código legacy que aún llame ``launch_task()`` directamente.
+
+    En el flujo v4.2, el agente lanza los subagentes directamente con el
+    Task tool (no a través de este puente).
 
 Este modulo es el unico lugar del proyecto que llama directamente
 a la herramienta Task del agente. El resto del codigo usa

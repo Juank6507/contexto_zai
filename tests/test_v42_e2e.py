@@ -271,6 +271,72 @@ def test_procesador_consulta():
         print("[OK] ProcesadorConsulta: modo directo identificado")
 
 
+def test_clasificacion_temas_e2e():
+    """E2E CLASIFICACION_TEMAS (F4 v4.2): publicar tarea → simular respuesta → integrar.
+
+    Verifica que el flujo completo de Capa 3 funcione:
+    1. ProcesadorIntercambios.procesar(CLASIFICACION_TEMAS) publica una tarea.
+    2. La tarea tiene el prompt correcto (SUBTEMA/EXCHANGES, no RESTRICCIONES).
+    3. (Simula) el agente lanza un subagente que responde con subtemas.
+    4. collect_responses() integra la respuesta actualizando _metadata.json.
+    """
+    from contexto_zai.procesadores import ProcesadorIntercambios
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+
+        # Setup: metadata inicial con un tema grande
+        (ws / "_metadata.json").write_text(json.dumps({
+            "tema_a_archivo": {"validaciones": "bloque_03.md"}
+        }), encoding="utf-8")
+
+        # 1. ProcesadorIntercambios publica la tarea CLASIFICACION_TEMAS
+        proc = ProcesadorIntercambios(workspace_dir=ws, orquestador=Orquestador(workspace_dir=ws))
+        result = proc.procesar(
+            modo="CLASIFICACION_TEMAS",
+            intercambios=[
+                # Mock simplificado de intercambios
+                type("X", (), {"id": 1, "director_msg": type("M", (), {"content": "msg 1"})(),
+                               "agent_msgs": [], "topic": "validaciones",
+                               "datetime_str": "2026-09-09"})(),
+                type("X", (), {"id": 2, "director_msg": type("M", (), {"content": "msg 2"})(),
+                               "agent_msgs": [], "topic": "validaciones",
+                               "datetime_str": "2026-09-09"})(),
+            ],
+            context={"tema_padre": "validaciones"},
+            task_id_suffix="capa3_validaciones",
+        )
+        assert len(result["pending_tasks"]) == 1
+        task = result["pending_tasks"][0]
+        # 2. El prompt es el correcto (no alias de RESTRICCIONES)
+        assert "SUBTEMA:" in task.prompt
+        assert "EXCHANGES:" in task.prompt
+        assert "RESTRICCION:" not in task.prompt
+
+        # 3. Simular: el agente lanza el subagente y escribe la respuesta
+        mock_response = """SUBTEMA: validaciones_server
+DESCRIPCION: Validaciones del servidor backend
+EXCHANGES: 1
+
+SUBTEMA: validaciones_router
+DESCRIPCION: Validaciones del router HTTP
+EXCHANGES: 2"""
+        RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(task.task_id, mock_response)
+
+        # 4. collect_responses() integra la respuesta
+        resultado = collect_responses(workspace_dir=str(ws))
+        assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada, obtuvo: {resultado}"
+
+        # Verificar que metadata se actualizó con los subtemas
+        metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
+        assert "validaciones_validaciones_server" in metadata["tema_a_archivo"]
+        assert "validaciones_validaciones_router" in metadata["tema_a_archivo"]
+        # El tema padre se mantiene
+        assert "validaciones" in metadata["tema_a_archivo"]
+
+        print("[OK] CLASIFICACION_TEMAS E2E: tarea publicada → respuesta integrada → metadata actualizada")
+
+
 def main():
     print("=== Tests E2E v4.2 ===\n")
 
@@ -285,6 +351,7 @@ def main():
         test_procesadores_documentos,
         test_procesador_intercambios,
         test_procesador_consulta,
+        test_clasificacion_temas_e2e,
     ]
 
     passed = 0

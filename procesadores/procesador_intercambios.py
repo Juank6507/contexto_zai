@@ -241,7 +241,7 @@ class ProcesadorIntercambios:
                 "RESUMEN_TRUNCADO": ModoClasificador.RESUMEN_TRUNCADO,
                 "DECISIONES": ModoClasificador.DECISIONES,
                 "NOMBRE_LEGIBLE": ModoClasificador.NOMBRE_LEGIBLE,
-                "CLASIFICACION_TEMAS": ModoClasificador.RESTRICCIONES_TEMA,  # alias
+                "CLASIFICACION_TEMAS": ModoClasificador.CLASIFICACION_TEMAS,
                 "CONSULTA_BLOQUE": ModoClasificador.CONSULTA_BLOQUE,
             }
             modo_enum = modo_map.get(modo)
@@ -259,10 +259,16 @@ class ProcesadorIntercambios:
             elif modo == "NOMBRE_LEGIBLE":
                 max_context = SUBDIVIDER_NAMER_MAX_CONTEXT_TOKENS
 
+            # Para CLASIFICACION_TEMAS, el tema_padre se pasa vía 'pregunta'
+            # (convención reutilizada del modo CONSULTA_BLOQUE) para que
+            # _prompt_clasificacion_temas pueda incluirlo en el prompt.
+            pregunta = context.get("tema_padre") if modo == "CLASIFICACION_TEMAS" else None
+
             sub = IntercambiosClasificadorSubagent(
                 launcher=dummy_launcher,
                 modo=modo_enum,
                 max_context_tokens=max_context,
+                pregunta=pregunta,
             )
 
             # Para RESUMEN_TRUNCADO, los intercambios pueden ser un exchange sintético
@@ -387,5 +393,27 @@ if __name__ == "__main__":
     proc_repr = ProcesadorIntercambios(workspace_dir="/tmp/test_repr")
     assert "ProcesadorIntercambios" in repr(proc_repr)
     print(f"[OK] repr: {proc_repr!r}")
+
+    # Test 10 (F4 v4.2): CLASIFICACION_TEMAS construye prompt correcto (no alias de RESTRICCIONES)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proc = ProcesadorIntercambios(workspace_dir=tmpdir)
+        result = proc.procesar(
+            modo="CLASIFICACION_TEMAS",
+            intercambios=make_exchanges(4),
+            context={"tema_padre": "validaciones"},
+            task_id_suffix="capa3_validaciones",
+        )
+        assert result["modo"] == "CLASIFICACION_TEMAS"
+        assert result["total_intercambios"] == 4
+        assert len(result["pending_tasks"]) == 1
+        task = result["pending_tasks"][0]
+        assert task.purpose == "intercambios.clasificacion_temas"
+        assert "capa3_validaciones" in task.task_id
+        # El prompt debe ser el de CLASIFICACION_TEMAS, no el de RESTRICCIONES_TEMA
+        assert "SUBTEMA:" in task.prompt
+        assert "EXCHANGES:" in task.prompt
+        assert "validaciones" in task.prompt
+        assert "RESTRICCION:" not in task.prompt, "El prompt NO debe ser el de RESTRICCIONES_TEMA"
+        print(f"[OK] CLASIFICACION_TEMAS: prompt correcto (no alias), task_id={task.task_id}")
 
     print("\n[PASS] procesador_intercambios.py: todos los tests pasaron")

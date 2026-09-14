@@ -1,10 +1,29 @@
-# contexto_zai/subagents/task_bridge_server.py -- Mini HTTP server que puentea Task requests del pipeline al agente (v3.6).
-"""Task Bridge Server (v3.6).
+# contexto_zai/subagents/task_bridge_server.py -- [DEPRECATED v4.2] Mini HTTP server que puentea Task requests del pipeline al agente (v3.6).
+"""Task Bridge Server (v3.6) — **DEPRECATED en v4.2**.
+
+.. deprecated:: v4.2
+    Este mini-servicio HTTP ya no se usa en el flujo principal del proceso.
+    La spec v4.2 reemplaza el Patrón B (síncrono vía TaskBridgeServer +
+    polling HTTP) por el Patrón A (coordinación por archivos vía
+    ``Orquestador`` + ``EntregadorTareas`` + ``RecogedorRespuestas``).
+
+    El flujo v4.2 es:
+    1. ``pipeline.run()`` genera los archivos con regex fallback.
+    2. El ``ProcesadorIntercambios`` publica tareas en ``_pending_tasks.json``.
+    3. El agente lee ``_pending_tasks.json`` y lanza subagentes con el Task tool.
+    4. Los subagentes escriben sus respuestas en ``_responses/{task_id}.txt``.
+    5. El agente llama a ``pipeline.collect_responses()``.
+    6. El ``RecogedorRespuestas`` lee, el ``IntegradorRespuestas`` aplica, los
+       archivos se actualizan.
+
+    Este archivo se conserva como código legacy para referencia y para tests
+    antiguos que validan el Patrón B. **No iniciar el mini-servicio HTTP
+    en el flujo principal v4.2.**
 
 Mini HTTP server que permite al pipeline Python lanzar subagentes reales
 a través del agente (que tiene acceso al Task tool de Z.ai).
 
-Flujo:
+Flujo legacy (Patrón B, NO usar en v4.2):
 1. El pipeline Python hace POST /task-request con {prompt, files_to_read, description}
 2. El server guarda la request en una cola
 3. El agente (que tiene Task tool) hace GET /pending-tasks
