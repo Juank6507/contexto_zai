@@ -365,12 +365,16 @@ def query_context(
     max_results: int = 3,
     workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
 ) -> dict:
-    """Prepara la consulta al proceso de contexto con una pregunta concreta (F4 v4.2).
+    """Prepara la consulta al proceso de contexto con una pregunta concreta.
 
-    Usa ``ProcesadorConsulta`` para identificar bloques candidatos, decidir
-    el modo (directo o distribuido según tamaño), y publicar las tareas vía
-    el ``Orquestador``. El agente lanza los subagentes con el Task tool y
-    llama a ``collect_responses()`` para recibir la respuesta consolidada.
+    Esta función NO lanza subagentes. Identifica los bloques candidatos,
+    calcula el tamaño total, elige el modo (directo o distribuido), y
+    prepara los prompts para que el agente principal los ejecute con el
+    Task tool directamente.
+
+    El agente principal llama a esta función, recibe el dict con los
+    prompts, lanza el/los subagente(s) con el Task tool, y consolida
+    las respuestas.
 
     Args:
         question: Pregunta concreta del agente.
@@ -379,100 +383,179 @@ def query_context(
 
     Returns:
         Dict con:
-        - "mode": "directo" o "distribuido"
+        - "mode": "direct" o "distributed"
         - "question": la pregunta original
-        - "prompts": lista de prompts (1 para directo, N para distribuido)
+        - "prompts": lista de prompts (1 para modo directo, N para distribuido)
         - "bloques": lista de nombres de bloques candidatos
         - "total_tokens": tamaño total estimado de los bloques
-        - "pending_tasks": lista de SubagentTask publicadas
         - Si no hay contexto: {"error": "No hay contexto recuperado..."}
         - Si no hay candidatos: {"error": "No hay información relevante..."}
 
     Example:
-        >>> from contexto_zai.pipeline import query_context, collect_responses
+        >>> from contexto_zai.pipeline import query_context
         >>> result = query_context("¿Qué se decidió sobre OOP?")
-        >>> if "pending_tasks" in result:
-        ...     # El agente lanza los subagentes con el Task tool
-        ...     # Los subagentes escriben en _responses/
-        ...     applied = collect_responses()
+        >>> if "error" not in result:
+        ...     # Lanzar subagente(s) con el Task tool usando result["prompts"]
+        ...     pass
     """
-    from contexto_zai.config import QUERY_MAX_RESULTS
-    from contexto_zai.coordinador import Orquestador
-    from contexto_zai.procesadores import ProcesadorConsulta
+    import json as _json
+    import re as _re
+    from contexto_zai.config import (
+        QUERY_DIRECT_MODE_THRESHOLD_TOKENS,
+        QUERY_MAX_RESULTS,
+    )
 
     effective_max = min(max_results, QUERY_MAX_RESULTS)
     workspace = Path(workspace_dir)
 
-    # Crear Orquestador + ProcesadorConsulta
-    orquestador = Orquestador(workspace_dir=workspace)
-    procesador = ProcesadorConsulta(
-        workspace_dir=workspace,
-        orquestador=orquestador,
+    # 1. Verificar que el contexto existe
+    indice_path = workspace / "01_indice_recuperacion.md"
+    metadata_path = workspace / "_metadata.json"
+    if not indice_path.exists():
+        return {"error": "No hay contexto recuperado. Ejecuta pipeline.run() primero."}
+
+    # 2. Leer metadata para obtener mapeo tema -> archivo
+    tema_a_archivo: dict[str, str] = {}
+    if metadata_path.exists():
+        try:
+            metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+            tema_a_archivo = metadata.get("tema_a_archivo", {})
+        except (_json.JSONDecodeError, ValueError):
+            pass
+
+    # 3. Buscar bloques candidatos por keyword
+    question_lower = question.lower()
+    question_words = _re.findall(r"[a-záéíóúñ_]+", question_lower)
+    _stop_words = {"que", "de", "la", "el", "en", "y", "a", "los", "las", "del",
+                   "para", "con", "por", "es", "se", "un", "una", "como", "cual",
+                   "cuales", "sobre", "del", "al"}
+    question_words = [w for w in question_words if len(w) > 2 and w not in _stop_words]
+
+    # Buscar en nombres de temas
+    bloques_candidatos: dict[str, list[str]] = {}
+    for tema, archivo in tema_a_archivo.items():
+        tema_lower = tema.lower()
+        for word in question_words:
+            if word in tema_lower:
+                bloques_candidatos.setdefault(archivo, []).append(tema)
+                break
+
+    # Buscar en contenido del índice
+    if not bloques_candidatos:
+        indice_lower = indice_path.read_text(encoding="utf-8").lower()
+        for tema, archivo in tema_a_archivo.items():
+            for word in question_words:
+                if word in indice_lower:
+                    bloques_candidatos.setdefault(archivo, []).append(tema)
+                    break
+
+    # Buscar en contenido de los bloques
+    if not bloques_candidatos:
+        for tema, archivo in tema_a_archivo.items():
+            bloque_path = workspace / archivo
+            if not bloque_path.exists():
+                continue
+            bloque_content = bloque_path.read_text(encoding="utf-8").lower()
+            for word in question_words:
+                if word in bloque_content:
+                    bloques_candidatos.setdefault(archivo, []).append(tema)
+                    break
+
+    if not bloques_candidatos:
+        return {"error": "No hay información relevante en los archivos de recuperación."}
+
+    # Limitar a max_results bloques
+    bloques_a_consultar = list(bloques_candidatos.keys())[:effective_max]
+
+    # 4. Calcular tamaño total de los bloques
+    total_chars = 0
+    bloques_info = []
+    for filename in bloques_a_consultar:
+        bloque_path = workspace / filename
+        if bloque_path.exists():
+            content = bloque_path.read_text(encoding="utf-8")
+            chars = len(content)
+            tokens_estimados = int(chars / 3.5)
+            total_chars += chars
+            bloques_info.append({
+                "filename": filename,
+                "path": str(bloque_path),
+                "chars": chars,
+                "tokens_estimados": tokens_estimados,
+                "temas": bloques_candidatos[filename],
+            })
+
+    total_tokens = int(total_chars / 3.5)
+
+    logger.info(
+        "query_context: '%s' -> %d bloques, %d tokens totales",
+        question[:60], len(bloques_a_consultar), total_tokens,
     )
 
-    # Procesar la consulta
-    result = procesador.procesar(pregunta=question, max_results=effective_max)
+    # 5. Elegir modo según tamaño
+    if total_tokens < QUERY_DIRECT_MODE_THRESHOLD_TOKENS:
+        modo = "direct"
+    else:
+        modo = "distributed"
 
-    # Si hay error, devolverlo
-    if "error" in result:
-        return result
+    # 6. Preparar prompts
+    prompts = []
 
-    # Convertir pending_tasks a prompts para compatibilidad con el contrato anterior
-    prompts = [t.prompt for t in result.get("pending_tasks", [])]
+    if modo == "direct":
+        # Un solo subagente que lee todos los bloques
+        rutas = "\n".join(f"- {b['path']}" for b in bloques_info)
+        prompt = f"""Eres un subagente que responde a una consulta del agente principal sobre el contexto del proyecto.
+
+## Pregunta
+
+{question}
+
+## Archivos a leer
+
+{rutas}
+
+## Instrucciones
+
+1. Lee los archivos indicados con la herramienta Read.
+2. Busca información relevante para responder a la pregunta.
+3. Si encuentras información, respóndela de forma completa y abarcadora.
+4. Si no encuentras nada relevante en ningún archivo, responde exactamente: "No hay información relevante en los archivos."
+5. No inventes información. Solo reporta lo que encuentras.
+6. Consolida la información de todos los archivos en una sola respuesta coherente.
+
+Respuesta:"""
+        prompts.append(prompt)
+    else:
+        # Modo distribuido: un subagente por bloque
+        for b in bloques_info:
+            prompt = f"""Eres un subagente que responde a una consulta del agente principal sobre un bloque temático.
+
+## Pregunta
+
+{question}
+
+## Archivo a leer
+
+- {b['path']}
+
+## Instrucciones
+
+1. Lee el archivo con la herramienta Read.
+2. Busca información relevante para responder a la pregunta.
+3. Si encuentras información, respóndela de forma completa.
+4. Si no encuentras nada relevante, responde exactamente: "No hay información relevante en este bloque."
+
+Respuesta:"""
+            prompts.append(prompt)
 
     return {
-        "mode": result.get("modo", "directo"),
+        "mode": modo,
         "question": question,
         "prompts": prompts,
-        "bloques": result.get("bloques_candidatos", []),
-        "total_tokens": result.get("total_tokens", 0),
-        "pending_tasks": result.get("pending_tasks", []),
+        "bloques": [b["filename"] for b in bloques_info],
+        "total_tokens": total_tokens,
+        "bloques_info": bloques_info,
     }
-
-
-# -- v4.2: Coordinación proceso-agente (F2) ----------------------------------
-
-
-def collect_responses(
-    workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
-) -> dict:
-    """F2 v4.2: Recoge las respuestas de los subagentes y las integra a los archivos.
-
-    Tras ``pipeline.run()`` y el lanzamiento de subagentes por parte del agente,
-    esta función lee las respuestas que los subagentes escribieron en
-    ``_responses/``, las integra a los archivos de recuperación, y devuelve
-    el resultado estructurado.
-
-    El agente nunca ve el contenido crudo de las respuestas — solo llama
-    a esta función y recibe el resultado estructurado.
-
-    Args:
-        workspace_dir: Directorio del workspace donde viven _pending_tasks.json
-            y _responses/.
-
-    Returns:
-        Dict con el resultado estructurado:
-        - "responses": lista de SubagentResponse leídas.
-        - "total_leidas": número de respuestas leídas.
-        - "integradas": True si se aplicaron (F4 conectará el integrador).
-        - "total_aplicadas": número de respuestas aplicadas.
-        - "errores": lista de errores (si los hubo).
-
-    Example:
-        >>> from contexto_zai.pipeline import run, collect_responses
-        >>> result = run(chat_id="...", jwt="...")
-        >>> if result.pending_tasks:
-        ...     # El agente lanza los subagentes con el Task tool
-        ...     # Los subagentes escriben en _responses/
-        ...     applied = collect_responses()
-        ...     print(f"Aplicadas: {applied['total_aplicadas']}")
-    """
-    from contexto_zai.coordinador import Orquestador, IntegradorRespuestas
-
-    orch = Orquestador(workspace_dir=workspace_dir)
-    integrador = IntegradorRespuestas(workspace_dir=workspace_dir)
-
-    return orch.aplicar_respuestas(integrador=integrador)
 
 
 # -- v4.0: Ampliación de contexto desde fuentes externas (M9) ----------------
@@ -521,7 +604,6 @@ def ampliar_contexto(
         AMPLIAR_SMALL_FILE_THRESHOLD_TOKENS,
         AMPLIAR_URL_DOWNLOAD_TIMEOUT,
         AMPLIAR_URL_MAX_SIZE_BYTES,
-        ATTACHMENTS_INDEXED_DIR,
         ATTACHMENTS_TEMP_DIR,
         WORKSPACE_OUTPUT_DIR as _WS_DIR,
     )
@@ -587,41 +669,61 @@ def ampliar_contexto(
             "tokens_estimados": int(estimated_tokens),
         }
 
-    # 5. Si es grande, usar ProcesadorDocumento (F4 v4.2).
-    # El ProcesadorDocumento decide según tamaño (mediano=un subagente, grande=3 niveles)
-    # y publica las tareas en _pending_tasks.json. El agente lanza los subagentes y
-    # llama a collect_responses() para que el Integrador actualice el contexto.
-    from contexto_zai.coordinador import Orquestador
-    from contexto_zai.procesadores import ProcesadorDocumento
-
+    # 5. Si es grande, indexarlo
     # Guardar en temp primero
     ATTACHMENTS_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     safe_filename = filename.replace(" ", "_").replace("/", "_")
     temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{safe_filename}"
     temp_path.write_bytes(content_bytes)
 
-    # F4: crear Orquestador + ProcesadorDocumento y procesar
-    orquestador = Orquestador(workspace_dir=workspace)
-    procesador = ProcesadorDocumento(
-        workspace_dir=workspace,
-        orquestador=orquestador,
+    # Crear un Attachment sintético para el DocumentoIndexerSubagent
+    from contexto_zai.models import Attachment
+    attachment = Attachment(
+        file_id=f"ampliar_{safe_filename}",
+        filename=filename,
+        content_type="application/octet-stream",
+        size=len(content_bytes),
+        url=f"file://{temp_path}",
     )
 
-    # Procesar el documento (publica tareas automáticamente)
-    proc_result = procesador.procesar(
-        source_type="file",
-        source_path=str(temp_path),
-        jwt=jwt,
-        metadata=metadata,
-    )
+    # Usar index_document o index_document_large según tamaño
+    if estimated_tokens > 50000 and jwt:
+        result = index_document_large(
+            file_id=f"ampliar_{safe_filename}",
+            jwt=jwt,
+            filename=filename,
+            content_type="application/octet-stream",
+            size=len(content_bytes),
+        )
+    elif jwt:
+        result = index_document(
+            file_id=f"ampliar_{safe_filename}",
+            jwt=jwt,
+            filename=filename,
+        )
+    else:
+        # Sin JWT, no se puede indexar (AttachmentClient necesita JWT)
+        return {
+            "error": "Se requiere JWT para indexar documentos grandes. Pase jwt al llamar ampliar_contexto().",
+            "needs_agent_read": False,
+            "path": str(temp_path),
+            "tokens_estimados": int(estimated_tokens),
+        }
 
-    # Mover el archivo de temp a indexed
+    if result is None or (hasattr(result, "success") and not result.success):
+        return {
+            "error": f"Error indexando documento: {getattr(result, 'error', 'desconocido') if result else 'result is None'}",
+            "path": str(temp_path),
+        }
+
+    # 6. Mover de temp a indexed
+    from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
     ATTACHMENTS_INDEXED_DIR.mkdir(parents=True, exist_ok=True)
     indexed_path = ATTACHMENTS_INDEXED_DIR / safe_filename
     if temp_path.exists():
         temp_path.rename(indexed_path)
 
-    # Actualizar _metadata.json con source
+    # 7. Actualizar _metadata.json con source
     metadata_path = workspace / "_metadata.json"
     if metadata_path.exists():
         try:
@@ -640,13 +742,27 @@ def ampliar_contexto(
         "filename": filename,
         "metadata": metadata,
     }
+
+    # Agregar temas del documento indexado al mapeo tema_a_archivo
+    if hasattr(result, "temas_detectados") and result.temas_detectados:
+        for tema in result.temas_detectados:
+            tema_name = tema.tema if hasattr(tema, "tema") else str(tema)
+            # Crear un nuevo archivo de bloque para este tema
+            bloque_filename = f"bloque_externo_{safe_filename}_{tema_name}.md"
+            meta.setdefault("tema_a_archivo", {})[tema_name] = bloque_filename
+            meta["archivo_a_source"][bloque_filename] = {
+                "source_type": source_type,
+                "source_path": source_path,
+                "filename": filename,
+                "metadata": metadata,
+            }
+
     metadata_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     logger.info(
-        "ampliar_contexto: documento '%s' procesado (%d tokens), %d tareas publicadas",
+        "ampliar_contexto: documento '%s' indexado, %d temas, metadata actualizada",
         filename,
-        int(estimated_tokens),
-        len(proc_result.get("pending_tasks", [])),
+        len(result.temas_detectados) if hasattr(result, "temas_detectados") else 0,
     )
 
     return {
@@ -654,10 +770,9 @@ def ampliar_contexto(
         "indexed": True,
         "filename": filename,
         "path": str(indexed_path),
-        "pending_tasks": proc_result.get("pending_tasks", []),
+        "bloques_nuevos": [t.tema if hasattr(t, "tema") else str(t)
+                           for t in (result.temas_detectados or [])],
         "tokens_estimados": int(estimated_tokens),
-        "flujo": proc_result.get("flujo", "mediano"),
-        "num_lotes": proc_result.get("num_lotes", 1),
     }
 
 
@@ -841,7 +956,7 @@ if __name__ == "__main__":
             workspace_dir=ws,
         )
         assert "error" not in result, f"Error inesperado: {result}"
-        assert result["mode"] == "directo", f"Esperaba modo directo, obtuvo {result['mode']}"
+        assert result["mode"] == "direct", f"Esperaba modo direct, obtuvo {result['mode']}"
         assert len(result["prompts"]) == 1, f"Esperaba 1 prompt, obtuvo {len(result['prompts'])}"
         assert "autenticacion" in result["prompts"][0].lower() or "jwt" in result["prompts"][0].lower()
         assert "bloque_01.md" in result["prompts"][0]
@@ -853,7 +968,7 @@ if __name__ == "__main__":
             workspace_dir=ws,
         )
         assert "error" not in result2
-        assert result2["mode"] == "directo"
+        assert result2["mode"] == "direct"
         assert len(result2["prompts"]) == 1
         assert "bloque_02.md" in result2["prompts"][0]
         print(f"[OK] query_context modo directo: encuentra bloque correcto")
@@ -895,7 +1010,7 @@ if __name__ == "__main__":
 
         result = query_context("¿Qué se decidió sobre test oop?", workspace_dir=ws)
         assert "error" not in result
-        assert result["mode"] == "distribuido", f"Esperaba distribuido, obtuvo {result['mode']}"
+        assert result["mode"] == "distributed", f"Esperaba distributed, obtuvo {result['mode']}"
         assert len(result["prompts"]) == 2, f"Esperaba 2 prompts (1 por bloque), obtuvo {len(result['prompts'])}"
         assert result["total_tokens"] > 100000
         print(f"[OK] query_context modo distribuido: 2 prompts (bloques grandes), {result['total_tokens']} tokens")
@@ -936,17 +1051,15 @@ if __name__ == "__main__":
     assert "no válido" in result["error"].lower()
     print(f"[OK] ampliar_contexto source_type inválido: error reportado")
 
-    # Test 23 (v4.0): ampliar_contexto con archivo grande publica tareas vía ProcesadorDocumento
-    # F4 v4.2: ya no requiere JWT (usa ProcesadorDocumento que publica tareas, no indexa síncrono)
+    # Test 23 (v4.0): ampliar_contexto con archivo grande sin JWT (debe reportar que falta JWT)
     with tempfile.TemporaryDirectory() as tmpdir:
         # Crear archivo grande (>5K tokens = >17.5K chars)
         large_file = Path(tmpdir) / "documento_grande.txt"
         large_file.write_text("x" * 20000, encoding="utf-8")
 
         result = ampliar_contexto("file", str(large_file), jwt="", workspace_dir=tmpdir)
-        # F4 v4.2: devuelve indexed=True con pending_tasks (no error por falta de JWT)
-        assert result.get("indexed") is True or "pending_tasks" in result, f"Esperaba indexed o pending_tasks, obtuvo: {result}"
-        assert len(result.get("pending_tasks", [])) >= 1, f"Esperaba al menos 1 tarea, obtuvo: {result}"
-        print(f"[OK] ampliar_contexto archivo grande: {len(result.get('pending_tasks', []))} tarea(s) publicada(s)")
+        assert "error" in result, f"Esperaba error por falta de JWT, obtuvo: {result}"
+        assert "JWT" in result["error"] or "jwt" in result["error"].lower()
+        print(f"[OK] ampliar_contexto archivo grande sin JWT: error reportado")
 
     print("\n[PASS] pipeline.py: todos los tests pasaron")
