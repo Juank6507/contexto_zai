@@ -714,61 +714,41 @@ def ampliar_contexto(
             "tokens_estimados": int(estimated_tokens),
         }
 
-    # 5. Si es grande, indexarlo
+    # 5. Si es grande, usar ProcesadorDocumento (patrón diferido v4.2)
+    # El ProcesadorDocumento decide según tamaño (mediano=un subagente, grande=3 niveles)
+    # y publica las tareas vía el Orquestador. No intenta descargar de la API de Z.ai.
+    from contexto_zai.coordinador import Orquestador
+    from contexto_zai.procesadores import ProcesadorDocumento
+
     # Guardar en temp primero
     ATTACHMENTS_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     safe_filename = filename.replace(" ", "_").replace("/", "_")
     temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{safe_filename}"
     temp_path.write_bytes(content_bytes)
 
-    # Crear un Attachment sintético para el DocumentoIndexerSubagent
-    from contexto_zai.models import Attachment
-    attachment = Attachment(
-        file_id=f"ampliar_{safe_filename}",
-        filename=filename,
-        content_type="application/octet-stream",
-        size=len(content_bytes),
-        url=f"file://{temp_path}",
+    # F4 v4.2: crear Orquestador + ProcesadorDocumento y procesar
+    orquestador = Orquestador(workspace_dir=workspace)
+    procesador = ProcesadorDocumento(
+        workspace_dir=workspace,
+        orquestador=orquestador,
     )
 
-    # Usar index_document o index_document_large según tamaño
-    if estimated_tokens > 50000 and jwt:
-        result = index_document_large(
-            file_id=f"ampliar_{safe_filename}",
-            jwt=jwt,
-            filename=filename,
-            content_type="application/octet-stream",
-            size=len(content_bytes),
-        )
-    elif jwt:
-        result = index_document(
-            file_id=f"ampliar_{safe_filename}",
-            jwt=jwt,
-            filename=filename,
-        )
-    else:
-        # Sin JWT, no se puede indexar (AttachmentClient necesita JWT)
-        return {
-            "error": "Se requiere JWT para indexar documentos grandes. Pase jwt al llamar ampliar_contexto().",
-            "needs_agent_read": False,
-            "path": str(temp_path),
-            "tokens_estimados": int(estimated_tokens),
-        }
+    # Procesar el documento (publica tareas automáticamente)
+    proc_result = procesador.procesar(
+        source_type="file",
+        source_path=str(temp_path),
+        jwt=jwt,
+        metadata=metadata,
+    )
 
-    if result is None or (hasattr(result, "success") and not result.success):
-        return {
-            "error": f"Error indexando documento: {getattr(result, 'error', 'desconocido') if result else 'result is None'}",
-            "path": str(temp_path),
-        }
-
-    # 6. Mover de temp a indexed
+    # Mover el archivo de temp a indexed
     from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
     ATTACHMENTS_INDEXED_DIR.mkdir(parents=True, exist_ok=True)
     indexed_path = ATTACHMENTS_INDEXED_DIR / safe_filename
     if temp_path.exists():
         temp_path.rename(indexed_path)
 
-    # 7. Actualizar _metadata.json con source
+    # Actualizar _metadata.json con source
     metadata_path = workspace / "_metadata.json"
     if metadata_path.exists():
         try:
@@ -787,27 +767,13 @@ def ampliar_contexto(
         "filename": filename,
         "metadata": metadata,
     }
-
-    # Agregar temas del documento indexado al mapeo tema_a_archivo
-    if hasattr(result, "temas_detectados") and result.temas_detectados:
-        for tema in result.temas_detectados:
-            tema_name = tema.tema if hasattr(tema, "tema") else str(tema)
-            # Crear un nuevo archivo de bloque para este tema
-            bloque_filename = f"bloque_externo_{safe_filename}_{tema_name}.md"
-            meta.setdefault("tema_a_archivo", {})[tema_name] = bloque_filename
-            meta["archivo_a_source"][bloque_filename] = {
-                "source_type": source_type,
-                "source_path": source_path,
-                "filename": filename,
-                "metadata": metadata,
-            }
-
     metadata_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     logger.info(
-        "ampliar_contexto: documento '%s' indexado, %d temas, metadata actualizada",
+        "ampliar_contexto: documento '%s' procesado (%d tokens), %d tareas publicadas",
         filename,
-        len(result.temas_detectados) if hasattr(result, "temas_detectados") else 0,
+        int(estimated_tokens),
+        len(proc_result.get("pending_tasks", [])),
     )
 
     return {
@@ -815,9 +781,10 @@ def ampliar_contexto(
         "indexed": True,
         "filename": filename,
         "path": str(indexed_path),
-        "bloques_nuevos": [t.tema if hasattr(t, "tema") else str(t)
-                           for t in (result.temas_detectados or [])],
+        "pending_tasks": proc_result.get("pending_tasks", []),
         "tokens_estimados": int(estimated_tokens),
+        "flujo": proc_result.get("flujo", "mediano"),
+        "num_lotes": proc_result.get("num_lotes", 1),
     }
 
 
@@ -1103,15 +1070,17 @@ if __name__ == "__main__":
     assert "no válido" in result["error"].lower()
     print(f"[OK] ampliar_contexto source_type inválido: error reportado")
 
-    # Test 23 (v4.0): ampliar_contexto con archivo grande sin JWT (debe reportar que falta JWT)
+    # Test 23 (v4.0): ampliar_contexto con archivo grande publica tareas vía ProcesadorDocumento
+    # F4 v4.2: ya no requiere JWT (usa ProcesadorDocumento que publica tareas, no indexa síncrono)
     with tempfile.TemporaryDirectory() as tmpdir:
         # Crear archivo grande (>5K tokens = >17.5K chars)
         large_file = Path(tmpdir) / "documento_grande.txt"
         large_file.write_text("x" * 20000, encoding="utf-8")
 
         result = ampliar_contexto("file", str(large_file), jwt="", workspace_dir=tmpdir)
-        assert "error" in result, f"Esperaba error por falta de JWT, obtuvo: {result}"
-        assert "JWT" in result["error"] or "jwt" in result["error"].lower()
-        print(f"[OK] ampliar_contexto archivo grande sin JWT: error reportado")
+        # F4 v4.2: devuelve indexed=True con pending_tasks (no error por falta de JWT)
+        assert result.get("indexed") is True or "pending_tasks" in result, f"Esperaba indexed o pending_tasks, obtuvo: {result}"
+        assert len(result.get("pending_tasks", [])) >= 1, f"Esperaba al menos 1 tarea, obtuvo: {result}"
+        print(f"[OK] ampliar_contexto archivo grande: {len(result.get('pending_tasks', []))} tarea(s) publicada(s)")
 
     print("\n[PASS] pipeline.py: todos los tests pasaron")
