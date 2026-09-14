@@ -558,6 +558,51 @@ Respuesta:"""
     }
 
 
+# -- v4.2: Coordinación proceso-agente ----------------------------------
+
+
+def collect_responses(
+    workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
+) -> dict:
+    """v4.2: Recoge las respuestas de los subagentes y las integra a los archivos.
+
+    Tras ``pipeline.run()`` y el lanzamiento de subagentes por parte del agente,
+    esta función lee las respuestas que los subagentes escribieron en
+    ``_responses/``, las integra a los archivos de recuperación, y devuelve
+    el resultado estructurado.
+
+    El agente nunca ve el contenido crudo de las respuestas — solo llama
+    a esta función y recibe el resultado estructurado.
+
+    Args:
+        workspace_dir: Directorio del workspace donde viven _pending_tasks.json
+            y _responses/.
+
+    Returns:
+        Dict con el resultado estructurado:
+        - "responses": lista de SubagentResponse leídas.
+        - "total_leidas": número de respuestas leídas.
+        - "integradas": True si se aplicaron.
+        - "total_aplicadas": número de respuestas aplicadas.
+        - "errores": lista de errores (si los hubo).
+
+    Example:
+        >>> from contexto_zai.pipeline import run, collect_responses
+        >>> result = run(chat_id="...", jwt="...")
+        >>> if result.pending_tasks:
+        ...     # El agente lanza los subagentes con el Task tool
+        ...     # Los subagentes escriben en _responses/
+        ...     applied = collect_responses()
+        ...     print(f"Aplicadas: {applied['total_aplicadas']}")
+    """
+    from contexto_zai.coordinador import Orquestador, IntegradorRespuestas
+
+    orch = Orquestador(workspace_dir=workspace_dir)
+    integrador = IntegradorRespuestas(workspace_dir=workspace_dir)
+
+    return orch.aplicar_respuestas(integrador=integrador)
+
+
 # -- v4.0: Ampliación de contexto desde fuentes externas (M9) ----------------
 
 
@@ -800,17 +845,23 @@ if __name__ == "__main__":
         print(f"[OK] status() en directorio vacío: metadata_exists=False")
 
     # Test 2: run() con parámetros inválidos (sin JWT) -> error
-    with tempfile.TemporaryDirectory() as tmpdir:
-        result = run(
-            chat_id="invalid-chat",
-            jwt="invalid-jwt",
-            workspace_dir=tmpdir,
-            download_dir=tmpdir + "/download",
-        )
-        # Debe fallar porque el JWT es inválido
-        assert not result.success
-        assert result.error != ""
-        print(f"[OK] run() con JWT inválido: error capturado correctamente")
+    import logging as _logging
+    _old_level = _logging.getLogger("contexto_zai").level
+    _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = run(
+                chat_id="invalid-chat",
+                jwt="invalid-jwt",
+                workspace_dir=tmpdir,
+                download_dir=tmpdir + "/download",
+            )
+            # Debe fallar porque el JWT es inválido
+            assert not result.success
+            assert result.error != ""
+            print(f"[OK] run() con JWT inválido: error capturado correctamente")
+    finally:
+        _logging.getLogger("contexto_zai").setLevel(_old_level)
 
     # Test 3: signature de run()
     import inspect
@@ -874,35 +925,36 @@ if __name__ == "__main__":
     assert {"file_id", "jwt", "filename", "content_type", "size", "force_direct"} <= set(sig_index.parameters.keys())
     print(f"[OK] index_document(): disponible con {len(sig_index.parameters)} params")
 
-    # Test 10 (v3.5): index_document con file_id inválido devuelve None
-    result_invalid = index_document(
-        file_id="invalid-uuid",
-        jwt="fake-jwt",
-        filename="test.pdf",
-    )
-    # Debe devolver None (no crashear) porque el JWT es falso
-    assert result_invalid is None or (
-        hasattr(result_invalid, "success") and not result_invalid.success
-    ), "index_document debe manejar errores gracefully"
-    print(f"[OK] index_document() con file_id inválido: maneja error correctamente")
+    # Test 10-12 (v3.5/v3.6): index_document y index_document_large con file_id inválido
+    _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
+    try:
+        result_invalid = index_document(
+            file_id="invalid-uuid",
+            jwt="fake-jwt",
+            filename="test.pdf",
+        )
+        assert result_invalid is None or (
+            hasattr(result_invalid, "success") and not result_invalid.success
+        ), "index_document debe manejar errores gracefully"
+        print(f"[OK] index_document() con file_id inválido: maneja error correctamente")
 
-    # Test 11 (v3.6): index_document_large disponible
-    assert callable(index_document_large), "index_document_large debe ser callable"
-    sig_large = inspect.signature(index_document_large)
-    assert {"file_id", "jwt", "filename", "content_type", "size"} <= set(sig_large.parameters.keys())
-    print(f"[OK] index_document_large(): disponible con {len(sig_large.parameters)} params")
+        assert callable(index_document_large), "index_document_large debe ser callable"
+        sig_large = inspect.signature(index_document_large)
+        assert {"file_id", "jwt", "filename", "content_type", "size"} <= set(sig_large.parameters.keys())
+        print(f"[OK] index_document_large(): disponible con {len(sig_large.parameters)} params")
 
-    # Test 12 (v3.6): index_document_large con file_id inválido
-    result_large_invalid = index_document_large(
-        file_id="invalid-uuid",
-        jwt="fake-jwt",
-        filename="large.pdf",
-        size=1652025,  # ~165K tokens → documento grande
-    )
-    assert result_large_invalid is None or (
-        hasattr(result_large_invalid, "success") and not result_large_invalid.success
-    ), "index_document_large debe manejar errores gracefully"
-    print(f"[OK] index_document_large() con file_id inválido: maneja error")
+        result_large_invalid = index_document_large(
+            file_id="invalid-uuid",
+            jwt="fake-jwt",
+            filename="large.pdf",
+            size=1652025,
+        )
+        assert result_large_invalid is None or (
+            hasattr(result_large_invalid, "success") and not result_large_invalid.success
+        ), "index_document_large debe manejar errores gracefully"
+        print(f"[OK] index_document_large() con file_id inválido: maneja error")
+    finally:
+        _logging.getLogger("contexto_zai").setLevel(_old_level)
 
     # === Tests v4.0 (M8 revisada): query_context ===
 

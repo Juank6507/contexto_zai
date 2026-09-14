@@ -222,21 +222,29 @@ def test_recovery_cycle_unicity():
 def test_recovery_cycle_api_error():
     """Test 7: error de API capturado."""
     print("\n=== Test 7: error de API capturado ===")
-    with tempfile.TemporaryDirectory() as tmpdir:
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls:
-            instance = MagicMock()
-            instance.__enter__ = MagicMock(return_value=instance)
-            instance.__exit__ = MagicMock(return_value=None)
-            instance.create_share.side_effect = RuntimeError("API caída")
-            mock_auth_cls.return_value = instance
+    # Silenciar el logger durante el test para que el error esperado
+    # (API caída) no se imprima en pantalla
+    import logging as _logging
+    _old_level = _logging.getLogger("contexto_zai").level
+    _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls:
+                instance = MagicMock()
+                instance.__enter__ = MagicMock(return_value=instance)
+                instance.__exit__ = MagicMock(return_value=None)
+                instance.create_share.side_effect = RuntimeError("API caída")
+                mock_auth_cls.return_value = instance
 
-            cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=Path(tmpdir), download_dir=Path(tmpdir) / "dl")
-            result = cycle.run()
+                cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=Path(tmpdir), download_dir=Path(tmpdir) / "dl")
+                result = cycle.run()
 
-        assert not result.success
-        assert "API caída" in result.error
-        print(f"  [OK] Error de API capturado: {result.error}")
-        print(f"  [PASS] PASO")
+            assert not result.success
+            assert "API caída" in result.error
+            print(f"  [OK] Error de API capturado: {result.error}")
+            print(f"  [PASS] PASO")
+    finally:
+        _logging.getLogger("contexto_zai").setLevel(_old_level)
 
 def test_recovery_cycle_empty_messages():
     """Test 8: lista vacía de mensajes."""
@@ -274,8 +282,16 @@ def test_recovery_cycle_no_block_exceeds_70k():
              patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
             _patched_context_manager(mock_auth_cls, create_share="s-id")
             _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
-            cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
-            result = cycle.run()
+            # Silenciar el logger durante el test para que los errores esperados
+            # (Task no disponible en Windows) no se impriman en pantalla
+            import logging as _logging
+            _old_level = _logging.getLogger("contexto_zai").level
+            _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
+            try:
+                cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
+                result = cycle.run()
+            finally:
+                _logging.getLogger("contexto_zai").setLevel(_old_level)
 
         assert result.success, f"Falló: {result.error}"
         bloques = list(ws.glob("bloque_*.md"))

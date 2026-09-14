@@ -408,38 +408,45 @@ def test_7_documento_indexer_error_handling():
     """Test 7: DocumentoIndexerSubagent maneja errores correctamente."""
     print("\n=== Test 7: DocumentoIndexerSubagent (manejo de errores) ===")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        launcher = SubagentLauncher(task_invoker=make_mock_invoker_valid())
-        client = MockAttachmentClient()
-        sub = DocumentoIndexerSubagent(
-            launcher=launcher, attachment_client=client,
-            temp_dir=Path(tmpdir) / "temp", indexed_dir=Path(tmpdir) / "indexed",
-        )
+    # Silenciar el logger durante el test para que los errores esperados
+    # (descarga fallida, Task API no disponible) no se impriman en pantalla
+    import logging as _logging
+    _old_level = _logging.getLogger("contexto_zai").level
+    _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
 
-        # Error de descarga
-        att = Attachment(
-            file_id="fail-download", filename="err.pdf",
-            content_type="application/pdf", size=100,
-        )
-        result = sub.run(att)
-        assert not result.success
-        assert "Download error" in result.error
-        print("  [OK] Error de descarga: capturado correctamente")
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            launcher = SubagentLauncher(task_invoker=make_mock_invoker_valid())
+            client = MockAttachmentClient()
+            sub = DocumentoIndexerSubagent(
+                launcher=launcher, attachment_client=client,
+                temp_dir=Path(tmpdir) / "temp", indexed_dir=Path(tmpdir) / "indexed",
+            )
 
-        # Subagente que falla
-        def failing_invoker(prompt: str) -> str:
-            raise RuntimeError("Task API no disponible")
+            # Error de descarga
+            att = Attachment(
+                file_id="fail-download", filename="err.pdf",
+                content_type="application/pdf", size=100,
+            )
+            result = sub.run(att)
+            assert not result.success
+            assert "Download error" in result.error
+            print("  [OK] Error de descarga: capturado correctamente")
 
-        launcher2 = SubagentLauncher(task_invoker=failing_invoker)
-        sub2 = DocumentoIndexerSubagent(
-            launcher=launcher2, attachment_client=client,
-            temp_dir=Path(tmpdir) / "temp", indexed_dir=Path(tmpdir) / "indexed",
-        )
-        att2 = make_pdf_attachment()
-        result2 = sub2.run(att2)
-        assert not result2.success
-        assert "Subagent" in result2.error or "Task" in result2.error
-        print("  [OK] Subagente que falla: error capturado")
+            # Subagente que falla
+            def failing_invoker(prompt: str) -> str:
+                raise RuntimeError("Task API no disponible")
+
+            launcher2 = SubagentLauncher(task_invoker=failing_invoker)
+            sub2 = DocumentoIndexerSubagent(
+                launcher=launcher2, attachment_client=client,
+                temp_dir=Path(tmpdir) / "temp", indexed_dir=Path(tmpdir) / "indexed",
+            )
+            att2 = make_pdf_attachment()
+            result2 = sub2.run(att2)
+            assert not result2.success
+            assert "Subagent" in result2.error or "Task" in result2.error
+            print("  [OK] Subagente que falla: error capturado")
 
         # Respuesta mal formada
         def malformed_invoker(prompt: str) -> str:
@@ -458,7 +465,10 @@ def test_7_documento_indexer_error_handling():
         assert len(result3.temas_detectados) == 0
         print("  [OK] Respuesta mal formada: success pero sin temas")
 
-    print("  [PASS] PASO")
+        print("  [PASS] PASO")
+
+    finally:
+        _logging.getLogger("contexto_zai").setLevel(_old_level)
 
 
 def test_8_indice_generator_with_attachments():
@@ -516,46 +526,56 @@ def test_9_pipeline_index_document():
 
     from contexto_zai.pipeline import index_document
 
-    # Test con file_id inválido → debe manejar el error gracefully
-    result = index_document(
-        file_id="invalid-uuid",
-        jwt="fake-jwt-token",
-        filename="test.pdf",
-    )
-    # Debe devolver None o un DocumentoIndexResult con success=False
-    assert result is None or (
-        hasattr(result, "success") and not result.success
-    ), "index_document debe manejar errores gracefully"
-    print("  [OK] file_id inválido: maneja error correctamente")
+    # Silenciar el logger durante el test para que los errores esperados
+    # (HTTP 401 con JWT inválido) no se impriman en pantalla
+    import logging as _logging
+    _old_level = _logging.getLogger("contexto_zai").level
+    _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
 
-    # Test con force_direct=True (descarga directa sin subagente)
-    # Mockear AttachmentClient.download para que devuelva contenido
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.content = b"%PDF-1.4 fake content"
-    mock_response.headers = {"content-type": "application/pdf"}
+    try:
+        # Test con file_id inválido → debe manejar el error gracefully
+        result = index_document(
+            file_id="invalid-uuid",
+            jwt="fake-jwt-token",
+            filename="test.pdf",
+        )
+        # Debe devolver None o un DocumentoIndexResult con success=False
+        assert result is None or (
+            hasattr(result, "success") and not result.success
+        ), "index_document debe manejar errores gracefully"
+        print("  [OK] file_id inválido: maneja error correctamente")
 
-    with patch("contexto_zai.client.attachment_client.httpx.Client") as mock_client_cls:
-        mock_instance = MagicMock()
-        mock_instance.get.return_value = mock_response
-        mock_client_cls.return_value = mock_instance
+        # Test con force_direct=True (descarga directa sin subagente)
+        # Mockear AttachmentClient.download para que devuelva contenido
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b"%PDF-1.4 fake content"
+        mock_response.headers = {"content-type": "application/pdf"}
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Override de los directorios indexed
-            with patch("contexto_zai.config.ATTACHMENTS_INDEXED_DIR", Path(tmpdir) / "indexed"):
-                result = index_document(
-                    file_id="abc-123",
-                    jwt="fake-jwt",
-                    filename="test.pdf",
-                    force_direct=True,
-                )
-                # Debe ser success (lectura directa forzada)
-                if result and hasattr(result, "success") and result.success:
-                    print("  [OK] force_direct=True: lectura directa forzada exitosa")
-                else:
-                    print(f"  [INFO] force_direct=True: resultado={result}")
+        with patch("contexto_zai.client.attachment_client.httpx.Client") as mock_client_cls:
+            mock_instance = MagicMock()
+            mock_instance.get.return_value = mock_response
+            mock_client_cls.return_value = mock_instance
 
-    print("  [PASS] PASO")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Override de los directorios indexed
+                with patch("contexto_zai.config.ATTACHMENTS_INDEXED_DIR", Path(tmpdir) / "indexed"):
+                    result = index_document(
+                        file_id="abc-123",
+                        jwt="fake-jwt",
+                        filename="test.pdf",
+                        force_direct=True,
+                    )
+                    # Debe ser success (lectura directa forzada)
+                    if result and hasattr(result, "success") and result.success:
+                        print("  [OK] force_direct=True: lectura directa forzada exitosa")
+                    else:
+                        print(f"  [INFO] force_direct=True: resultado={result}")
+
+        print("  [PASS] PASO")
+
+    finally:
+        _logging.getLogger("contexto_zai").setLevel(_old_level)
 
 
 def test_10_full_e2e_attachment_flow():

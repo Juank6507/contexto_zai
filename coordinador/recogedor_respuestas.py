@@ -15,6 +15,29 @@ Atómico standalone: importa config, models, pathlib y logging. Nada más.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+# Soporta Estructura A (<workspace>/contexto_zai/) y Estructura B (workspace=contexto_zai/)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
+        break
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
 import json
 import logging
 from pathlib import Path
@@ -101,6 +124,11 @@ class RecogedorRespuestas:
     def leer_todas(self) -> list[SubagentResponse]:
         """Lee todas las respuestas de ``_responses/``.
 
+        Acepta archivos .txt, .json, y cualquier otro archivo en el directorio.
+        Los .txt usan el formato SUCCESS/RESPONSE. Los .json se parsean como
+        ``{"task_id": ..., "success": ..., "response": ...}``. Otros archivos
+        se leen como texto plano con task_id = nombre del archivo sin extensión.
+
         Returns:
             Lista de SubagentResponse. Vacía si no hay respuestas.
         """
@@ -108,7 +136,9 @@ class RecogedorRespuestas:
             return []
 
         responses: list[SubagentResponse] = []
-        for resp_file in sorted(self._responses_dir.glob("*.txt")):
+        for resp_file in sorted(self._responses_dir.iterdir()):
+            if resp_file.is_dir():
+                continue
             response = self._parse_response_file(resp_file)
             if response is not None:
                 responses.append(response)
@@ -137,33 +167,32 @@ class RecogedorRespuestas:
     def limpiar(self) -> None:
         """Borra todas las respuestas tras aplicarlas."""
         if self._responses_dir.exists():
-            for resp_file in self._responses_dir.glob("*.txt"):
-                resp_file.unlink()
+            for resp_file in self._responses_dir.iterdir():
+                if resp_file.is_file():
+                    resp_file.unlink()
             logger.debug("RecogedorRespuestas: respuestas borradas")
 
     def hay_respuestas(self) -> bool:
         """Verifica si hay respuestas listas."""
         if not self._responses_dir.exists():
             return False
-        return any(self._responses_dir.glob("*.txt"))
+        return any(f.is_file() for f in self._responses_dir.iterdir())
 
     def total_respuestas(self) -> int:
         """Devuelve el número de respuestas disponibles."""
         if not self._responses_dir.exists():
             return 0
-        return len(list(self._responses_dir.glob("*.txt")))
+        return sum(1 for f in self._responses_dir.iterdir() if f.is_file())
 
     # -- Métodos privados -------------------------------------------
 
     def _parse_response_file(self, resp_path: Path) -> Optional[SubagentResponse]:
         """Parsea un archivo de respuesta en SubagentResponse.
 
-        Formato esperado:
-            SUCCESS: true|false
-            [ERROR: mensaje si success=false]
-
-            --- RESPONSE ---
-            <contenido de la respuesta>
+        Soporta tres formatos:
+        1. Formato .txt con header: ``SUCCESS: true\n\n--- RESPONSE ---\n<contenido>``
+        2. Formato .json: ``{"task_id": ..., "success": ..., "response": ...}``
+        3. Texto plano: el contenido completo es la respuesta, task_id = nombre del archivo.
         """
         try:
             content = resp_path.read_text(encoding="utf-8")
@@ -171,12 +200,25 @@ class RecogedorRespuestas:
             logger.warning("Error leyendo %s: %s", resp_path, e)
             return None
 
-        # Extraer task_id del nombre del archivo
-        task_id = resp_path.stem  # nombre sin extensión
-        # Si el task_id fue sanitizado, no podemos revertir, pero esto es OK
-        # porque el task_id original se usa solo para matching con SubagentTask.
+        # Extraer task_id del nombre del archivo (sin extensión)
+        task_id = resp_path.stem
 
-        # Parsear el contenido
+        # 1. Intentar parsear como JSON
+        if resp_path.suffix == ".json" or content.strip().startswith("{"):
+            try:
+                import json as _json
+                data = _json.loads(content)
+                if isinstance(data, dict):
+                    return SubagentResponse(
+                        task_id=data.get("task_id", task_id),
+                        success=data.get("success", True),
+                        response=data.get("response", data.get("content", content)),
+                        error=data.get("error", ""),
+                    )
+            except (_json.JSONDecodeError, ValueError):
+                pass  # No es JSON válido, intentar como texto
+
+        # 2. Parsear formato .txt con header SUCCESS/RESPONSE
         success = True
         error = ""
         response_text = content
@@ -186,20 +228,21 @@ class RecogedorRespuestas:
             success_str = lines[0][len("SUCCESS:"):].strip().lower()
             success = success_str == "true"
 
-            # Buscar ERROR: si success=false
             if not success:
                 for line in lines[1:]:
                     if line.startswith("ERROR:"):
                         error = line[len("ERROR:"):].strip()
                         break
 
-            # Extraer el cuerpo tras "--- RESPONSE ---"
             response_marker = "--- RESPONSE ---"
             marker_idx = content.find(response_marker)
             if marker_idx >= 0:
                 response_text = content[marker_idx + len(response_marker):].strip()
             else:
                 response_text = "\n".join(lines[1:]).strip()
+        else:
+            # 3. Texto plano: el contenido completo es la respuesta
+            response_text = content.strip()
 
         return SubagentResponse(
             task_id=task_id,
