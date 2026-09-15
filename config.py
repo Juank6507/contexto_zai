@@ -352,7 +352,7 @@ ATTACHMENTS_INDEXED_DIR = WORKSPACE_ROOT / "download" / "uploads" / "indexed"
 # -- v3.6: Particionado de documentos grandes (flujo de 3 niveles) ----------
 
 # Umbral para activar el flujo de 3 niveles (N1 → N2×N → N3)
-PARTITION_THRESHOLD_TOKENS: int = 50000
+PARTITION_THRESHOLD_TOKENS: int = 30000
 
 # Tamaño máximo que un subagente N2 puede procesar cómodamente
 MAX_TOKENS_POR_SUBAGENTE_N2: int = 30000
@@ -518,7 +518,11 @@ if __name__ == "__main__":
     print(f"[OK] Attachments dirs: temp={ATTACHMENTS_TEMP_DIR.name}, indexed={ATTACHMENTS_INDEXED_DIR.name}")
 
     # Test 13 (v3.6): constantes de particionado
-    assert PARTITION_THRESHOLD_TOKENS == 50000
+    # v4.2 (decisión Director 2026-09-14): umbral bajado de 50000 a 30000 para
+    # evitar timeout del Task tool en documentos 30K-50K tokens que caían en
+    # "mediano" (1 subagente) y no terminaban a tiempo. Ahora van a "grande"
+    # (3 lotes en paralelo).
+    assert PARTITION_THRESHOLD_TOKENS == 30000
     assert MAX_TOKENS_POR_SUBAGENTE_N2 == 30000
     assert MAX_SUBAGENTES_N2_PARALELOS == 3
     print(f"[OK] Particionado: threshold={PARTITION_THRESHOLD_TOKENS}, max_tokens_n2={MAX_TOKENS_POR_SUBAGENTE_N2}, max_paralelos={MAX_SUBAGENTES_N2_PARALELOS}")

@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 
 # Umbrales de tamaño (configurables en config.py)
 TRIVIAL_THRESHOLD_TOKENS = 1000  # <1K tokens: agente lee directo
-MEDIUM_THRESHOLD_TOKENS = PARTITION_THRESHOLD_TOKENS  # >50K tokens: 3 niveles
+MEDIUM_THRESHOLD_TOKENS = PARTITION_THRESHOLD_TOKENS  # >30K tokens (v4.2): 3 niveles
 
 
 class ProcesadorDocumento:
@@ -160,8 +160,7 @@ class ProcesadorDocumento:
             return file_path.read_bytes(), file_path.name
 
         elif source_type == "url":
-            # F4 (v4.2): reutilizar la lógica de descarga de ampliar_contexto.
-            # Por ahora, placeholder — F4 lo conecta.
+            # Descargar con requests
             import requests
             from urllib.parse import urlparse
             try:
@@ -196,24 +195,21 @@ class ProcesadorDocumento:
     ) -> dict:
         """Documento mediano: un subagente que lee, clasifica y resume.
 
-        F4 (v4.2): aquí se construirá el prompt usando DocumentoIndexerSubagent
-        y se publicará la tarea vía el Orquestador. Por ahora, devuelve
-        placeholder.
+        Construye un prompt real para que el subagente lea el archivo,
+        lo clasifique por temas, y genere un resumen.
         """
-        # F4: construir prompt con DocumentoIndexerSubagent.build_prompt()
-        # y publicar la tarea vía self._orquestador.publicar_tareas([task])
-        # Por ahora, placeholder.
+        prompt = self._build_documento_prompt(filename, content_bytes, tokens)
+
         task = SubagentTask(
             task_id=f"documento_{filename[:30]}",
             purpose="documento.mediano",
-            prompt=f"[F4 pendiente] Prompt para procesar documento mediano: {filename} ({int(tokens)} tokens)",
+            prompt=prompt,
             context={
                 "filename": filename,
                 "tokens_estimados": int(tokens),
                 "tamaño": "mediano",
             },
         )
-        # F4: publicar la tarea si hay orquestador
         if self._orquestador is not None:
             self._orquestador.publicar_tareas([task])
 
@@ -232,23 +228,17 @@ class ProcesadorDocumento:
         metadata: dict,
         jwt: str,
     ) -> dict:
-        """Documento grande: flujo de 3 niveles (Divisor + Conciliador).
-
-        Reutiliza el Divisor y Conciliador existentes, coordinados por
-        el Orquestador (no por TaskBridgeServer).
-        """
-        # F4 (v4.2): aquí se usará el Divisor para particionar y el Conciliador
-        # para consolidar, pero coordinado por el Orquestador.
-        # Por ahora, placeholder con una tarea por lote.
+        """Documento grande: divide en lotes y un subagente por lote."""
         from contexto_zai.config import MAX_TOKENS_POR_SUBAGENTE_N2
 
         num_lotes = max(1, int(tokens / MAX_TOKENS_POR_SUBAGENTE_N2) + 1)
         tasks: list[SubagentTask] = []
         for i in range(num_lotes):
+            prompt = self._build_lote_prompt(filename, content_bytes, tokens, i, num_lotes)
             task = SubagentTask(
                 task_id=f"documento_grande_{filename[:20]}_lote_{i}",
                 purpose="documento.grande",
-                prompt=f"[F4 pendiente] Prompt para lote {i+1}/{num_lotes} de {filename}",
+                prompt=prompt,
                 context={
                     "filename": filename,
                     "lote_idx": i,
@@ -270,6 +260,87 @@ class ProcesadorDocumento:
             "flujo": "3_niveles",
             "num_lotes": num_lotes,
         }
+
+    def _build_documento_prompt(self, filename: str, content_bytes: bytes, tokens: float) -> str:
+        """Construye el prompt para que un subagente lea y clasifique un documento."""
+        from contexto_zai.config import ATTACHMENTS_TEMP_DIR
+        temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{filename.replace(' ', '_')}"
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.write_bytes(content_bytes)
+
+        return f"""Eres un subagente que lee, clasifica y resume un documento.
+
+## Archivo a leer
+
+- {temp_path}
+
+## Instrucciones
+
+1. Lee el archivo con la herramienta Read.
+2. Identifica los temas principales del documento.
+3. Para cada tema, escribe un resumen breve (2-3 líneas).
+4. Genera un resumen general del documento (máximo 500 caracteres).
+
+## Formato de respuesta
+
+TEMA: <nombre del tema>
+DESCRIPCION: <descripción breve>
+
+TEMA: <otro tema>
+DESCRIPCION: <descripción breve>
+
+RESUMEN: <resumen general del documento>
+
+Respuesta:"""
+
+    def _build_lote_prompt(self, filename: str, content_bytes: bytes, tokens: float,
+                           lote_idx: int, total_lotes: int) -> str:
+        """Construye el prompt para que un subagente procese un lote del documento."""
+        from contexto_zai.config import ATTACHMENTS_TEMP_DIR
+        temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{filename.replace(' ', '_')}"
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.write_bytes(content_bytes)
+
+        # Calcular qué porción del archivo leer (por líneas)
+        try:
+            content_str = content_bytes.decode("utf-8", errors="replace")
+            lines = content_str.split("\n")
+            total_lines = len(lines)
+            lines_per_lote = max(1, total_lines // total_lotes)
+            start_line = lote_idx * lines_per_lote
+            end_line = min((lote_idx + 1) * lines_per_lote, total_lines)
+        except Exception:
+            start_line = 0
+            end_line = 0
+
+        return f"""Eres un subagente que procesa un lote de un documento grande.
+
+## Archivo a leer
+
+- {temp_path}
+
+## Lote
+
+Lote {lote_idx + 1} de {total_lotes}.
+Lee las líneas {start_line + 1} a {end_line} del archivo (de {total_lines} líneas totales).
+
+## Instrucciones
+
+1. Lee el archivo con la herramienta Read (solo las líneas indicadas).
+2. Identifica los temas principales de esta porción.
+3. Escribe un resumen de lo que encontraste en esta porción.
+
+## Formato de respuesta
+
+TEMA: <nombre del tema>
+DESCRIPCION: <descripción breve>
+
+TEMA: <otro tema>
+DESCRIPCION: <descripción breve>
+
+RESUMEN: <resumen del lote>
+
+Respuesta:"""
 
     def __repr__(self) -> str:
         return f"ProcesadorDocumento(workspace_dir={self._workspace_dir!r})"
