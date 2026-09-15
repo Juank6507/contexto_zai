@@ -74,18 +74,23 @@ class Orchestrator:
     """Orquesta la activación del proceso de recuperación.
 
     Args:
-        chat_id: UUID interno del chat.
+        chat_id: UUID interno del chat. Puede estar vacío si se pasa
+            ``share_id`` externo (v4.2: link /s/ de otra sesión).
         jwt: JWT del Director.
         workspace_dir: Directorio del workspace.
         download_dir: Directorio de descarga.
         decision_extractor: Extractor LLM de decisiones (opcional).
+        share_id: UUID de un share público existente (opcional, v4.2).
+            Si se pasa, ``RecoveryCycle`` no crea su propio share y
+            usa este ``share_id`` para leer el chat compartido.
 
     Usage:
+        >>> # Caso 1: chat actual del agente
         >>> orch = Orchestrator(chat_id="...", jwt="...")
-        >>> result = orch.activate(
-        ...     trigger=DetectionTrigger.EXPLICITO,
-        ...     reason="Director indicó pérdida de contexto",
-        ... )
+        >>> result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+        >>> # Caso 2: chat externo vía link /s/
+        >>> orch = Orchestrator(chat_id="", jwt="...", share_id="abc-123")
+        >>> result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
     """
 
     def __init__(
@@ -95,9 +100,11 @@ class Orchestrator:
         workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
         download_dir: Path | str = DOWNLOAD_OUTPUT_DIR,
         decision_extractor=None,
+        share_id: Optional[str] = None,
     ) -> None:
         self._chat_id = chat_id
         self._jwt = jwt
+        self._share_id = share_id  # v4.2: share externo (link /s/)
         self._workspace_dir = Path(workspace_dir)
         self._download_dir = Path(download_dir)
         self._decision_extractor = decision_extractor
@@ -178,6 +185,7 @@ class Orchestrator:
                 subagent_launcher=procesador,
                 enable_capa3=False,
                 enable_attachments=False,
+                share_id=self._share_id,  # v4.2: share externo (link /s/)
             )
             result = cycle.run(chat_label=chat_label)
             return OrchestratorResult(

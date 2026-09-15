@@ -417,6 +417,79 @@ SECCIONES: roles, permisos"""
         print("[OK] query_context E2E: encuentra bloque externo por tema real (sin 01_indice)")
 
 
+def test_ampliar_contexto_link_publico_zai():
+    """E2E v4.2: ampliar_contexto() procesa link /s/ de Z.ai como recuperación.
+
+    Valida el flujo completo del cableado nuevo:
+    1. ampliar_contexto("url", "https://chat.z.ai/s/<uuid>") detecta el link.
+    2. Extrae el share_id del link.
+    3. Si no hay JWT en metadata, devuelve error claro pidiéndolo.
+    4. Si hay JWT, llama a pipeline.run(share_id=...) — aquì mockeado para
+       no requerir API real.
+    """
+    from unittest.mock import patch, MagicMock
+    from contexto_zai.pipeline import ampliar_contexto, _extraer_share_id_de_link
+
+    # Test 1: _extraer_share_id_de_link funciona para varios formatos
+    assert _extraer_share_id_de_link("https://chat.z.ai/s/abc-123-def") == "abc-123-def"
+    assert _extraer_share_id_de_link("https://chat.z.ai/c/xyz-789") == "xyz-789"
+    assert _extraer_share_id_de_link("https://chat.z.ai/s/uuid-con-query?ref=x") == "uuid-con-query"
+
+    # Test 2: ampliar_contexto sin JWT en metadata → error claro
+    result = ampliar_contexto(
+        source_type="url",
+        source_path="https://chat.z.ai/s/abc-123",
+        jwt="",
+        metadata={},
+    )
+    assert "error" in result
+    assert "JWT" in result["error"]
+    assert "share_id" not in result  # No llegó a procesar
+
+    # Test 3: ampliar_contexto con link mal formado → error de share_id
+    result_mal = ampliar_contexto(
+        source_type="url",
+        source_path="https://chat.z.ai/s/",
+        jwt="fake-jwt",
+        metadata={"jwt": "fake-jwt"},
+    )
+    assert "error" in result_mal
+    assert "share_id" in result_mal["error"]
+
+    # Test 4: ampliar_contexto con JWT → llama pipeline.run(share_id=...)
+    # Mockeamos pipeline.run para no llamar a la API real.
+    mock_result = MagicMock()
+    mock_result.success = True
+    mock_result.cycle_used = "recovery"
+    mock_result.exchanges_processed = 50
+    mock_result.files_generated = 10
+    mock_result.error = ""
+    mock_result.pending_tasks = []
+
+    with patch("contexto_zai.pipeline.run", return_value=mock_result) as mock_run:
+        result_ok = ampliar_contexto(
+            source_type="url",
+            source_path="https://chat.z.ai/s/test-share-uuid",
+            jwt="",
+            metadata={"jwt": "fake-jwt"},
+            workspace_dir="/tmp/test_ws_v42_link",
+        )
+        # Verificar que pipeline.run fue llamado con share_id correcto
+        mock_run.assert_called_once()
+        call_kwargs = mock_run.call_args
+        assert call_kwargs.kwargs.get("share_id") == "test-share-uuid"
+        assert call_kwargs.kwargs.get("chat_id") == ""  # descubierto del árbol
+        assert call_kwargs.kwargs.get("jwt") == "fake-jwt"
+
+    # Verificar el resultado estructurado
+    assert result_ok.get("procesado_como_recuperacion") is True
+    assert result_ok.get("share_id") == "test-share-uuid"
+    assert result_ok.get("success") is True
+    assert result_ok.get("exchanges_processed") == 50
+
+    print("[OK] ampliar_contexto link /s/: extrae share_id + enruta a pipeline.run(share_id=...)")
+
+
 def main():
     print("=== Tests E2E v4.2 ===\n")
 
@@ -433,6 +506,7 @@ def main():
         test_procesador_consulta,
         test_clasificacion_temas_e2e,
         test_query_context_encuentra_bloque_externo,
+        test_ampliar_contexto_link_publico_zai,
     ]
 
     passed = 0

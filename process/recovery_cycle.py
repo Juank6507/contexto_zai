@@ -107,13 +107,24 @@ class RecoveryCycle:
 
     Args:
         jwt: JWT del Director (para autenticación).
-        chat_id: UUID interno del chat.
+        chat_id: UUID interno del chat. Opcional si se pasa ``share_id``
+            externo (se descubre del árbol del share).
         workspace_dir: Directorio del workspace (donde viven los archivos).
         download_dir: Directorio de descarga (copia para el Director).
         decision_extractor: Extractor LLM de decisiones (opcional).
+        share_id: UUID de un share público existente (opcional, v4.2).
+            Si se pasa, el ciclo NO crea su propio share vía
+            ``AuthClient.create_share()`` — usa este ``share_id``
+            directamente para leer el chat compartido. Esto permite
+            procesar chats de otras sesiones/agentes a partir de un
+            link ``/s/`` o ``/c/`` de Z.ai.
 
     Usage:
+        >>> # Caso 1: chat actual del agente (chat_id propio + JWT)
         >>> cycle = RecoveryCycle(jwt="...", chat_id="...")
+        >>> result = cycle.run()
+        >>> # Caso 2: chat externo vía share público (link /s/ de otro agente)
+        >>> cycle = RecoveryCycle(jwt="...", chat_id="", share_id="abc-123")
         >>> result = cycle.run()
     """
 
@@ -127,9 +138,11 @@ class RecoveryCycle:
         subagent_launcher: Optional[SubagentLauncher] = None,
         enable_capa3: bool = True,
         enable_attachments: bool = True,
+        share_id: Optional[str] = None,
     ) -> None:
         self._jwt = jwt
         self._chat_id = chat_id
+        self._share_id_externo = share_id  # v4.2: share público existente (link /s/)
         self._workspace_dir = Path(workspace_dir)
         self._download_dir = Path(download_dir)
         self._decision_extractor = decision_extractor
@@ -232,12 +245,49 @@ class RecoveryCycle:
 
             # PASO 5: Extracción de mensajes
             logger.info("Paso 5: Extrayendo mensajes...")
-            with AuthClient(token=jwt) as auth:
-                share_id = auth.create_share(self._chat_id)
+            # v4.2: si llega un share_id externo (link /s/ de otra sesión),
+            # usarlo directamente en vez de crear un share propio con
+            # AuthClient.create_share(). El chat_id se descubre del árbol.
+            if self._share_id_externo:
+                share_id = self._share_id_externo
+                logger.info(
+                    "Usando share_id externo (link /s/): %s — se salta create_share()",
+                    share_id,
+                )
+            else:
+                with AuthClient(token=jwt) as auth:
+                    share_id = auth.create_share(self._chat_id)
             with ChatClient(token=jwt) as client:
                 messages, raw_messages = client.extract_all_with_raw(
-                    share_id=share_id, chat_id=self._chat_id
+                    share_id=share_id, chat_id=self._chat_id or None
                 )
+                # v4.2: si el chat_id venía vacío (caso link /s/ externo),
+                # descubrirlo del árbol para que los pasos siguientes
+                # (metadata, logging) lo tengan.
+                if not self._chat_id:
+                    discovered_chat_id = (
+                        raw_messages.get("chat", {}).get("id", "")
+                        if isinstance(raw_messages, dict)
+                        else ""
+                    )
+                    # Si raw_messages no trae el árbol completo, hacer una
+                    # llamada directa a get_message_tree para descubrirlo.
+                    if not discovered_chat_id:
+                        try:
+                            tree_data = client.get_message_tree(share_id)
+                            discovered_chat_id = (
+                                tree_data.get("chat", {}).get("id", "")
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "No se pudo descubrir el chat_id del árbol: %s", e
+                            )
+                    if discovered_chat_id:
+                        self._chat_id = discovered_chat_id
+                        logger.info(
+                            "chat_id descubierto del share externo: %s",
+                            self._chat_id,
+                        )
 
             if not messages:
                 return RecoveryCycleResult(
@@ -257,7 +307,7 @@ class RecoveryCycle:
                 attachments_indexados = self._index_attachments(raw_messages)
                 if attachments_indexados:
                     # Pasar attachments al ExchangeBuilder para que cree intercambios virtuales
-                    attachments_objs = [att for att in attachments_indexados]  # placeholders
+                    attachments_objs = [att for att in attachments_indexados]  
                     # Nota: el indexer ya creó el intercambio virtual internamente
                     logger.info(
                         "Paso 5b: %d attachments indexados",
