@@ -366,11 +366,21 @@ class IntegradorRespuestas:
     def _integrar_documento(self, response: SubagentResponse, ws: Path) -> bool:
         """Integra la respuesta de un subagente de documento al contexto.
 
-        Guarda el resumen como un bloque temático en el workspace y
-        actualiza _metadata.json con el mapeo tema → archivo.
+        Guarda el bloque temático en el workspace y actualiza
+        ``_metadata.json`` con el mapeo tema → archivo.
+
+        v4.2 (unificación): los temas reales que el subagente indexador
+        ya devuelve (formato ``TEMA: nombre / DESCRIPCION: ... / SECCIONES: ...``)
+        se registran en ``tema_a_archivo`` con sus nombres semánticos —
+        igual que los bloques del chat. Así ``query_context()`` los ve
+        por igual, sin distinguir origen (chat vs. fuente externa).
+
+        Si el subagente no devolvió temas parseables (respuesta mal
+        formada o vacía), se cae a un nombre genérico para no perder
+        el bloque.
         """
         if not response.success or not response.response:
-            logger.warning("H9: respuesta de documento vacía o fallida: %s", response.task_id)
+            logger.warning("documento: respuesta vacía o fallida: %s", response.task_id)
             return False
 
         # Extraer info del context de la tarea
@@ -398,9 +408,15 @@ class IntegradorRespuestas:
         bloque_path.write_text(content, encoding="utf-8")
 
         logger.info(
-            "H9: bloque externo creado: %s (%d chars)",
+            "documento: bloque externo creado: %s (%d chars)",
             bloque_filename, len(response.response),
         )
+
+        # v4.2: Parsear los temas reales que el subagente ya devuelve
+        # (formato TEMA: nombre / DESCRIPCION: ... / SECCIONES: ...).
+        # Estos temas son el equivalente semántico a los temas que
+        # MessageClassifier extrae del chat — se registran igual.
+        temas_reales = self._parse_temas_documento(response.response)
 
         # Actualizar _metadata.json
         metadata_path = ws / "_metadata.json"
@@ -413,19 +429,40 @@ class IntegradorRespuestas:
         else:
             metadata = {}
 
-        # Registrar el tema en tema_a_archivo
-        tema_name = f"documento_externo_{filename}_lote_{lote_idx}"
         if "tema_a_archivo" not in metadata:
             metadata["tema_a_archivo"] = {}
-        metadata["tema_a_archivo"][tema_name] = bloque_filename
 
-        # Registrar el source
+        # v4.2: Registrar los temas reales en tema_a_archivo.
+        # Cada tema real apunta al bloque externo. Si no hay temas
+        # parseables, se cae a un nombre genérico para no perder el bloque.
+        temas_registrados: list[str] = []
+        if temas_reales:
+            for tema in temas_reales:
+                # Evitar sobrescribir un tema existente del chat: si la clave
+                # ya existe, prefijar con el filename del documento.
+                clave = tema["nombre"]
+                if clave in metadata["tema_a_archivo"]:
+                    clave = f"{filename}_{tema['nombre']}"
+                metadata["tema_a_archivo"][clave] = bloque_filename
+                temas_registrados.append(clave)
+        else:
+            # Fallback: nombre genérico (compatibilidad con respuestas mal formadas)
+            clave_generica = f"documento_externo_{filename}_lote_{lote_idx}"
+            metadata["tema_a_archivo"][clave_generica] = bloque_filename
+            temas_registrados.append(clave_generica)
+            logger.warning(
+                "documento: sin temas reales parseables, usando nombre genérico '%s'",
+                clave_generica,
+            )
+
+        # Registrar el source (información de procedencia, no de tema)
         if "archivo_a_source" not in metadata:
             metadata["archivo_a_source"] = {}
         metadata["archivo_a_source"][bloque_filename] = {
             "source_type": "file",
             "filename": filename,
             "lote": lote_idx,
+            "temas": [t["nombre"] for t in temas_reales],
         }
 
         metadata_path.write_text(
@@ -434,10 +471,50 @@ class IntegradorRespuestas:
         )
 
         logger.info(
-            "H9: metadata actualizada con tema '%s' → '%s'",
-            tema_name, bloque_filename,
+            "documento: metadata actualizada — %d tema(s) real(es) → '%s': %s",
+            len(temas_registrados), bloque_filename, temas_registrados,
         )
         return True
+
+    @staticmethod
+    def _parse_temas_documento(raw: str) -> list[dict]:
+        """Parsea los temas reales de la respuesta de un subagente indexador.
+
+        Formato esperado (definido por DocumentoIndexerSubagent._build_prompt_historico):
+            RESUMEN: <texto>
+
+            TEMA: <nombre_snake_case>
+            DESCRIPCION: <descripción corta>
+            SECCIONES: <s1, s2, s3>
+
+            TEMA: <nombre>
+            ...
+
+        Returns:
+            Lista de dicts ``{"nombre": str, "descripcion": str, "secciones": list}``.
+            Lista vacía si no se parsea ningún tema (respuesta mal formada).
+        """
+        if not raw:
+            return []
+        pattern = re.compile(
+            r"TEMA:\s*(\S+)\s*\n\s*DESCRIPCION:\s*(.+?)\s*\n\s*SECCIONES:\s*(.+?)(?=\n\s*TEMA:|\Z)",
+            re.DOTALL,
+        )
+        temas: list[dict] = []
+        for match in pattern.finditer(raw):
+            nombre_raw = match.group(1).strip()
+            # Sanitizar a snake_case simple (sin depender del subagente)
+            nombre = re.sub(r"[^a-zA-Z0-9]+", "_", nombre_raw).lower().strip("_")
+            if not nombre:
+                continue
+            descripcion = match.group(2).strip()
+            secciones = [s.strip() for s in match.group(3).split(",") if s.strip()]
+            temas.append({
+                "nombre": nombre,
+                "descripcion": descripcion,
+                "secciones": secciones,
+            })
+        return temas
 
     # -- Métodos de formato -----------------------------------------
 
@@ -699,5 +776,89 @@ EXCHANGES: 3, 4""",
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         assert metadata == original_metadata, "Metadata no debe cambiar con NO_SUBDIVISION"
         print(f"[OK] CLASIFICACION_TEMAS: NO_SUBDIVISION no modifica metadata")
+
+    # Test 12 (v4.2 unificación): _integrar_documento registra temas REALES (no nombre genérico)
+    # El subagente indexador devuelve formato TEMA/DESCRIPCION/SECCIONES.
+    # _integrar_documento debe parsearlos y registrarlos en tema_a_archivo con sus nombres semánticos.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        metadata_path.write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="documento_doc_seguridad_lote_0",
+            success=True,
+            response="""RESUMEN: Documento sobre el sistema de seguridad y autenticación.
+
+TEMA: autenticacion_jwt
+DESCRIPCION: Sistema de autenticación basado en JWT
+SECCIONES: header, payload, signature
+
+TEMA: control_acceso
+DESCRIPCION: Control de acceso por roles
+SECCIONES: roles, permisos""",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        # Los temas reales deben estar en tema_a_archivo, no el nombre genérico
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
+            f"Esperaba 'autenticacion_jwt' en tema_a_archivo, obtuvo: {metadata['tema_a_archivo']}"
+        assert "control_acceso" in metadata["tema_a_archivo"]
+        # Ambos temas apuntan al mismo bloque externo
+        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_externo_doc_seguridad_lote_0.md"
+        assert metadata["tema_a_archivo"]["control_acceso"] == "bloque_externo_doc_seguridad_lote_0.md"
+        # NO debe estar el nombre genérico (documento_externo_*)
+        assert not any(k.startswith("documento_externo_") for k in metadata["tema_a_archivo"])
+        # El bloque físico debe existir
+        bloque_path = Path(tmpdir) / "bloque_externo_doc_seguridad_lote_0.md"
+        assert bloque_path.exists()
+        print(f"[OK] _integrar_documento: registra temas reales (autenticacion_jwt, control_acceso), no genéricos")
+
+    # Test 13 (v4.2 unificación): _integrar_documento cae a nombre genérico si no hay temas parseables
+    # (respuesta mal formada) — no se pierde el bloque.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        metadata_path.write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="documento_doc_mal_lote_0",
+            success=True,
+            response="Texto sin formato TEMA/DESCRIPCION. Respuesta mal formada.",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        # Debe caer al nombre genérico para no perder el bloque
+        assert "documento_externo_doc_mal_lote_0" in metadata["tema_a_archivo"]
+        print(f"[OK] _integrar_documento: fallback a nombre genérico si respuesta mal formada")
+
+    # Test 14 (v4.2 unificación): _integrar_documento no sobrescribe tema existente del chat
+    # Si el subagente devuelve un tema que ya existe en tema_a_archivo (del chat),
+    # se prefija con el filename del documento para no sobrescribir.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        # Ya existe un tema 'autenticacion_jwt' del chat apuntando a bloque_01.md
+        metadata_path.write_text(json.dumps({
+            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+        }), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="documento_doc_pdf_lote_0",
+            success=True,
+            response="""RESUMEN: Documento sobre JWT.
+
+TEMA: autenticacion_jwt
+DESCRIPCION: Otra perspectiva del JWT
+SECCIONES: firma, verificacion""",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        # El tema del chat se mantiene
+        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_01.md"
+        # El tema del documento externo se prefija con el filename
+        assert "doc_pdf_autenticacion_jwt" in metadata["tema_a_archivo"]
+        assert metadata["tema_a_archivo"]["doc_pdf_autenticacion_jwt"] == "bloque_externo_doc_pdf_lote_0.md"
+        print(f"[OK] _integrar_documento: no sobrescribe tema existente (prefija con filename)")
 
     print("\n[PASS] integrador_respuestas.py: todos los tests pasaron")

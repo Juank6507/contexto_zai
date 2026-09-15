@@ -408,20 +408,34 @@ def query_context(
     effective_max = min(max_results, QUERY_MAX_RESULTS)
     workspace = Path(workspace_dir)
 
-    # 1. Verificar que el contexto existe
+    # 1. Verificar que el contexto existe.
+    # v4.2 (unificación): el contexto puede venir de pipeline.run()
+    # (bloques del chat + 01_indice_recuperacion.md) O de ampliar_contexto()
+    # (bloques externos registrados en _metadata.json sin índice del chat).
+    # No se exige 01_indice_recuperacion.md como prerrequisito — alcanza con
+    # que haya _metadata.json con entradas en tema_a_archivo.
     indice_path = workspace / "01_indice_recuperacion.md"
     metadata_path = workspace / "_metadata.json"
-    if not indice_path.exists():
-        return {"error": "No hay contexto recuperado. Ejecuta pipeline.run() primero."}
+    indice_exists = indice_path.exists()
+    metadata_exists = metadata_path.exists()
 
-    # 2. Leer metadata para obtener mapeo tema -> archivo
+    if not indice_exists and not metadata_exists:
+        return {
+            "error": "No hay contexto recuperado. Ejecuta pipeline.run() o ampliar_contexto() primero."
+        }
+
+    # 2. Leer metadata para obtener mapeo tema -> archivo (fuente única de verdad)
     tema_a_archivo: dict[str, str] = {}
-    if metadata_path.exists():
+    if metadata_exists:
         try:
             metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
             tema_a_archivo = metadata.get("tema_a_archivo", {})
         except (_json.JSONDecodeError, ValueError):
             pass
+
+    # Si no hay temas en metadata y no hay índice, no hay nada que buscar.
+    if not tema_a_archivo and not indice_exists:
+        return {"error": "No hay información en el contexto."}
 
     # 3. Buscar bloques candidatos por keyword
     question_lower = question.lower()
@@ -431,7 +445,12 @@ def query_context(
                    "cuales", "sobre", "del", "al"}
     question_words = [w for w in question_words if len(w) > 2 and w not in _stop_words]
 
-    # Buscar en nombres de temas
+    # v4.2: Si no hay keywords útiles (pregunta muy corta o solo stop words),
+    # no buscar por keyword y devolver error claro (evita match spurious).
+    if not question_words:
+        return {"error": "La pregunta no contiene palabras clave para buscar."}
+
+    # Buscar en nombres de temas (tema_a_archivo ya incluye temas del chat y externos)
     bloques_candidatos: dict[str, list[str]] = {}
     for tema, archivo in tema_a_archivo.items():
         tema_lower = tema.lower()
@@ -440,8 +459,8 @@ def query_context(
                 bloques_candidatos.setdefault(archivo, []).append(tema)
                 break
 
-    # Buscar en contenido del índice
-    if not bloques_candidatos:
+    # Buscar en contenido del índice (solo del chat — ampliar_contexto no genera índice)
+    if not bloques_candidatos and indice_exists:
         indice_lower = indice_path.read_text(encoding="utf-8").lower()
         for tema, archivo in tema_a_archivo.items():
             for word in question_words:
@@ -1082,5 +1101,73 @@ if __name__ == "__main__":
         assert result.get("indexed") is True or "pending_tasks" in result, f"Esperaba indexed o pending_tasks, obtuvo: {result}"
         assert len(result.get("pending_tasks", [])) >= 1, f"Esperaba al menos 1 tarea, obtuvo: {result}"
         print(f"[OK] ampliar_contexto archivo grande: {len(result.get('pending_tasks', []))} tarea(s) publicada(s)")
+
+    # === Tests v4.2 (unificación): query_context encuentra bloques externos ===
+
+    # Test 24 (v4.2): query_context en workspace SOLO con bloque externo (sin 01_indice)
+    # Simula: ampliar_contexto() corrió, subagente indexador respondió con temas reales,
+    # IntegradorRespuestas._integrar_documento() los registró en _metadata.json.
+    # query_context() debe encontrar el bloque por el tema real (no por el nombre genérico).
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import json as _json_t24
+        ws = Path(tmpdir)
+        # Bloque externo físico (lo crea _integrar_documento)
+        bloque_externo = ws / "bloque_externo_documento_seguridad_lote_0.md"
+        bloque_externo.write_text(
+            "# Bloque externo: documento_seguridad (lote 0)\n\n"
+            "RESUMEN: Documento sobre el sistema de seguridad JWT.\n\n"
+            "TEMA: autenticacion_jwt\nDESCRIPCION: Autenticación con JWT\nSECCIONES: header, payload, signature\n",
+            encoding="utf-8",
+        )
+        # _metadata.json con tema REAL registrado (no nombre genérico)
+        (ws / "_metadata.json").write_text(_json_t24.dumps({
+            "tema_a_archivo": {"autenticacion_jwt": bloque_externo.name}
+        }), encoding="utf-8")
+        # NO hay 01_indice_recuperacion.md (ampliar_contexto no lo genera)
+
+        result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
+        assert "error" not in result, f"Esperaba encontrar bloque, obtuvo error: {result}"
+        assert result["mode"] == "direct", f"Esperaba modo direct, obtuvo: {result.get('mode')}"
+        assert len(result["prompts"]) == 1
+        assert "autenticacion_jwt" in result["bloques_info"][0]["temas"]
+        assert bloque_externo.name in result["bloques"]
+        print(f"[OK] query_context solo bloque externo: encuentra tema 'autenticacion_jwt' (sin 01_indice)")
+
+    # Test 25 (v4.2): query_context en workspace MIXTO (índice del chat + bloque externo)
+    # Simula: pipeline.run() corrió + ampliar_contexto() también corrió.
+    # query_context() debe encontrar bloques de ambos orígenes indistintamente.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import json as _json_t25
+        ws = Path(tmpdir)
+        # Bloque del chat
+        (ws / "bloque_01.md").write_text("# Bloque del chat\n\nConfiguración de pytest.\n", encoding="utf-8")
+        # Bloque externo
+        (ws / "bloque_externo_doc_api_lote_0.md").write_text(
+            "# Bloque externo: doc_api (lote 0)\n\n"
+            "TEMA: api_rest\nDESCRIPCION: Diseño de la API REST\nSECCIONES: endpoints, auth\n",
+            encoding="utf-8",
+        )
+        # Índice del chat (pipeline.run sí lo genera)
+        (ws / "01_indice_recuperacion.md").write_text("# Índice\n\n## configuracion\n", encoding="utf-8")
+        # Metadata con ambos temas
+        (ws / "_metadata.json").write_text(_json_t25.dumps({
+            "tema_a_archivo": {
+                "configuracion": "bloque_01.md",            # del chat
+                "api_rest": "bloque_externo_doc_api_lote_0.md",  # de ampliar_contexto
+            }
+        }), encoding="utf-8")
+
+        # Pregunta sobre el tema del bloque externo
+        result_externo = query_context("¿qué dice la api?", workspace_dir=str(ws))
+        assert "error" not in result_externo, f"Esperaba encontrar bloque externo: {result_externo}"
+        assert "bloque_externo_doc_api_lote_0.md" in result_externo["bloques"]
+        assert "api_rest" in result_externo["bloques_info"][0]["temas"]
+
+        # Pregunta sobre el tema del chat
+        result_chat = query_context("¿qué dice la configuracion?", workspace_dir=str(ws))
+        assert "error" not in result_chat, f"Esperaba encontrar bloque del chat: {result_chat}"
+        assert "bloque_01.md" in result_chat["bloques"]
+        assert "configuracion" in result_chat["bloques_info"][0]["temas"]
+        print(f"[OK] query_context workspace mixto: encuentra bloque externo (api_rest) y del chat (configuracion)")
 
     print("\n[PASS] pipeline.py: todos los tests pasaron")

@@ -337,6 +337,86 @@ EXCHANGES: 2"""
         print("[OK] CLASIFICACION_TEMAS E2E: tarea publicada → respuesta integrada → metadata actualizada")
 
 
+def test_query_context_encuentra_bloque_externo():
+    """E2E v4.2 unificación: query_context() encuentra bloques externos de ampliar_contexto().
+
+    Flujo completo:
+    1. ampliar_contexto() publica tarea (simulado vía ProcesadorDocumento).
+    2. Subagente indexador responde con temas reales (TEMA/DESCRIPCION/SECCIONES).
+    3. collect_responses() integra la respuesta: crea bloque_externo_*.md y
+       registra los temas reales en _metadata.json (no nombre genérico).
+    4. query_context() encuentra el bloque externo por el tema real, sin
+       necesitar 01_indice_recuperacion.md.
+    """
+    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
+    from contexto_zai.procesadores import ProcesadorDocumento
+    from contexto_zai.pipeline import collect_responses, query_context
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+
+        # _metadata.json vacío inicial
+        (ws / "_metadata.json").write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
+
+        # 1. ProcesadorDocumento publica la tarea de indexación
+        proc = ProcesadorDocumento(workspace_dir=ws, orquestador=Orquestador(workspace_dir=ws))
+        # Crear un archivo PDF simulado
+        pdf_path = ws / "documento_seguridad.pdf"
+        pdf_path.write_bytes(b"PDF simulado sobre autenticacion JWT y control de acceso" * 200)
+
+        result = proc.procesar(
+            source_type="file",
+            source_path=str(pdf_path),
+            jwt="",
+            metadata={"filename": "documento_seguridad.pdf"},
+        )
+        assert len(result["pending_tasks"]) >= 1
+        task = result["pending_tasks"][0]
+        assert "documento_" in task.task_id
+
+        # 2. Simular: el agente lanza el subagente indexador y responde con temas reales
+        mock_response = """RESUMEN: Documento sobre el sistema de seguridad y autenticación.
+
+TEMA: autenticacion_jwt
+DESCRIPCION: Sistema de autenticación basado en JWT
+SECCIONES: header, payload, signature
+
+TEMA: control_acceso
+DESCRIPCION: Control de acceso por roles
+SECCIONES: roles, permisos"""
+        RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(task.task_id, mock_response)
+
+        # 3. collect_responses() integra la respuesta
+        resultado = collect_responses(workspace_dir=str(ws))
+        assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
+
+        # Verificar que el bloque externo físico existe
+        bloques_externos = list(ws.glob("bloque_externo_*.md"))
+        assert len(bloques_externos) >= 1, f"Esperaba ≥1 bloque externo: {bloques_externos}"
+
+        # Verificar que los temas reales están en _metadata.json (no nombres genéricos)
+        metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
+            f"Falta tema real 'autenticacion_jwt': {metadata['tema_a_archivo']}"
+        assert "control_acceso" in metadata["tema_a_archivo"]
+
+        # 4. query_context() encuentra el bloque externo por el tema real
+        # SIN necesidad de 01_indice_recuperacion.md (no existe en este workspace)
+        assert not (ws / "01_indice_recuperacion.md").exists(), \
+            "Este test valida que NO se necesita el índice del chat"
+
+        query_result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
+        assert "error" not in query_result, f"Esperaba encontrar bloque, obtuvo error: {query_result}"
+        assert query_result["mode"] == "direct"
+        # El bloque encontrado es el externo
+        assert any("bloque_externo_" in b for b in query_result["bloques"]), \
+            f"Esperaba bloque externo en candidatos: {query_result['bloques']}"
+        # El tema real está en los candidatos
+        assert "autenticacion_jwt" in query_result["bloques_info"][0]["temas"]
+
+        print("[OK] query_context E2E: encuentra bloque externo por tema real (sin 01_indice)")
+
+
 def main():
     print("=== Tests E2E v4.2 ===\n")
 
@@ -352,6 +432,7 @@ def main():
         test_procesador_intercambios,
         test_procesador_consulta,
         test_clasificacion_temas_e2e,
+        test_query_context_encuentra_bloque_externo,
     ]
 
     passed = 0
