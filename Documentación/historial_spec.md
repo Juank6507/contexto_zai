@@ -23,6 +23,9 @@ repositorio sin perder información.
 | 8 | 3.4 | — | spec_recuperacion_contexto_v3.4.md | 246 |
 | 9 | 3.5 | 2026-09-05 | spec_recuperacion_contexto_v3.5.md | 269 |
 | 10 | 3.6 | 2026-09-06 | spec_recuperacion_contexto_v3.6.md | 293 |
+| 11 | 4.0 | 2026-09-13 | spec_recuperacion_contexto_v4.0.md | 347 |
+| 12 | 4.2 | 2026-09-13 | spec_recuperacion_contexto_v4.2.md | 269 |
+| 13 | 4.3 | 2026-09-15 | spec_recuperacion_contexto_v4.3.md | 269 |
 
 > **Nota:** Las versiones 2.3 aparecen dos veces (archivos "(1)" y "(2)") porque
 > son duplicados con ligeras variaciones de formato. Se conservan ambas para
@@ -40,7 +43,10 @@ repositorio sin perder información.
 - **v3.3** — Versionado de scripts con grafo de cambios reversible
 - **v3.4** — Links externos, clasificación por capas, estado sin truncado, exportación/importación
 - **v3.5** — Indexación de documentos adjuntos mediante subagentes efímeros
-- **v3.6** — JWT automático vía instalador + Subagentes paralelos para documentos grandes (actual)
+- **v3.6** — JWT automático vía instalador + Subagentes paralelos para documentos grandes
+- **v4.0** — Diagnóstico de desalineaciones arquitectónicas (Patrón A vs B), consenso sobre el camino a seguir
+- **v4.2** — El proceso como bibliotecario que sirve al agente (EntregadorTareas, RecogedorRespuestas, Orquestador) + unificación query_context/ampliar_contexto + soporte para links /s/ de Z.ai + fix Windows
+- **v4.3** — El `00_estado_actual.md` como punto de entrada ordenado (visión general G0.A + síntesis dinámica G0.B + guía de uso G1) + fix huecos detectados por agente APA (índice stale + deduplicación insuficiente) (actual)
 
 ---
 
@@ -5749,6 +5755,47 @@ Espero tu validación para pasar a la fase de EJECUCIÓN del plan v3.6.
 
 --- fin de SPEC v3.6 ---
 
+
+
+<!-- ============================================================ -->
+# SECCIÓN: SPEC v4.0
+<!-- Archivo original: spec_recuperacion_contexto_v4.0.md -->
+<!-- ============================================================ -->
+
+<!-- Destino en el proyecto: /home/z/my-project/contexto_zai/Documentación/spec_recuperacion_contexto_v4.0.md -->
+
+[Contenido íntegro en: spec_recuperacion_contexto_v4.0.md — Diagnóstico y consenso arquitectónico CZAI v4.0. Establece los dos patrones (A directo, B síncrono TaskBridgeServer), 6 desalineaciones detectadas, lo que funciona y lo que no, 3 opciones de decisión. Documento de referencia; la versión vigente es v4.3.]
+
+--- fin de SPEC v4.0 ---
+
+
+
+<!-- ============================================================ -->
+# SECCIÓN: SPEC v4.2
+<!-- Archivo original: spec_recuperacion_contexto_v4.2.md -->
+<!-- ============================================================ -->
+
+<!-- Destino en el proyecto: /home/z/my-project/contexto_zai/Documentación/spec_recuperacion_contexto_v4.2.md -->
+
+[Contenido íntegro en: spec_recuperacion_contexto_v4.2.md — El proceso contexto_zai como bibliotecario que sirve al agente. Dos clases principales (Procesador + Coordinador) con tres subclases cada una. El agente hace solo dos cosas: leer el contexto entregado y lanzar subagentes. Coordinación por archivos (_pending_tasks.json + _responses/), sin TaskBridgeServer ni polling HTTP. Aditiva respecto a v4.0.]
+
+--- fin de SPEC v4.2 ---
+
+
+
+<!-- ============================================================ -->
+# SECCIÓN: SPEC v4.3
+<!-- Archivo original: spec_recuperacion_contexto_v4.3.md -->
+<!-- ============================================================ -->
+
+<!-- Destino en el proyecto: /home/z/my-project/contexto_zai/Documentación/spec_recuperacion_contexto_v4.3.md -->
+
+[Contenido íntegro en: spec_recuperacion_contexto_v4.3.md — El `00_estado_actual.md` como punto de entrada ordenado al contexto del proyecto. Tres secciones nuevas: G0.A (objetivo del proyecto, fijo, leído de `03_objetivo_proyecto.md`), G0.B (síntesis dinámica generada por subagente en modo `SINTESIS_CONTEXTO`), G1 (guía de uso del contexto, texto fijo). Fix Hueco 1: `_integrar_documento()` invoca `IndiceGenerator` para que `01_indice_recuperacion.md` incluya bloques externos. Fix Hueco 2: deduplicación de temas distingue "mismo bloque" (idempotente) vs "otro bloque" (prefijar con filename + sufijo numérico). Especificación aditiva: no elimina ni reemplaza código existente. Versión vigente.]
+
+--- fin de SPEC v4.3 ---
+
+
+
 <!-- ============================================================ -->
 <!-- Fin del documento de historial de specs -->
 <!-- ============================================================ -->
@@ -5756,10 +5803,12 @@ Espero tu validación para pasar a la fase de EJECUCIÓN del plan v3.6.
 ## Notas finales
 
 - Este documento fue generado el 2025-01-09 consolidando las 10 versiones
-  históricas de spec del proyecto CZAI.
+  históricas de spec del proyecto CZAI, y ampliado el 2026-09-15 con las versiones v4.0, v4.2 y v4.3.
 - Cada sección contiene el contenido íntegro del archivo original, sin modificaciones.
+  Para v4.0, v4.2 y v4.3 se referencia el archivo original en `Documentación/`
+  para evitar duplicar el contenido íntegro en este historial.
 - Los archivos originales fueron eliminados del repositorio `contexto_zai` para
   reducir el clutter, pero su contenido se preserva aquí.
-- La versión actual y vigente es la **v3.6**.
+- La versión actual y vigente es la **v4.3**.
 - Para futuras versiones, se recomienda mantener un único archivo de spec (sin
   versión en el nombre), usando git history para el versionado.

@@ -68,6 +68,7 @@ MODOS_VALIDOS = {
     "NOMBRE_LEGIBLE",        # Subdivider: nombres legibles
     "CLASIFICACION_TEMAS",   # Clasificar intercambios por tema real
     "CONSULTA_BLOQUE",       # Consultar bloques (lo usa ProcesadorConsulta)
+    "SINTESIS_CONTEXTO",     # v4.3: sintetizar panorama del proyecto (G0.B)
 }
 
 
@@ -242,6 +243,7 @@ class ProcesadorIntercambios:
                 "DECISIONES": ModoClasificador.DECISIONES,
                 "NOMBRE_LEGIBLE": ModoClasificador.NOMBRE_LEGIBLE,
                 "CLASIFICACION_TEMAS": ModoClasificador.CLASIFICACION_TEMAS,
+                "SINTESIS_CONTEXTO": ModoClasificador.SINTESIS_CONTEXTO,
                 "CONSULTA_BLOQUE": ModoClasificador.CONSULTA_BLOQUE,
             }
             modo_enum = modo_map.get(modo)
@@ -262,7 +264,15 @@ class ProcesadorIntercambios:
             # Para CLASIFICACION_TEMAS, el tema_padre se pasa vía 'pregunta'
             # (convención reutilizada del modo CONSULTA_BLOQUE) para que
             # _prompt_clasificacion_temas pueda incluirlo en el prompt.
-            pregunta = context.get("tema_padre") if modo == "CLASIFICACION_TEMAS" else None
+            # v4.3: para SINTESIS_CONTEXTO, el contexto adicional (objetivo +
+            # índice + decisiones) se pasa vía 'pregunta' también.
+            if modo == "CLASIFICACION_TEMAS":
+                pregunta = context.get("tema_padre")
+            elif modo == "SINTESIS_CONTEXTO":
+                # El contexto adicional se pasa vía context["contexto_adicional"]
+                pregunta = context.get("contexto_adicional")
+            else:
+                pregunta = None
 
             sub = IntercambiosClasificadorSubagent(
                 launcher=dummy_launcher,

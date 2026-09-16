@@ -54,6 +54,7 @@ else:
 
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from contexto_zai.config import (
@@ -147,12 +148,18 @@ class EstadoGenerator:
         self,
         max_chars: int = TOKEN_LIMITS.max_chars_estado,
         launcher: Optional[SubagentLauncher] = None,
+        workspace_dir: Optional[Path] = None,
     ) -> None:
         self._max_chars = max_chars
         self._launcher = launcher
+        # v4.3: workspace_dir para leer 03_objetivo_proyecto.md (sección G0.A)
+        # y preparar la tarea SINTESIS_CONTEXTO (sección G0.B).
+        # Si no se pasa, las secciones G0 se omiten (backward compatible).
+        self._workspace_dir = Path(workspace_dir) if workspace_dir else None
         logger.debug(
-            "EstadoGenerator inicializado: max_chars=%d (%d tokens), launcher=%s",
+            "EstadoGenerator inicializado: max_chars=%d (%d tokens), launcher=%s, workspace=%s",
             max_chars, int(max_chars / 3.5), "sí" if launcher else "no",
+            self._workspace_dir.name if self._workspace_dir else "no",
         )
 
     # -- API pública ------------------------------------------------
@@ -162,17 +169,20 @@ class EstadoGenerator:
         exchanges: list["Exchange"],
         chat_label: str = "",
     ) -> str:
-        """Genera el contenido markdown del estado actual (v4.0, 5 secciones).
+        """Genera el contenido markdown del estado actual (v4.3).
+
+        v4.3: añade 3 secciones nuevas al inicio del archivo (G0.A, G0.B, G1)
+        antes de las secciones operativas existentes (D1, D4, A1, A2, A3, A4).
+        Las secciones G0 solo se incluyen si ``workspace_dir`` se pasó al
+        constructor. Si no, se omite G0 y G1 (backward compatible con v4.0).
 
         Args:
             exchanges: Lista de intercambios (se usan los últimos 15-20).
             chat_label: Etiqueta descriptiva del chat.
 
         Returns:
-            Contenido markdown con las 5 secciones (D1, D4, A1, A2, A3, A4).
-            D2 y D3 se eliminaron en v4.0 (las decisiones viven en
-            02_decisiones_clave.md y el contexto del tema se captura
-            en A1 con truncado inteligente).
+            Contenido markdown con las secciones G0.A, G0.B, G1 (si workspace)
+            más las secciones operativas (D1, D4, A1, A2, A3, A4).
         """
         if not exchanges:
             return "# Estado Actual\n\n(Sin intercambios)\n"
@@ -181,6 +191,18 @@ class EstadoGenerator:
         recent = exchanges[-20:] if len(exchanges) > 20 else exchanges
         ultimo_exchange = exchanges[-1]
         tema_actual = ultimo_exchange.topic
+
+        # v4.3: secciones nuevas G0.A (objetivo), G0.B (síntesis placeholder), G1 (guía)
+        g0_a = self._build_g0_a() if self._workspace_dir else ""
+        g0_b = self._build_g0_b() if self._workspace_dir else ""
+        g1 = self._build_g1() if self._workspace_dir else ""
+
+        # v4.3: preparar la tarea SINTESIS_CONTEXTO (publica vía ProcesadorIntercambios)
+        if self._workspace_dir and self._launcher is not None:
+            try:
+                self._build_sintesis_contexto_task(recent, tema_actual)
+            except Exception as e:
+                logger.warning("F3 v4.3: no se pudo preparar tarea SINTESIS_CONTEXTO: %s", e)
 
         # Sección D1 -- Última instrucción del Director (literal)
         d1 = self._build_d1(ultimo_exchange)
@@ -201,10 +223,11 @@ class EstadoGenerator:
         # Sección A4 -- Siguiente paso lógico (analiza intercambios v4.0)
         a4 = self._build_a4(recent, tema_actual)
 
-        # v4.0: ensamblar 5 secciones (sin D2 ni D3)
+        # v4.3: ensamblar con secciones G0 (si workspace) + secciones operativas
         content = self._assemble(
             chat_label=chat_label or "Chat",
             tema_actual=tema_actual,
+            g0_a=g0_a, g0_b=g0_b, g1=g1,
             d1=d1, d4=d4,
             a1=a1, a2=a2, a3=a3, a4=a4,
         )
@@ -623,17 +646,42 @@ class EstadoGenerator:
         tema_actual: str,
         d1: str, d4: str,
         a1: str, a2: str, a3: str, a4: str,
+        g0_a: str = "", g0_b: str = "", g1: str = "",
     ) -> str:
-        """Ensambla las 5 secciones en el contenido final (v4.0).
+        """Ensambla las secciones en el contenido final (v4.3).
 
-        Secciones: D1, D4, A1, A2, A3, A4 (sin D2 ni D3, eliminados en v4.0).
+        v4.3: añade las secciones G0.A (objetivo), G0.B (síntesis placeholder),
+        G1 (guía de uso) al inicio del archivo, antes de las operativas.
+        Si las secciones G0/G1 están vacías (no se pasó workspace_dir),
+        se omite la cabecera de "Visión general y guía" y el archivo queda
+        con el formato v4.0 (solo D1, D4, A1, A2, A3, A4).
         """
-        return f"""# Estado Actual -- {chat_label}
+        # v4.3: bloque de visión general + guía (solo si hay contenido)
+        bloques_g = ""
+        if g0_a or g0_b or g1:
+            bloques_g = f"""
+---
 
-**Tema activo:** **{tema_actual}**
+## G0.A — Objetivo del proyecto
+
+{g0_a or '_(sin declaración de objetivo)_'}
+
+## G0.B — Síntesis del contexto disponible
+
+{g0_b or '_Síntesis del contexto no disponible. Ejecuta `pipeline.collect_responses()` para generarla._'}
+
+## G1 — Cómo usar este contexto
+
+{g1}
 
 ---
 
+"""
+
+        return f"""# Estado Actual -- {chat_label}
+
+**Tema activo:** **{tema_actual}**
+{bloques_g}
 ## Sección D1 -- Última instrucción del Director
 
 {d1}
@@ -660,6 +708,274 @@ class EstadoGenerator:
 
 {a4}
 """
+
+    # -- v4.3: Secciones nuevas G0.A, G0.B, G1 ----------------------
+
+    def _build_g0_a(self) -> str:
+        """v4.3: Sección G0.A — Objetivo del proyecto (fijo, leído de archivo).
+
+        Lee ``03_objetivo_proyecto.md`` del workspace. Si el archivo no
+        existe, lo crea automáticamente aplicando la cascada documentación →
+        bloques (ver ``_asegurar_objetivo_proyecto()``). Esto sigue el
+        principio del Director: el proceso no deja placeholders pidiendo
+        al agente que cree archivos; si detecta que falta, lo crea.
+        """
+        if not self._workspace_dir:
+            return ""
+        objetivo_path = self._workspace_dir / "03_objetivo_proyecto.md"
+        # v4.3 (F5): asegurar que el archivo existe antes de leerlo.
+        # Si no existe, se crea con la cascada documentación → bloques.
+        if not objetivo_path.exists():
+            self._asegurar_objetivo_proyecto()
+        try:
+            return objetivo_path.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.warning("G0.A: no se pudo leer 03_objetivo_proyecto.md: %s", e)
+            return f"_(error leyendo objetivo: {e})_"
+
+    def _asegurar_objetivo_proyecto(self) -> None:
+        """v4.3 (F5): Crea ``03_objetivo_proyecto.md`` si no existe.
+
+        Aplica una cascada de dos fuentes para derivar el contenido inicial:
+
+        - **Caso A (documentación):** lee los archivos de documentación
+          del proyecto (``estrategia/agent-context/*.md``, ``upload/worklog_*.md``)
+          relativos al workspace raíz. Extrae el primer párrafo que mencione
+          "proyecto" o "objetivo" y lo escribe como objetivo declarado.
+        - **Caso B (bloques):** si la documentación no aporta suficiente,
+          lee ``_metadata.json["tema_a_archivo"]`` y construye un objetivo
+          tentativo con los temas más representativos.
+        - **Caso C (sin fuentes):** si no hay ni documentación ni bloques,
+          escribe un contenido mínimo pidiendo al Director que lo declare.
+
+        Si el archivo ya existe, NO se sobrescribe (la cascada solo se
+        ejecuta la primera vez).
+        """
+        if not self._workspace_dir:
+            return
+        objetivo_path = self._workspace_dir / "03_objetivo_proyecto.md"
+        if objetivo_path.exists():
+            return  # No sobrescribir si ya existe
+
+        # Localizar el workspace raíz del proyecto (donde están estrategia/ y upload/)
+        from contexto_zai.config import WORKSPACE_ROOT as _PROJECT_ROOT
+
+        contenido_objetivo = self._extraer_objetivo_de_documentacion(_PROJECT_ROOT)
+        if not contenido_objetivo:
+            contenido_objetivo = self._extraer_objetivo_de_bloques()
+        if not contenido_objetivo:
+            contenido_objetivo = ("Proyecto sin objetivo declarado. "
+                                  "Edita este archivo para declararlo.")
+
+        try:
+            objetivo_path.parent.mkdir(parents=True, exist_ok=True)
+            objetivo_path.write_text(contenido_objetivo, encoding="utf-8")
+            logger.info("F5 v4.3: 03_objetivo_proyecto.md creado (%d chars)",
+                        len(contenido_objetivo))
+        except Exception as e:
+            logger.warning("F5 v4.3: no se pudo crear 03_objetivo_proyecto.md: %s", e)
+
+    @staticmethod
+    def _extraer_objetivo_de_documentacion(project_root: Path) -> Optional[str]:
+        """v4.3 (F5): Caso A — extrae el objetivo de la documentación del proyecto.
+
+        Busca en orden de prioridad:
+        1. ``estrategia/agent-context/proyecto.md``
+        2. ``estrategia/agent-context/identidad.md``
+        3. ``estrategia/agent-context/entorno.md``
+        4. ``upload/worklog_*.md`` (cualquiera)
+
+        Devuelve el primer párrafo sustantivo que mencione "proyecto" o
+        "objetivo", o el primer párrafo del archivo si ninguno los menciona.
+        ``None`` si no encuentra ningún archivo.
+        """
+        if not project_root:
+            return None
+        candidatos = [
+            project_root / "estrategia" / "agent-context" / "proyecto.md",
+            project_root / "estrategia" / "agent-context" / "identidad.md",
+            project_root / "estrategia" / "agent-context" / "entorno.md",
+        ]
+        # Añadir worklogs (cualquiera que exista)
+        upload_dir = project_root / "upload"
+        if upload_dir.exists():
+            candidatos.extend(sorted(upload_dir.glob("worklog_*.md")))
+
+        for candidato in candidatos:
+            if not candidato.exists():
+                continue
+            try:
+                contenido = candidato.read_text(encoding="utf-8").strip()
+            except Exception:
+                continue
+            # Buscar el primer párrafo que mencione "proyecto" o "objetivo"
+            parrafos = [p.strip() for p in contenido.split("\n\n") if p.strip()]
+            for parrafo in parrafos:
+                # Quitar líneas que sean solo comentarios markdown
+                limpio = "\n".join(
+                    line for line in parrafo.split("\n")
+                    if not line.strip().startswith("<!--")
+                    and not line.strip().startswith("#")
+                ).strip()
+                if not limpio:
+                    continue
+                if "proyecto" in limpio.lower() or "objetivo" in limpio.lower():
+                    return limpio
+            # Si ninguno menciona proyecto/objetivo, devolver el primer párrafo limpio
+            for parrafo in parrafos:
+                limpio = "\n".join(
+                    line for line in parrafo.split("\n")
+                    if not line.strip().startswith("<!--")
+                    and not line.strip().startswith("#")
+                ).strip()
+                if limpio and len(limpio) > 30:
+                    return limpio
+        return None
+
+    def _extraer_objetivo_de_bloques(self) -> Optional[str]:
+        """v4.3 (F5): Caso B — deriva el objetivo de los bloques existentes.
+
+        Lee ``_metadata.json["tema_a_archivo"]`` y construye un objetivo
+        tentativo con los 3-5 temas más representativos. No lanza
+        subagentes — usa lectura directa para mantenerlo simple.
+
+        ``None`` si no hay bloques ni metadata.
+        """
+        if not self._workspace_dir:
+            return None
+        metadata_path = self._workspace_dir / "_metadata.json"
+        if not metadata_path.exists():
+            return None
+        try:
+            import json as _json
+            metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+            tema_a_archivo = metadata.get("tema_a_archivo", {})
+        except Exception:
+            return None
+        if not tema_a_archivo:
+            return None
+        # Tomar los primeros 3-5 temas (ya están en orden de registro)
+        temas = list(tema_a_archivo.keys())[:5]
+        temas_str = ", ".join(temas)
+        return (
+            "<!-- Objetivo derivado automáticamente de los bloques existentes. "
+            "El Director puede confirmarlo o corregirlo. -->\n"
+            f"Proyecto sobre: {temas_str}."
+        )
+
+    def _build_g0_b(self) -> str:
+        """v4.3: Sección G0.B — Síntesis del contexto disponible (placeholder).
+
+        Devuelve el placeholder inicial. La síntesis real la inserta
+        ``IntegradorRespuestas._integrar_sintesis_contexto()`` después de
+        que el agente llame a ``pipeline.collect_responses()``.
+        """
+        return ("Síntesis del contexto no disponible. Ejecuta "
+                "`pipeline.collect_responses()` para generarla.")
+
+    def _build_g1(self) -> str:
+        """v4.3: Sección G1 — Guía de uso del contexto (texto fijo).
+
+        Texto fijo que el proceso incluye siempre. El agente lo consume,
+        no lo escribe. Explica los arneses disponibles y cuándo usarlos.
+        """
+        return """1. Estás leyendo `00_estado_actual.md` — el resumen ejecutivo del proyecto.
+   Empieza por aquí siempre.
+
+2. Si necesitas encontrar información específica, consulta:
+   - `01_indice_recuperacion.md` → mapa de bloques temáticos (qué tema está en qué archivo).
+   - `02_decisiones_clave.md` → decisiones formales tomadas (no repetir lo ya decidido).
+
+3. Si necesitas detalle de un tema, lanza una consulta al proceso:
+   - `pipeline.query_context("tu pregunta")` → el proceso identifica bloques candidatos
+     y te devuelve prompts para lanzar subagentes que los lean.
+
+4. Si el Director te pasa un documento o link nuevo para incorporar:
+   - `pipeline.ampliar_contexto(source_type, source_path, jwt, metadata)`.
+   - Para links `/s/` de otros chats de Z.ai: `metadata={"jwt": "..."}`.
+
+5. Si el proceso publicó tareas pendientes (en `_pending_tasks.json`):
+   - Lee `_pending_tasks.json`.
+   - Lanza los subagentes con el Task tool.
+   - Llama `pipeline.collect_responses()` para que el proceso integre las respuestas.
+
+6. Los bloques temáticos viven como archivos `bloque_*.md` en este workspace.
+   NO los leas directamente en tu ventana — son muy grandes.
+   Usa `query_context()` o lanza subagentes para consultarlos.
+"""
+
+    def _build_sintesis_contexto_task(
+        self,
+        recent: list,
+        tema_actual: str,
+    ) -> None:
+        """v4.3: Prepara la tarea SINTESIS_CONTEXTO para que el agente la lance.
+
+        Construye el contexto adicional (objetivo + índice + decisiones +
+        resúmenes de otros bloques) y lo pasa al ``ProcesadorIntercambios``
+        en modo ``SINTESIS_CONTEXTO``. El ``ProcesadorIntercambios`` publica
+        la tarea vía el ``Orquestador`` (igual que D4, A1, decisiones).
+
+        El resultado se aplica después con ``pipeline.collect_responses()``.
+        """
+        if not self._workspace_dir:
+            return
+        try:
+            from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+            # Verificar que el launcher es un ProcesadorIntercambios
+            if not isinstance(self._launcher, ProcesadorIntercambios):
+                logger.debug("F3 v4.3: launcher no es ProcesadorIntercambios, no se prepara SINTESIS_CONTEXTO")
+                return
+
+            # Construir el contexto adicional para el subagente
+            contexto_adicional_parts: list[str] = []
+
+            # 1. Objetivo del proyecto
+            objetivo = self._build_g0_a()
+            if objetivo and "no declarado" not in objetivo:
+                contexto_adicional_parts.append(f"OBJETIVO DEL PROYECTO:\n{objetivo}")
+
+            # 2. Índice de recuperación
+            indice_path = self._workspace_dir / "01_indice_recuperacion.md"
+            if indice_path.exists():
+                try:
+                    indice_content = indice_path.read_text(encoding="utf-8")
+                    # Truncar si es muy largo
+                    if len(indice_content) > 4000:
+                        indice_content = indice_content[:4000] + "\n... (índice truncado)"
+                    contexto_adicional_parts.append(f"ÍNDICE DE RECUPERACIÓN:\n{indice_content}")
+                except Exception:
+                    pass
+
+            # 3. Decisiones clave
+            decisiones_path = self._workspace_dir / "02_decisiones_clave.md"
+            if decisiones_path.exists():
+                try:
+                    decisiones_content = decisiones_path.read_text(encoding="utf-8")
+                    if len(decisiones_content) > 4000:
+                        decisiones_content = decisiones_content[:4000] + "\n... (decisiones truncadas)"
+                    contexto_adicional_parts.append(f"DECISIONES CLAVE:\n{decisiones_content}")
+                except Exception:
+                    pass
+
+            contexto_adicional = "\n\n".join(contexto_adicional_parts) or "(sin contexto adicional)"
+
+            # Llamar al ProcesadorIntercambios para que publique la tarea.
+            # El contexto adicional se pasa vía context["contexto_adicional"]
+            # (convención del modo SINTESIS_CONTEXTO en ProcesadorIntercambios).
+            self._launcher.procesar(
+                modo="SINTESIS_CONTEXTO",
+                intercambios=recent,
+                context={
+                    "tema_actual": tema_actual,
+                    "contexto_adicional": contexto_adicional,
+                },
+                task_id_suffix="estado",
+            )
+
+            logger.info("F3 v4.3: tarea SINTESIS_CONTEXTO preparada y publicada")
+        except Exception as e:
+            logger.warning("F3 v4.3: no se pudo preparar tarea SINTESIS_CONTEXTO: %s", e)
 
     def _truncate(self, content: str, max_chars: int) -> str:
         """Truncamiento logico (v3.4).
@@ -902,4 +1218,170 @@ if __name__ == "__main__":
     print(f"[OK] __repr__ sin launcher: {repr_sin}")
     print(f"[OK] __repr__ con launcher: {repr_con}")
 
-    print("\n[PASS] estado_generator.py: todos los tests v4.0 pasaron")
+    # === Tests v4.3 (F3): secciones G0.A, G0.B, G1 ===
+
+    # Test (F3 v4.3): generate() con workspace_dir incluye las 3 secciones nuevas en orden
+    import tempfile as _tempfile_v43
+    with _tempfile_v43.TemporaryDirectory() as tmpdir:
+        # Crear 03_objetivo_proyecto.md
+        Path(tmpdir, "03_objetivo_proyecto.md").write_text(
+            "Sistema de recuperación de contexto para agentes Z.ai.", encoding="utf-8"
+        )
+        gen_v43 = EstadoGenerator(workspace_dir=tmpdir)
+        content_v43 = gen_v43.generate(exchanges, chat_label="test")
+        # Las 3 secciones nuevas existen y en el orden correcto
+        assert "## G0.A — Objetivo del proyecto" in content_v43
+        assert "## G0.B — Síntesis del contexto disponible" in content_v43
+        assert "## G1 — Cómo usar este contexto" in content_v43
+        # Orden: G0.A < G0.B < G1 < D1
+        idx_g0a = content_v43.find("## G0.A")
+        idx_g0b = content_v43.find("## G0.B")
+        idx_g1 = content_v43.find("## G1")
+        idx_d1 = content_v43.find("## Sección D1")
+        assert 0 <= idx_g0a < idx_g0b < idx_g1 < idx_d1, \
+            f"F3: orden esperado G0.A<G0.B<G1<D1, got {idx_g0a},{idx_g0b},{idx_g1},{idx_d1}"
+        # G0.A tiene el contenido del archivo
+        assert "Sistema de recuperación de contexto para agentes Z.ai." in content_v43
+        # G0.B tiene el placeholder inicial
+        assert "Síntesis del contexto no disponible" in content_v43
+        # G1 tiene el texto fijo
+        assert "pipeline.query_context" in content_v43
+        # Las secciones operativas siguen presentes
+        assert "## Sección D1" in content_v43
+        assert "## Sección A1" in content_v43
+        print(f"[OK] F3 generate() con workspace: G0.A+G0.B+G1 en orden, antes de operativas")
+
+    # Test (F3 v4.3): G0.A muestra placeholder si no existe 03_objetivo_proyecto.md
+    # v4.3 (F5): este caso ya no aplica — si el archivo no existe, el proceso lo crea
+    # automáticamente con la cascada documentación → bloques. Lo probamos en los tests F5 de abajo.
+    # Aquí verificamos que si el archivo no existe y no hay fuentes para derivarlo,
+    # se crea con el contenido mínimo.
+    with _tempfile_v43.TemporaryDirectory() as tmpdir:
+        gen_v43_no_obj = EstadoGenerator(workspace_dir=tmpdir)
+        content_no_obj = gen_v43_no_obj.generate(exchanges, chat_label="test")
+        # El archivo se crea automáticamente tras generate()
+        assert Path(tmpdir, "03_objetivo_proyecto.md").exists(), \
+            "F5: 03_objetivo_proyecto.md debe crearse automáticamente si no existe"
+        # Y el contenido está en G0.A (no en un placeholder de "no declarado")
+        assert "## G0.A — Objetivo del proyecto" in content_no_obj
+        print(f"[OK] F3+F5 G0.A: 03_objetivo_proyecto.md se crea automáticamente si no existe")
+
+    # Test (F3 v4.3): sin workspace_dir, no se añaden G0 ni G1 (backward compatible)
+    gen_v40 = EstadoGenerator()  # sin workspace_dir
+    content_v40 = gen_v40.generate(exchanges, chat_label="test")
+    assert "## G0.A" not in content_v40
+    assert "## G0.B" not in content_v40
+    assert "## G1" not in content_v40
+    assert "## Sección D1" in content_v40  # operativas siguen
+    print(f"[OK] F3 sin workspace: sin G0/G1 (backward compatible v4.0)")
+
+    # === Tests v4.3 (F5): creación automática de 03_objetivo_proyecto.md ===
+
+    # Test (F5 v4.3): Caso A — si existe documentación, el objetivo se deriva de ahí
+    import tempfile as _tempfile_f5
+    import shutil as _shutil_f5
+    with _tempfile_f5.TemporaryDirectory() as tmpdir:
+        # Crear estructura de documentación simulada en el workspace
+        estrategiaDir = Path(tmpdir, "estrategia", "agent-context")
+        estrategiaDir.mkdir(parents=True)
+        (estrategiaDir / "proyecto.md").write_text(
+            "# Proyecto\n\nEste proyecto trata sobre el sistema de "
+            "recuperación de contexto para agentes Z.ai. Su objetivo es "
+            "permitir que los agentes retomen el hilo tras perder contexto.",
+            encoding="utf-8",
+        )
+        # Mock WORKSPACE_ROOT apuntando a tmpdir
+        import contexto_zai.config as _cfg
+        original_root = _cfg.WORKSPACE_ROOT
+        _cfg.WORKSPACE_ROOT = Path(tmpdir)
+        try:
+            gen_f5_a = EstadoGenerator(workspace_dir=Path(tmpdir, "ws"))
+            gen_f5_a._asegurar_objetivo_proyecto()
+            objetivo_path = Path(tmpdir, "ws", "03_objetivo_proyecto.md")
+            assert objetivo_path.exists(), "F5 Caso A: 03_objetivo_proyecto.md debe existir"
+            contenido = objetivo_path.read_text(encoding="utf-8")
+            assert "recuperación de contexto" in contenido, \
+                f"F5 Caso A: el objetivo debe venir de la documentación, got: {contenido[:200]}"
+            print(f"[OK] F5 Caso A: objetivo derivado de documentación (proyecto.md)")
+        finally:
+            _cfg.WORKSPACE_ROOT = original_root
+
+    # Test (F5 v4.3): Caso B — si no hay documentación pero hay bloques, deriva de temas
+    with _tempfile_f5.TemporaryDirectory() as tmpdir:
+        import json as _json_f5
+        # No crear estrategia/ (sin documentación)
+        # Crear workspace con _metadata.json que tiene temas
+        ws_f5b = Path(tmpdir, "ws")
+        ws_f5b.mkdir(parents=True)
+        (ws_f5b / "_metadata.json").write_text(_json_f5.dumps({
+            "tema_a_archivo": {
+                "autenticacion_jwt": "bloque_01.md",
+                "validaciones": "bloque_02.md",
+                "configuracion": "bloque_03.md",
+            }
+        }), encoding="utf-8")
+        # Mock WORKSPACE_ROOT
+        import contexto_zai.config as _cfg_b
+        original_root_b = _cfg_b.WORKSPACE_ROOT
+        _cfg_b.WORKSPACE_ROOT = Path(tmpdir)
+        try:
+            gen_f5_b = EstadoGenerator(workspace_dir=ws_f5b)
+            gen_f5_b._asegurar_objetivo_proyecto()
+            objetivo_path = Path(ws_f5b, "03_objetivo_proyecto.md")
+            assert objetivo_path.exists(), "F5 Caso B: 03_objetivo_proyecto.md debe existir"
+            contenido = objetivo_path.read_text(encoding="utf-8")
+            assert "derivado automáticamente" in contenido.lower(), \
+                f"F5 Caso B: debe indicar que es derivado, got: {contenido[:200]}"
+            assert "autenticacion_jwt" in contenido or "validaciones" in contenido, \
+                f"F5 Caso B: debe mencionar temas, got: {contenido[:200]}"
+            print(f"[OK] F5 Caso B: objetivo derivado de bloques (temas)")
+        finally:
+            _cfg_b.WORKSPACE_ROOT = original_root_b
+
+    # Test (F5 v4.3): Caso C — si no hay ni documentación ni bloques, contenido mínimo
+    with _tempfile_f5.TemporaryDirectory() as tmpdir:
+        import contexto_zai.config as _cfg_c
+        original_root_c = _cfg_c.WORKSPACE_ROOT
+        _cfg_c.WORKSPACE_ROOT = Path(tmpdir)
+        try:
+            ws_f5c = Path(tmpdir, "ws")
+            ws_f5c.mkdir(parents=True)
+            # No crear estrategia/, ni upload/, ni _metadata.json
+            gen_f5_c = EstadoGenerator(workspace_dir=ws_f5c)
+            gen_f5_c._asegurar_objetivo_proyecto()
+            objetivo_path = Path(ws_f5c, "03_objetivo_proyecto.md")
+            assert objetivo_path.exists(), "F5 Caso C: 03_objetivo_proyecto.md debe existir"
+            contenido = objetivo_path.read_text(encoding="utf-8")
+            assert "sin objetivo declarado" in contenido.lower(), \
+                f"F5 Caso C: debe tener contenido mínimo, got: {contenido}"
+            print(f"[OK] F5 Caso C: contenido mínimo cuando no hay fuentes")
+        finally:
+            _cfg_c.WORKSPACE_ROOT = original_root_c
+
+    # Test (F5 v4.3): si el archivo ya existe, NO se sobrescribe
+    with _tempfile_f5.TemporaryDirectory() as tmpdir:
+        import contexto_zai.config as _cfg_d
+        original_root_d = _cfg_d.WORKSPACE_ROOT
+        _cfg_d.WORKSPACE_ROOT = Path(tmpdir)
+        try:
+            ws_f5d = Path(tmpdir, "ws")
+            ws_f5d.mkdir(parents=True)
+            objetivo_path = Path(ws_f5d, "03_objetivo_proyecto.md")
+            contenido_original = "Objetivo escrito por el Director manualmente."
+            objetivo_path.write_text(contenido_original, encoding="utf-8")
+            # Llamar a _asegurar_objetivo_proyecto() — no debe sobrescribir
+            gen_f5_d = EstadoGenerator(workspace_dir=ws_f5d)
+            gen_f5_d._asegurar_objetivo_proyecto()
+            contenido_final = objetivo_path.read_text(encoding="utf-8")
+            assert contenido_final == contenido_original, \
+                "F5: el archivo existente no debe sobrescribirse"
+            print(f"[OK] F5: archivo existente no se sobrescribe")
+
+            # Verificar que _build_g0_a() devuelve el contenido original
+            g0_a = gen_f5_d._build_g0_a()
+            assert "Objetivo escrito por el Director manualmente." in g0_a
+            print(f"[OK] F5: _build_g0_a() devuelve contenido del archivo existente")
+        finally:
+            _cfg_d.WORKSPACE_ROOT = original_root_d
+
+    print("\n[PASS] estado_generator.py: todos los tests v4.3 pasaron")

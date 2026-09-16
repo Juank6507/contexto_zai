@@ -157,6 +157,8 @@ class IntegradorRespuestas:
             return self._integrar_documento
         elif "clasificacion_temas" in task_id or "capa3_" in task_id:
             return self._integrar_clasificacion_temas
+        elif "sintesis_contexto" in task_id:
+            return self._integrar_sintesis_contexto
         else:
             return None
 
@@ -270,6 +272,71 @@ class IntegradorRespuestas:
         # del Orquestador. No se escribe en ningún archivo.
         logger.debug("Respuesta de consulta lista para entregar al agente")
         return True
+
+    def _integrar_sintesis_contexto(self, response: SubagentResponse, ws: Path) -> bool:
+        """v4.3 (F2): Actualiza la sección ``G0.B`` del ``00_estado_actual.md``.
+
+        La respuesta del subagente (modo ``SINTESIS_CONTEXTO``) es un texto
+        plano con el panorama actual del proyecto. Se inserta o reemplaza
+        en la sección ``## G0.B — Síntesis del contexto disponible`` del
+        ``00_estado_actual.md``.
+
+        Si el subagente respondió ``SIN_SINTESIS_POSIBLE``, no se modifica
+        nada (el placeholder inicial se mantiene).
+        """
+        if not response.success or not response.response:
+            logger.warning("sintesis_contexto: respuesta vacía o fallida: %s", response.task_id)
+            return False
+
+        raw = response.response.strip()
+        if raw.upper().startswith("SIN_SINTESIS_POSIBLE"):
+            logger.info("sintesis_contexto: subagente respondió SIN_SINTESIS_POSIBLE, no se actualiza")
+            return False
+
+        # Truncar si excede ~2.000 caracteres (defensivo)
+        if len(raw) > 2000:
+            raw = raw[:1997] + "..."
+
+        estado_path = ws / "00_estado_actual.md"
+        if not estado_path.exists():
+            logger.warning("sintesis_contexto: 00_estado_actual.md no existe en %s", ws)
+            return False
+
+        content = estado_path.read_text(encoding="utf-8")
+        marker = "## G0.B — Síntesis del contexto disponible"
+
+        if marker in content:
+            # Reemplazar el contenido de la sección G0.B existente.
+            # La sección va hasta el próximo "## " header o fin de archivo.
+            pattern = rf"({re.escape(marker)}[^\n]*\n\n)(.*?)(?=\n## |\Z)"
+            updated = re.sub(pattern, rf"\g<1>{raw}\n", content, flags=re.DOTALL)
+        else:
+            # Insertar después de G0.A (si existe) o al inicio del archivo.
+            g0_a_marker = "## G0.A — Objetivo del proyecto"
+            if g0_a_marker in content:
+                # Buscar el final de la sección G0.A
+                pattern_g0a = rf"({re.escape(g0_a_marker)}[^\n]*\n\n)(.*?)(?=\n## |\Z)"
+                def _insert_after_g0a(match):
+                    return match.group(0) + f"\n{marker}\n\n{raw}\n"
+                updated = re.sub(pattern_g0a, _insert_after_g0a, content, flags=re.DOTALL, count=1)
+            else:
+                # Insertar al inicio (después del título # si existe)
+                if content.startswith("# "):
+                    # Buscar el primer salto de línea después del título
+                    first_newline = content.find("\n")
+                    if first_newline > 0:
+                        updated = (content[:first_newline+1] + f"\n{marker}\n\n{raw}\n" +
+                                   content[first_newline+1:])
+                    else:
+                        updated = f"{marker}\n\n{raw}\n" + content
+                else:
+                    updated = f"{marker}\n\n{raw}\n" + content
+
+        if updated != content:
+            estado_path.write_text(updated, encoding="utf-8")
+            logger.info("sintesis_contexto: G0.B actualizada en 00_estado_actual.md (%d chars)", len(raw))
+            return True
+        return False
 
     def _integrar_clasificacion_temas(self, response: SubagentResponse, ws: Path) -> bool:
         """Integra la respuesta de CLASIFICACION_TEMAS (Capa 3) al contexto.
@@ -435,14 +502,17 @@ class IntegradorRespuestas:
         # v4.2: Registrar los temas reales en tema_a_archivo.
         # Cada tema real apunta al bloque externo. Si no hay temas
         # parseables, se cae a un nombre genérico para no perder el bloque.
+        # v4.3 (F0.2): la deduplicación distingue "mismo bloque" (idempotente)
+        # vs "otro bloque" (prefijar con filename + sufijo numérico si hace falta).
         temas_registrados: list[str] = []
         if temas_reales:
             for tema in temas_reales:
-                # Evitar sobrescribir un tema existente del chat: si la clave
-                # ya existe, prefijar con el filename del documento.
-                clave = tema["nombre"]
-                if clave in metadata["tema_a_archivo"]:
-                    clave = f"{filename}_{tema['nombre']}"
+                clave = self._resolver_clave_tema(
+                    tema_nombre=tema["nombre"],
+                    filename=filename,
+                    bloque_filename=bloque_filename,
+                    tema_a_archivo=metadata["tema_a_archivo"],
+                )
                 metadata["tema_a_archivo"][clave] = bloque_filename
                 temas_registrados.append(clave)
         else:
@@ -474,7 +544,148 @@ class IntegradorRespuestas:
             "documento: metadata actualizada — %d tema(s) real(es) → '%s': %s",
             len(temas_registrados), bloque_filename, temas_registrados,
         )
+
+        # v4.3 (F0.1): regenerar 01_indice_recuperacion.md para que incluya los
+        # bloques externos (chat + externos). El IndiceGenerator prioriza la
+        # metadata como fuente de verdad, así que solo necesita los bloques
+        # físicos del workspace para calcular tamaños.
+        self._regenerar_indice_recuperacion(ws, metadata)
+
         return True
+
+    @staticmethod
+    def _resolver_clave_tema(
+        tema_nombre: str,
+        filename: str,
+        bloque_filename: str,
+        tema_a_archivo: dict,
+    ) -> str:
+        """v4.3 (F0.2): Resuelve la clave del tema evitando entradas fantasma.
+
+        Distingue 4 casos:
+
+        1. ``tema_nombre`` existe y apunta al **mismo bloque** → idempotente,
+           devolver ``tema_nombre`` (no crear entrada nueva).
+        2. ``tema_nombre`` existe y apunta a **otro bloque** → intentar
+           ``{filename}_{tema_nombre}``.
+        3. ``{filename}_{tema_nombre}`` existe y apunta al **mismo bloque** →
+           idempotente, devolver esa clave.
+        4. ``{filename}_{tema_nombre}`` existe y apunta a **otro bloque** →
+           sufijo numérico: ``{filename}_{tema_nombre}_2``, ``_3``, etc.
+        5. Ninguna existe → usar ``tema_nombre`` (caso normal, sin colisión).
+
+        Args:
+            tema_nombre: Nombre del tema (snake_case).
+            filename: Nombre del archivo fuente del documento (para prefijar).
+            bloque_filename: Nombre del bloque externo físico (.md).
+            tema_a_archivo: Mapeo tema → archivo actual (se modifica in-place
+                solo si se añade una entrada nueva — la llamada ya lo hace).
+
+        Returns:
+            La clave a usar en ``tema_a_archivo`` (puede ser igual a una
+            existente o nueva).
+        """
+        # Sanitizar filename para usarlo en la clave (sin espacios ni slashes)
+        filename_safe = re.sub(r"[^a-zA-Z0-9_]+", "_", filename).strip("_").lower()
+
+        # Caso 1 y 5: tema_nombre no existe, o existe apuntando al mismo bloque
+        existente = tema_a_archivo.get(tema_nombre)
+        if existente is None:
+            # Caso 5: no existe, usar tema_nombre
+            return tema_nombre
+        if existente == bloque_filename:
+            # Caso 1: existe pero apunta al mismo bloque, idempotente
+            return tema_nombre
+
+        # Caso 2: existe y apunta a otro bloque → probar con prefijo
+        clave_prefijada = f"{filename_safe}_{tema_nombre}"
+        existente_prefijada = tema_a_archivo.get(clave_prefijada)
+        if existente_prefijada is None:
+            # Caso 2: no existe la prefijada, usarla
+            return clave_prefijada
+        if existente_prefijada == bloque_filename:
+            # Caso 3: existe la prefijada y apunta al mismo bloque, idempotente
+            return clave_prefijada
+
+        # Caso 4: la prefijada existe y apunta a otro bloque → sufijo numérico
+        sufijo = 2
+        while True:
+            clave_con_sufijo = f"{clave_prefijada}_{sufijo}"
+            existente_sufijo = tema_a_archivo.get(clave_con_sufijo)
+            if existente_sufijo is None:
+                return clave_con_sufijo
+            if existente_sufijo == bloque_filename:
+                return clave_con_sufijo
+            sufijo += 1
+            # Seguridad: evitar loop infinito (en la práctica, no debería pasar)
+            if sufijo > 1000:
+                return clave_con_sufijo
+
+    @staticmethod
+    def _regenerar_indice_recuperacion(ws: Path, metadata: dict) -> None:
+        """v4.3 (F0.1): Regenera ``01_indice_recuperacion.md`` con todos los
+        bloques del workspace (chat + externos).
+
+        Usa el ``IndiceGenerator`` que ya existe en el proceso. Lee los
+        bloques físicos del workspace y los pasa al generador junto con la
+        metadata actualizada (que ya incluye los bloques externos nuevos).
+
+        Si el ``IndiceGenerator`` falla (por ejemplo, workspace sin bloques
+        físicos), loguea warning y continua — no rompe el flujo principal.
+        """
+        try:
+            from contexto_zai.generation.indice_generator import IndiceGenerator
+            from contexto_zai.models import ThematicBlock, RecoveryMetadata
+
+            indice_gen = IndiceGenerator()
+
+            # Construir ThematicBlock a partir de los archivos físicos del workspace
+            tema_a_archivo = metadata.get("tema_a_archivo", {})
+            blocks: list[ThematicBlock] = []
+            archivos_vistos: set[str] = set()
+            for tema, archivo in tema_a_archivo.items():
+                if archivo in archivos_vistos:
+                    continue
+                archivos_vistos.add(archivo)
+                bloque_path = ws / archivo
+                if not bloque_path.exists():
+                    continue
+                # Construir ThematicBlock mínimo (solo filename + temas)
+                # El IndiceGenerator solo usa filename, temas y estimated_tokens
+                temas_en_este_archivo = [
+                    t for t, a in tema_a_archivo.items() if a == archivo
+                ]
+                block = ThematicBlock(filename=archivo)
+                # ThematicBlock.add_exchange requiere un Exchange, pero como solo
+                # nos importa el filename y los temas para el índice, lo dejamos vacío.
+                # El IndiceGenerator._build_tema_a_archivo prioriza metadata si se pasa.
+                block._temas = list(temas_en_este_archivo)
+                blocks.append(block)
+
+            # Construir RecoveryMetadata para que IndiceGenerator priorice metadata
+            recovery_meta = RecoveryMetadata(
+                chat_id=metadata.get("chat_id", ""),
+                share_id=metadata.get("share_id", ""),
+                tema_a_archivo=dict(tema_a_archivo),
+            )
+
+            # Generar y escribir el índice
+            indice_content = indice_gen.generate(
+                blocks=blocks,
+                metadata=recovery_meta,
+                chat_label=metadata.get("chat_label", ""),
+            )
+            indice_path = ws / "01_indice_recuperacion.md"
+            indice_path.write_text(indice_content, encoding="utf-8")
+
+            logger.info(
+                "documento: 01_indice_recuperacion.md regenerado con %d bloques (%d temas)",
+                len(blocks), len(tema_a_archivo),
+            )
+        except Exception as e:
+            logger.warning(
+                "documento: no se pudo regenerar 01_indice_recuperacion.md: %s", e
+            )
 
     @staticmethod
     def _parse_temas_documento(raw: str) -> list[dict]:
@@ -860,5 +1071,161 @@ SECCIONES: firma, verificacion""",
         assert "doc_pdf_autenticacion_jwt" in metadata["tema_a_archivo"]
         assert metadata["tema_a_archivo"]["doc_pdf_autenticacion_jwt"] == "bloque_externo_doc_pdf_lote_0.md"
         print(f"[OK] _integrar_documento: no sobrescribe tema existente (prefija con filename)")
+
+    # Test 15 (F0.2 v4.3): reprocesar el mismo documento DOS VECES → no crea entradas fantasma
+    # Caso 1 de _resolver_clave_tema: clave existe apuntando al mismo bloque → idempotente.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        metadata_path.write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="documento_doc_reprocesado_lote_0",
+            success=True,
+            response="""RESUMEN: Documento reprocesado.
+
+TEMA: autenticacion_jwt
+DESCRIPCION: Sistema de autenticación JWT
+SECCIONES: header, payload""",
+        )
+        # Primera integración
+        integrador.integrar([resp])
+        # Segunda integración con la MISMA respuesta (simula reprocesamiento)
+        integrador.integrar([resp])
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        # Debe haber SOLO UNA entrada para autenticacion_jwt (no fantasma)
+        entradas_jwt = [k for k in metadata["tema_a_archivo"] if "autenticacion_jwt" in k]
+        assert len(entradas_jwt) == 1, \
+            f"F0.2: esperaba 1 entrada jwt, obtuvo {entradas_jwt} (entradas fantasma)"
+        print(f"[OK] F0.2 reprocesamiento: idempotente, sin entradas fantasma ({len(entradas_jwt)} entrada)")
+
+    # Test 16 (F0.2 v4.3): tres documentos distintos con el mismo tema → sufijo numérico
+    # Caso 4 de _resolver_clave_tema: prefijada existe apuntando a otro bloque → sufijo.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        # Tema del chat preexistente
+        metadata_path.write_text(json.dumps({
+            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+        }), encoding="utf-8")
+
+        # Doc A: tema autenticacion_jwt → crea doc_a_autenticacion_jwt
+        resp_a = SubagentResponse(
+            task_id="documento_doc_a_lote_0", success=True,
+            response="TEMA: autenticacion_jwt\nDESCRIPCION: JWT en doc A\nSECCIONES: header",
+        )
+        integrador.integrar([resp_a])
+
+        # Doc B: tema autenticacion_jwt → crea doc_b_autenticacion_jwt
+        resp_b = SubagentResponse(
+            task_id="documento_doc_b_lote_0", success=True,
+            response="TEMA: autenticacion_jwt\nDESCRIPCION: JWT en doc B\nSECCIONES: header",
+        )
+        integrador.integrar([resp_b])
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"]  # chat original
+        assert "doc_a_autenticacion_jwt" in metadata["tema_a_archivo"]
+        assert "doc_b_autenticacion_jwt" in metadata["tema_a_archivo"]
+        # Cada uno apunta a un bloque distinto
+        assert metadata["tema_a_archivo"]["doc_a_autenticacion_jwt"] != metadata["tema_a_archivo"]["doc_b_autenticacion_jwt"]
+        print(f"[OK] F0.2 tres docs mismo tema: prefijados con filename ({len([k for k in metadata['tema_a_archivo'] if 'autenticacion_jwt' in k])} entradas)")
+
+    # Test 17 (F0.1 v4.3): _integrar_documento regenera 01_indice_recuperacion.md
+    # con los bloques externos nuevos.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        metadata_path = Path(tmpdir) / "_metadata.json"
+        metadata_path.write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
+
+        # Crear el bloque externo físico (lo haría _integrar_documento en su flujo)
+        bloque_externo = Path(tmpdir) / "bloque_externo_doc_index_lote_0.md"
+        bloque_externo.write_text("# Bloque externo\n\nTEMA: api_rest\nDESCRIPCION: API\nSECCIONES: endpoints", encoding="utf-8")
+
+        resp = SubagentResponse(
+            task_id="documento_doc_index_lote_0",
+            success=True,
+            response="""RESUMEN: Documento sobre API.
+
+TEMA: api_rest
+DESCRIPCION: Diseño de la API REST
+SECCIONES: endpoints, auth""",
+        )
+        integrador.integrar([resp])
+
+        # Verificar que 01_indice_recuperacion.md fue regenerado y contiene el tema externo
+        indice_path = Path(tmpdir) / "01_indice_recuperacion.md"
+        assert indice_path.exists(), "F0.1: 01_indice_recuperacion.md debe existir tras integrar documento"
+        indice_content = indice_path.read_text(encoding="utf-8")
+        assert "api_rest" in indice_content, \
+            f"F0.1: el índice debe contener el tema externo 'api_rest', obtuvo: {indice_content[:200]}"
+        print(f"[OK] F0.1 índice regenerado: 01_indice_recuperacion.md incluye tema externo 'api_rest'")
+
+    # Test 18 (F2 v4.3): _integrar_sintesis_contexto inserta G0.B en 00_estado_actual.md sin la sección
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        estado_path = Path(tmpdir) / "00_estado_actual.md"
+        estado_path.write_text(
+            "# Estado Actual\n\n"
+            "## G0.A — Objetivo del proyecto\n\nObjetivo X.\n\n"
+            "## D1 — Última instrucción\n\nDirector dijo algo.\n",
+            encoding="utf-8",
+        )
+        resp = SubagentResponse(
+            task_id="intercambios_sintesis_contexto",
+            success=True,
+            response="Proyecto en fase de implementación. Tema activo: bugs. Pendiente: tests.",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        content = estado_path.read_text(encoding="utf-8")
+        assert "## G0.B — Síntesis del contexto disponible" in content
+        assert "Proyecto en fase de implementación" in content
+        # El orden: G0.A → G0.B → D1
+        idx_g0a = content.find("## G0.A")
+        idx_g0b = content.find("## G0.B")
+        idx_d1 = content.find("## D1")
+        assert 0 <= idx_g0a < idx_g0b < idx_d1
+        print(f"[OK] F2 _integrar_sintesis_contexto: inserta G0.B después de G0.A")
+
+    # Test 19 (F2 v4.3): _integrar_sintesis_contexto reemplaza G0.B existente
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        estado_path = Path(tmpdir) / "00_estado_actual.md"
+        estado_path.write_text(
+            "# Estado Actual\n\n"
+            "## G0.B — Síntesis del contexto disponible\n\nSíntesis vieja.\n\n"
+            "## D1 — Última instrucción\n\nDirector dijo algo.\n",
+            encoding="utf-8",
+        )
+        resp = SubagentResponse(
+            task_id="intercambios_sintesis_contexto",
+            success=True,
+            response="Síntesis nueva y actualizada.",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        content = estado_path.read_text(encoding="utf-8")
+        assert "Síntesis nueva y actualizada." in content
+        assert "Síntesis vieja." not in content
+        print(f"[OK] F2 _integrar_sintesis_contexto: reemplaza G0.B existente")
+
+    # Test 20 (F2 v4.3): _integrar_sintesis_contexto no modifica con SIN_SINTESIS_POSIBLE
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        estado_path = Path(tmpdir) / "00_estado_actual.md"
+        original = ("# Estado Actual\n\n"
+                    "## G0.B — Síntesis del contexto disponible\n\nPlaceholder inicial.\n\n"
+                    "## D1 — Última instrucción\n\nDirector dijo algo.\n")
+        estado_path.write_text(original, encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="intercambios_sintesis_contexto",
+            success=True,
+            response="SIN_SINTESIS_POSIBLE",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 0
+        content = estado_path.read_text(encoding="utf-8")
+        assert content == original, "F2: SIN_SINTESIS_POSIBLE no debe modificar el archivo"
+        print(f"[OK] F2 _integrar_sintesis_contexto: SIN_SINTESIS_POSIBLE no modifica archivo")
 
     print("\n[PASS] integrador_respuestas.py: todos los tests pasaron")

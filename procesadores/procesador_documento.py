@@ -268,28 +268,42 @@ class ProcesadorDocumento:
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_bytes(content_bytes)
 
-        return f"""Eres un subagente que lee, clasifica y resume un documento.
+        # v4.3 (Bug 1 fix): formato alineado con DocumentoIndexerSubagent._build_prompt_historico()
+        # para que IntegradorRespuestas._parse_temas_documento() (que exige los 3 campos
+        # TEMA + DESCRIPCION + SECCIONES) pueda parsear la respuesta correctamente.
+        return f"""Eres un subagente indexador de documentos. Tu objetivo es leer
+un documento y generar un índice estructurado que permita al agente principal
+saber de qué trata sin haberlo leído.
 
 ## Archivo a leer
 
 - {temp_path}
 
-## Instrucciones
+## Tu tarea
 
 1. Lee el archivo con la herramienta Read.
-2. Identifica los temas principales del documento.
-3. Para cada tema, escribe un resumen breve (2-3 líneas).
-4. Genera un resumen general del documento (máximo 500 caracteres).
+2. Identifica los temas principales que se discuten en el documento.
+3. Para cada tema, indica su nombre en snake_case, una descripción corta, y
+   las secciones del documento donde se trata (separadas por comas).
+4. Genera un resumen breve del documento (máximo 500 caracteres).
 
-## Formato de respuesta
+## Formato de respuesta EXACTO
 
-TEMA: <nombre del tema>
-DESCRIPCION: <descripción breve>
+TEMA: <nombre_snake_case>
+DESCRIPCION: <descripción corta del tema>
+SECCIONES: <sección1, sección2, sección3>
 
-TEMA: <otro tema>
-DESCRIPCION: <descripción breve>
+TEMA: <nombre_snake_case>
+DESCRIPCION: <descripción corta>
+SECCIONES: <sección1, sección2>
 
-RESUMEN: <resumen general del documento>
+RESUMEN: <resumen breve del documento, máximo 500 caracteres>
+
+Reglas:
+- Nombres de tema en snake_case (sin espacios, sin acentos).
+- Máximo 5 temas.
+- Cada tema debe tener al menos 1 sección.
+- El resumen debe ser conciso y revelador (no genérico).
 
 Respuesta:"""
 
@@ -313,7 +327,10 @@ Respuesta:"""
             start_line = 0
             end_line = 0
 
-        return f"""Eres un subagente que procesa un lote de un documento grande.
+        # v4.3 (Bug 1 fix): formato alineado con DocumentoIndexerSubagent._build_prompt_historico()
+        # para que IntegradorRespuestas._parse_temas_documento() pueda parsear la respuesta.
+        return f"""Eres un subagente indexador de documentos. Estás procesando
+una porción de un documento grande.
 
 ## Archivo a leer
 
@@ -324,21 +341,29 @@ Respuesta:"""
 Lote {lote_idx + 1} de {total_lotes}.
 Lee las líneas {start_line + 1} a {end_line} del archivo (de {total_lines} líneas totales).
 
-## Instrucciones
+## Tu tarea
 
 1. Lee el archivo con la herramienta Read (solo las líneas indicadas).
 2. Identifica los temas principales de esta porción.
-3. Escribe un resumen de lo que encontraste en esta porción.
+3. Para cada tema, indica su nombre en snake_case, una descripción corta, y
+   las secciones donde se trata (separadas por comas).
+4. Genera un resumen breve de esta porción (máximo 200 caracteres).
 
-## Formato de respuesta
+## Formato de respuesta EXACTO
 
-TEMA: <nombre del tema>
-DESCRIPCION: <descripción breve>
+TEMA: <nombre_snake_case>
+DESCRIPCION: <descripción corta del tema>
+SECCIONES: <sección1, sección2>
 
-TEMA: <otro tema>
-DESCRIPCION: <descripción breve>
+TEMA: <nombre_snake_case>
+DESCRIPCION: <descripción corta>
+SECCIONES: <sección1, sección2>
 
-RESUMEN: <resumen del lote>
+RESUMEN: <resumen breve de la porción>
+
+Reglas:
+- Nombres de tema en snake_case (sin espacios, sin acentos).
+- Máximo 3 temas por porción.
 
 Respuesta:"""
 
@@ -429,5 +454,34 @@ if __name__ == "__main__":
     proc_repr = ProcesadorDocumento(workspace_dir="/tmp/test_repr")
     assert "ProcesadorDocumento" in repr(proc_repr)
     print(f"[OK] repr: {proc_repr!r}")
+
+    # Test 8 (F0.3 v4.3): _build_documento_prompt pide los 3 campos TEMA+DESCRIPCION+SECCIONES
+    # Bug 1 fix: el prompt debe alinearse con el parser _parse_temas_documento() del IntegradorRespuestas,
+    # que exige los 3 campos. Antes solo pedia TEMA+DESCRIPCION, lo que hacia que el parser fallara.
+    proc_test = ProcesadorDocumento(workspace_dir="/tmp/test_prompts")
+    content = b"contenido de prueba del documento"
+    prompt_doc = proc_test._build_documento_prompt("test.txt", content, 100)
+    assert "TEMA:" in prompt_doc
+    assert "DESCRIPCION:" in prompt_doc
+    assert "SECCIONES:" in prompt_doc, "F0.3: el prompt de documento debe pedir SECCIONES"
+    # El orden debe ser TEMA → DESCRIPCION → SECCIONES (igual que DocumentoIndexerSubagent)
+    idx_tema = prompt_doc.find("TEMA:")
+    idx_desc = prompt_doc.find("DESCRIPCION:")
+    idx_secc = prompt_doc.find("SECCIONES:")
+    assert 0 <= idx_tema < idx_desc < idx_secc, \
+        f"F0.3: orden esperado TEMA<DESCRIPCION<SECCIONES, got {idx_tema},{idx_desc},{idx_secc}"
+    print(f"[OK] _build_documento_prompt pide TEMA+DESCRIPCION+SECCIONES (alineado con parser)")
+
+    # Test 9 (F0.3 v4.3): _build_lote_prompt tambien pide los 3 campos
+    prompt_lote = proc_test._build_lote_prompt("test.txt", content, 100, 0, 2)
+    assert "TEMA:" in prompt_lote
+    assert "DESCRIPCION:" in prompt_lote
+    assert "SECCIONES:" in prompt_lote, "F0.3: el prompt de lote debe pedir SECCIONES"
+    idx_tema = prompt_lote.find("TEMA:")
+    idx_desc = prompt_lote.find("DESCRIPCION:")
+    idx_secc = prompt_lote.find("SECCIONES:")
+    assert 0 <= idx_tema < idx_desc < idx_secc, \
+        f"F0.3: orden esperado TEMA<DESCRIPCION<SECCIONES, got {idx_tema},{idx_desc},{idx_secc}"
+    print(f"[OK] _build_lote_prompt pide TEMA+DESCRIPCION+SECCIONES (alineado con parser)")
 
     print("\n[PASS] procesador_documento.py: todos los tests pasaron")

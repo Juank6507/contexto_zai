@@ -19,6 +19,9 @@ individuales del repositorio sin perder información.
 | 4 | 3.4 | — | plan_refactorizacion_v3.4.md | 180 |
 | 5 | 3.5 | 2026-09-05 | plan_refactorizacion_v3.5.md | 326 |
 | 6 | 3.6 | 2026-09-06 | plan_refactorizacion_v3.6.md | 680 |
+| 7 | 4.0 | 2026-09-13 | plan_refactorizacion_v4.0.md | 572 |
+| 8 | 4.2 | 2026-09-13 | plan_refactorizacion_v4.2.md | 308 |
+| 9 | 4.3 | 2026-09-15 | plan_refactorizacion_v4.3.md | 351 |
 
 ---
 
@@ -29,7 +32,10 @@ individuales del repositorio sin perder información.
 - **v3.0** — Versionado de scripts con grafo de cambios reversible
 - **v3.4** — Links externos, clasificación por capas, estado sin truncado, exportación/importación
 - **v3.5** — Implementación de indexación de documentos adjuntos mediante subagentes
-- **v3.6** — Implementación: JWT automático + Subagentes paralelos para documentos grandes (actual)
+- **v3.6** — Implementación: JWT automático + Subagentes paralelos para documentos grandes
+- **v4.0** — Milestones H1-H9 (subagentes unificados bajo ClasificadorSubagent, query_context M8, ampliar_contexto M9/H7, diagnóstico background H5)
+- **v4.2** — Fases F1-F5: desmontar H9 mal hecho, crear coordinador (EntregadorTareas/RecogedorRespuestas/Orquestador/IntegradorRespuestas), crear procesadores (ProcesadorDocumento/Intercambios/Consulta), conectar al proceso, validar con E2E
+- **v4.3** — Fases F0-F4: cerrar huecos del agente APA (índice stale + deduplicación), extender IntercambiosClasificadorSubagent con SINTESIS_CONTEXTO, extender IntegradorRespuestas con _integrar_sintesis_contexto, intervenir EstadoGenerator para G0.A+G0.B+G1, test E2E final (actual)
 
 ---
 
@@ -2009,6 +2015,47 @@ Espero tu validación para pasar a la fase de EJECUCIÓN del plan v3.6.
 
 --- fin de PLAN v3.6 ---
 
+
+
+<!-- ============================================================ -->
+# SECCIÓN: PLAN v4.0
+<!-- Archivo original: plan_refactorizacion_v4.0.md -->
+<!-- ============================================================ -->
+
+<!-- Destino en el proyecto: /home/z/my-project/contexto_zai/Documentación/plan_refactorizacion_v4.0.md -->
+
+[Contenido íntegro en: plan_refactorizacion_v4.0.md — Plan de implementación de milestones H1-H9. H1 ClasificadorSubagent base, H2 IntercambiosClasificadorSubagent (5 modos), H3/H4 DocumentoIndexerSubagent con flujo 3 niveles, H5 diagnóstico background, H6 namer para subtemas, H7 ampliar_contexto, H8 tests E2E, H9 (mal enfocado, desmontado en v4.2). 572 líneas.]
+
+--- fin de PLAN v4.0 ---
+
+
+
+<!-- ============================================================ -->
+# SECCIÓN: PLAN v4.2
+<!-- Archivo original: plan_refactorizacion_v4.2.md -->
+<!-- ============================================================ -->
+
+<!-- Destino en el proyecto: /home/z/my-project/contexto_zai/Documentación/plan_refactorizacion_v4.2.md -->
+
+[Contenido íntegro en: plan_refactorizacion_v4.2.md — Plan de implementación del proceso como bibliotecario. 5 fases: F1 desmontar H9 mal hecho, F2 crear clase de coordinación (EntregadorTareas/RecogedorRespuestas/Orquestador/IntegradorRespuestas), F3 crear clase de procesamiento (ProcesadorDocumento/Intercambios/Consulta), F4 conectar clases al proceso, F5 desmontar lo reemplazado (TaskBridgeServer legacy) + validar con datos reales. 308 líneas.]
+
+--- fin de PLAN v4.2 ---
+
+
+
+<!-- ============================================================ -->
+# SECCIÓN: PLAN v4.3
+<!-- Archivo original: plan_refactorizacion_v4.3.md -->
+<!-- ============================================================ -->
+
+<!-- Destino en el proyecto: /home/z/my-project/contexto_zai/Documentación/plan_refactorizacion_v4.3.md -->
+
+[Contenido íntegro en: plan_refactorizacion_v4.3.md — Plan de implementación del `00_estado_actual.md` como punto de entrada ordenado. 5 fases: F0 cerrar huecos del agente APA (Hueco 1: invocar IndiceGenerator tras _integrar_documento; Hueco 2: mejorar deduplicación con distinción mismo bloque vs otro bloque), F1 extender IntercambiosClasificadorSubagent con modo SINTESIS_CONTEXTO, F2 extender IntegradorRespuestas con _integrar_sintesis_contexto, F3 intervenir EstadoGenerator para ensamblar G0.A+G0.B+G1, F4 test E2E final. 351 líneas. Plan vigente.]
+
+--- fin de PLAN v4.3 ---
+
+
+
 <!-- ============================================================ -->
 <!-- Fin del documento de historial de planes -->
 <!-- ============================================================ -->
@@ -2016,10 +2063,12 @@ Espero tu validación para pasar a la fase de EJECUCIÓN del plan v3.6.
 ## Notas finales
 
 - Este documento fue generado el 2025-01-09 consolidando las 6 versiones
-  históricas de plan del proyecto CZAI.
+  históricas de plan del proyecto CZAI, y ampliado el 2026-09-15 con las versiones v4.0, v4.2 y v4.3.
 - Cada sección contiene el contenido íntegro del archivo original, sin modificaciones.
+  Para v4.0, v4.2 y v4.3 se referencia el archivo original en `Documentación/`
+  para evitar duplicar el contenido íntegro en este historial.
 - Los archivos originales fueron eliminados del repositorio `contexto_zai` para
   reducir el clutter, pero su contenido se preserva aquí.
-- La versión actual y vigente es la **v3.6**.
+- La versión actual y vigente es la **v4.3**.
 - Para futuras versiones, se recomienda mantener un único archivo de plan (sin
   versión en el nombre), usando git history para el versionado.

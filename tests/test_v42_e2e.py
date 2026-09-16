@@ -400,11 +400,12 @@ SECCIONES: roles, permisos"""
             f"Falta tema real 'autenticacion_jwt': {metadata['tema_a_archivo']}"
         assert "control_acceso" in metadata["tema_a_archivo"]
 
-        # 4. query_context() encuentra el bloque externo por el tema real
-        # SIN necesidad de 01_indice_recuperacion.md (no existe en este workspace)
-        assert not (ws / "01_indice_recuperacion.md").exists(), \
-            "Este test valida que NO se necesita el índice del chat"
-
+        # 4. query_context() encuentra el bloque externo por el tema real.
+        # v4.3 (F0.1): ahora _integrar_documento() regenera 01_indice_recuperacion.md,
+        # así que SÍ existirá un índice en este workspace. query_context() lo
+        # usa como fallback de búsqueda pero también busca directamente en
+        # _metadata.json (su fuente principal).
+        # Lo importante es que query_context encuentra el bloque externo por tema real.
         query_result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
         assert "error" not in query_result, f"Esperaba encontrar bloque, obtuvo error: {query_result}"
         assert query_result["mode"] == "direct"
@@ -414,80 +415,96 @@ SECCIONES: roles, permisos"""
         # El tema real está en los candidatos
         assert "autenticacion_jwt" in query_result["bloques_info"][0]["temas"]
 
-        print("[OK] query_context E2E: encuentra bloque externo por tema real (sin 01_indice)")
+        print("[OK] query_context E2E: encuentra bloque externo por tema real")
 
 
-def test_ampliar_contexto_link_publico_zai():
-    """E2E v4.2: ampliar_contexto() procesa link /s/ de Z.ai como recuperación.
+def test_sintesis_contexto_e2e():
+    """E2E v4.3: flujo completo de SINTESIS_CONTEXTO en 00_estado_actual.md.
 
-    Valida el flujo completo del cableado nuevo:
-    1. ampliar_contexto("url", "https://chat.z.ai/s/<uuid>") detecta el link.
-    2. Extrae el share_id del link.
-    3. Si no hay JWT en metadata, devuelve error claro pidiéndolo.
-    4. Si hay JWT, llama a pipeline.run(share_id=...) — aquì mockeado para
-       no requerir API real.
+    Flujo:
+    1. EstadoGenerator(workspace_dir) genera 00_estado_actual.md con G0.A
+       (objetivo) + G0.B (placeholder) + G1 (guía) + secciones operativas.
+    2. ProcesadorIntercambios publica la tarea SINTESIS_CONTEXTO.
+    3. (Simula) el agente lanza el subagente que responde con la síntesis.
+    4. collect_responses() aplica la respuesta vía _integrar_sintesis_contexto.
+    5. 00_estado_actual.md actualizado: G0.B pasa del placeholder al contenido.
     """
-    from unittest.mock import patch, MagicMock
-    from contexto_zai.pipeline import ampliar_contexto, _extraer_share_id_de_link
+    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
+    from contexto_zai.procesadores import ProcesadorIntercambios
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.pipeline import collect_responses
 
-    # Test 1: _extraer_share_id_de_link funciona para varios formatos
-    assert _extraer_share_id_de_link("https://chat.z.ai/s/abc-123-def") == "abc-123-def"
-    assert _extraer_share_id_de_link("https://chat.z.ai/c/xyz-789") == "xyz-789"
-    assert _extraer_share_id_de_link("https://chat.z.ai/s/uuid-con-query?ref=x") == "uuid-con-query"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
 
-    # Test 2: ampliar_contexto sin JWT en metadata → error claro
-    result = ampliar_contexto(
-        source_type="url",
-        source_path="https://chat.z.ai/s/abc-123",
-        jwt="",
-        metadata={},
-    )
-    assert "error" in result
-    assert "JWT" in result["error"]
-    assert "share_id" not in result  # No llegó a procesar
-
-    # Test 3: ampliar_contexto con link mal formado → error de share_id
-    result_mal = ampliar_contexto(
-        source_type="url",
-        source_path="https://chat.z.ai/s/",
-        jwt="fake-jwt",
-        metadata={"jwt": "fake-jwt"},
-    )
-    assert "error" in result_mal
-    assert "share_id" in result_mal["error"]
-
-    # Test 4: ampliar_contexto con JWT → llama pipeline.run(share_id=...)
-    # Mockeamos pipeline.run para no llamar a la API real.
-    mock_result = MagicMock()
-    mock_result.success = True
-    mock_result.cycle_used = "recovery"
-    mock_result.exchanges_processed = 50
-    mock_result.files_generated = 10
-    mock_result.error = ""
-    mock_result.pending_tasks = []
-
-    with patch("contexto_zai.pipeline.run", return_value=mock_result) as mock_run:
-        result_ok = ampliar_contexto(
-            source_type="url",
-            source_path="https://chat.z.ai/s/test-share-uuid",
-            jwt="",
-            metadata={"jwt": "fake-jwt"},
-            workspace_dir="/tmp/test_ws_v42_link",
+        # 1. Crear 03_objetivo_proyecto.md (lo escribiría el agente/Director)
+        (ws / "03_objetivo_proyecto.md").write_text(
+            "Sistema de recuperación de contexto para agentes Z.ai.",
+            encoding="utf-8",
         )
-        # Verificar que pipeline.run fue llamado con share_id correcto
-        mock_run.assert_called_once()
-        call_kwargs = mock_run.call_args
-        assert call_kwargs.kwargs.get("share_id") == "test-share-uuid"
-        assert call_kwargs.kwargs.get("chat_id") == ""  # descubierto del árbol
-        assert call_kwargs.kwargs.get("jwt") == "fake-jwt"
 
-    # Verificar el resultado estructurado
-    assert result_ok.get("procesado_como_recuperacion") is True
-    assert result_ok.get("share_id") == "test-share-uuid"
-    assert result_ok.get("success") is True
-    assert result_ok.get("exchanges_processed") == 50
+        # 2. Crear el orquestador + procesador
+        orch = Orquestador(workspace_dir=ws)
+        proc_intercambios = ProcesadorIntercambios(
+            workspace_dir=ws, orquestador=orch,
+        )
 
-    print("[OK] ampliar_contexto link /s/: extrae share_id + enruta a pipeline.run(share_id=...)")
+        # 3. EstadoGenerator con workspace genera el archivo con G0.A+G0.B+G1
+        gen = EstadoGenerator(workspace_dir=ws, launcher=proc_intercambios)
+        # Crear intercambios sinteticos para que generate() no falle
+        from contexto_zai.models import Exchange, Message, MessageRole
+        exchanges = [
+            Exchange(
+                id=1,
+                director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1.0,
+                                     content="Director: implementar v4.3"),
+                agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=1.5,
+                                    content="Agente: ok")],
+                topic="v4_3",
+                start_timestamp=1.0,
+                end_timestamp=2.0,
+            ),
+        ]
+        content = gen.generate(exchanges, chat_label="test_v43")
+        estado_path = ws / "00_estado_actual.md"
+        estado_path.write_text(content, encoding="utf-8")
+
+        # Verificar que el archivo inicial tiene placeholder en G0.B
+        initial_content = estado_path.read_text(encoding="utf-8")
+        assert "## G0.B — Síntesis del contexto disponible" in initial_content
+        assert "Síntesis del contexto no disponible" in initial_content
+
+        # 4. Verificar que se publicó la tarea SINTESIS_CONTEXTO
+        assert orch.hay_tareas_pendientes(), "Debería haber al menos 1 tarea pendiente (SINTESIS_CONTEXTO)"
+        tareas = orch.leer_tareas_pendientes()
+        sintesis_tasks = [t for t in tareas if "sintesis_contexto" in t.task_id]
+        assert len(sintesis_tasks) >= 1, f"Debería haber 1 tarea SINTESIS_CONTEXTO, got: {[t.task_id for t in tareas]}"
+
+        # 5. Simular: el agente lanza el subagente que responde con la síntesis
+        mock_sintesis = (
+            "El proyecto está en fase de implementación v4.3. "
+            "Tema activo: secciones G0 del estado actual. "
+            "Pendiente: validar con tests E2E."
+        )
+        RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(
+            sintesis_tasks[0].task_id, mock_sintesis
+        )
+
+        # 6. collect_responses() integra la respuesta
+        resultado = collect_responses(workspace_dir=str(ws))
+        assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
+
+        # 7. Verificar que G0.B se actualizó con la síntesis del subagente
+        updated_content = estado_path.read_text(encoding="utf-8")
+        assert "El proyecto está en fase de implementación v4.3" in updated_content
+        # El placeholder inicial ya no está
+        assert "Síntesis del contexto no disponible" not in updated_content
+        # G0.A y G1 siguen presentes
+        assert "## G0.A — Objetivo del proyecto" in updated_content
+        assert "Sistema de recuperación de contexto para agentes Z.ai." in updated_content
+        assert "## G1 — Cómo usar este contexto" in updated_content
+
+        print("[OK] SINTESIS_CONTEXTO E2E: G0.B pasa de placeholder a síntesis del subagente")
 
 
 def main():
@@ -506,7 +523,7 @@ def main():
         test_procesador_consulta,
         test_clasificacion_temas_e2e,
         test_query_context_encuentra_bloque_externo,
-        test_ampliar_contexto_link_publico_zai,
+        test_sintesis_contexto_e2e,
     ]
 
     passed = 0

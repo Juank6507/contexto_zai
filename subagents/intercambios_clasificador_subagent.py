@@ -102,6 +102,13 @@ class ModoClasificador(str, Enum):
     # específicos. Devuelve lista de SubtemaPropuesta (subtema + descripción + ids).
     CLASIFICACION_TEMAS = "clasificacion_temas"
 
+    # v4.3: sintetizar el panorama del proyecto a partir del contexto disponible.
+    # Recibe los 3 archivos de recuperación + objetivo del proyecto + resúmenes
+    # de otros bloques. Devuelve texto plano con un resumen ejecutivo del
+    # estado actual del proyecto (qué temas están activos, qué se decide,
+    # qué falta por hacer).
+    SINTESIS_CONTEXTO = "sintesis_contexto"
+
     # M8: responder consulta sobre un bloque.
     # Devuelve texto plano con respuesta completa y abarcadora.
     CONSULTA_BLOQUE = "consulta_bloque"
@@ -250,6 +257,10 @@ class IntercambiosClasificadorSubagent(
             # tema_padre se pasa vía self._pregunta (convención reutilizada)
             tema_padre = self._pregunta or "tema"
             prompt = self._prompt_clasificacion_temas(context_text, tema_padre)
+        elif self._modo == ModoClasificador.SINTESIS_CONTEXTO:
+            # El contexto adicional (objetivo, índice, decisiones, resúmenes)
+            # se pasa vía self._pregunta como texto concatenado.
+            prompt = self._prompt_sintesis_contexto(context_text, self._pregunta)
         else:
             # No debería llegar aquí (Enum cubre todos los casos)
             raise ValueError(f"Modo no soportado: {self._modo}")
@@ -270,6 +281,7 @@ class IntercambiosClasificadorSubagent(
             - DECISIONES: list[Decision]
             - NOMBRE_LEGIBLE: str
             - CLASIFICACION_TEMAS: list[SubtemaPropuesta]
+            - SINTESIS_CONTEXTO: str
             - CONSULTA_BLOQUE: str
         """
         if self._modo == ModoClasificador.RESTRICCIONES_TEMA:
@@ -282,6 +294,8 @@ class IntercambiosClasificadorSubagent(
             return self._parse_nombre_legible(raw)
         elif self._modo == ModoClasificador.CLASIFICACION_TEMAS:
             return self._parse_clasificacion_temas(raw)
+        elif self._modo == ModoClasificador.SINTESIS_CONTEXTO:
+            return raw.strip()
         elif self._modo == ModoClasificador.CONSULTA_BLOQUE:
             return raw.strip()
         else:
@@ -556,6 +570,54 @@ EXCHANGES: <id1>, <id2>
 - Si no encuentras subdivisión posible, responde exactamente:
 
   NO_SUBDIVISION
+
+Respuesta:"""
+
+    def _prompt_sintesis_contexto(
+        self,
+        context_text: str,
+        contexto_adicional: Optional[str],
+    ) -> str:
+        """Prompt para SINTESIS_CONTEXTO (v4.3): sintetiza el panorama del proyecto.
+
+        Recibe los intercambios recientes (context_text) y un contexto adicional
+        (contexto_adicional) que incluye el objetivo del proyecto, el índice de
+        recuperación, las decisiones clave, y los resúmenes de otros bloques.
+
+        Devuelve un texto plano de máximo ~1.500 caracteres con el panorama
+        actual del proyecto: qué temas están activos, qué se está decidiendo,
+        qué falta por hacer.
+        """
+        extra = contexto_adicional or "(sin contexto adicional disponible)"
+        return f"""Eres un subagente que sintetiza el panorama actual de un proyecto.
+El agente principal necesita, al perder contexto, entender de un vistazo
+en qué estado está el proyecto más allá del último intercambio.
+
+## Intercambios recientes (último tema activo)
+
+{context_text}
+
+## Contexto adicional del proyecto
+
+{extra}
+
+## Tu tarea
+
+1. Lee los intercambios recientes y el contexto adicional.
+2. Identifica qué temas están activos en el proyecto ahora mismo.
+3. Identifica qué se está decidiendo o qué decisiones están pendientes.
+4. Identifica qué falta por hacer (tareas abiertas, entregables pendientes).
+5. Si el objetivo del proyecto está declarado, relaciona el estado actual con ese objetivo.
+
+## Formato de respuesta
+
+Devuelve un texto plano (sin headers markdown, sin prefijos como "SINTESIS:").
+Máximo ~1.500 caracteres. Sé conciso pero abarcador — el agente va a leer esto
+como su primera pieza de contexto al recuperarse.
+
+Si no hay suficiente contexto para generar una síntesis útil, responde exactamente:
+
+SIN_SINTESIS_POSIBLE
 
 Respuesta:"""
 
@@ -961,5 +1023,51 @@ EXCHANGES: 3, 4"""
     assert "SUBTEMA:" in prompt_bp
     assert "EXCHANGES:" in prompt_bp
     print(f"[OK] build_prompt CLASIFICACION_TEMAS: incluye tema_padre y formato SUBTEMA/EXCHANGES")
+
+    # Test 16 (F1 v4.3): modo SINTESIS_CONTEXTO devuelve texto plano
+    def mock_invoker_sintesis(prompt: str) -> str:
+        return ("El proyecto está en fase de implementación del sistema de recuperación "
+                "de contexto. Temas activos: unificación de bloques externos, fix de bugs "
+                "detectados por el agente APA. Pendiente: tests E2E y validación final.")
+
+    launcher_sint = SubagentLauncher(task_invoker=mock_invoker_sintesis)
+    sub_sint = IntercambiosClasificadorSubagent(
+        launcher=launcher_sint,
+        modo=ModoClasificador.SINTESIS_CONTEXTO,
+        pregunta="Objetivo: sistema de recuperación de contexto. Índice: 5 bloques.",
+    )
+    result_sint = sub_sint.run(exchanges)
+    assert result_sint.success
+    assert isinstance(result_sint.resultado, str)
+    assert "recuperación" in result_sint.resultado or "contexto" in result_sint.resultado
+    print(f"[OK] Modo SINTESIS_CONTEXTO: devuelve texto plano con síntesis del proyecto")
+
+    # Test 17 (F1 v4.3): SINTESIS_CONTEXTO con SIN_SINTESIS_POSIBLE
+    def mock_invoker_sin_sintesis(prompt: str) -> str:
+        return "SIN_SINTESIS_POSIBLE"
+
+    launcher_ss = SubagentLauncher(task_invoker=mock_invoker_sin_sintesis)
+    sub_ss = IntercambiosClasificadorSubagent(
+        launcher=launcher_ss,
+        modo=ModoClasificador.SINTESIS_CONTEXTO,
+        pregunta="contexto adicional",
+    )
+    result_ss = sub_ss.run(exchanges)
+    assert result_ss.success
+    assert result_ss.resultado == "SIN_SINTESIS_POSIBLE"
+    print(f"[OK] Modo SINTESIS_CONTEXTO: SIN_SINTESIS_POSIBLE se devuelve literal")
+
+    # Test 18 (F1 v4.3): build_prompt de SINTESIS_CONTEXTO incluye intercambios + contexto adicional
+    sub_bp_sint = IntercambiosClasificadorSubagent(
+        launcher=launcher,
+        modo=ModoClasificador.SINTESIS_CONTEXTO,
+        pregunta="Objetivo: proyecto X. Decisiones: usar OOP.",
+    )
+    prompt_bp_sint, _files, _rec = sub_bp_sint.build_prompt(exchanges)
+    assert "panorama" in prompt_bp_sint.lower()
+    assert "Objetivo: proyecto X" in prompt_bp_sint
+    assert "Decisiones: usar OOP" in prompt_bp_sint
+    assert "SIN_SINTESIS_POSIBLE" in prompt_bp_sint
+    print(f"[OK] build_prompt SINTESIS_CONTEXTO: incluye intercambios + contexto adicional + caso SIN_SINTESIS_POSIBLE")
 
     print("\n[PASS] intercambios_clasificador_subagent.py: todos los tests pasaron")
