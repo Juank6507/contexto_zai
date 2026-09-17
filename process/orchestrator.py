@@ -154,7 +154,9 @@ class Orchestrator:
                 success=result.success,
                 cycle_used="incremental",
                 exchanges_processed=result.new_exchanges_count,
-                files_updated=result.new_blocks_count,
+                # v4.3 fix Bug B: el campo correcto es files_generated (no files_updated).
+                # OrchestratorResult no tiene files_updated; usar files_generated.
+                files_generated=result.new_blocks_count,
                 error=result.error,
             )
         else:
@@ -284,6 +286,23 @@ if __name__ == "__main__":
     orch = Orchestrator(chat_id="abc-123-def", jwt="x")
     assert "abc-123" in repr(orch)
     print(f"[OK] repr: {orch!r}")
+
+    # Test 6 (v4.3 fix Bug B): OrchestratorResult NO tiene campo files_updated
+    # Bug B original: IncrementalCycle devolvía files_updated=... pero la dataclass
+    # no tenía ese campo → TypeError. Fix: usar files_generated.
+    import inspect as _inspect_b
+    sig_fields = set(_inspect_b.signature(OrchestratorResult).parameters.keys())
+    assert "files_updated" not in sig_fields, \
+        "Bug B: files_updated NO debe existir en OrchestratorResult"
+    assert "files_generated" in sig_fields, \
+        "Bug B fix: files_generated debe existir en OrchestratorResult"
+    # Verificar que se puede construir sin files_updated y con files_generated
+    r_b = OrchestratorResult(
+        success=True, cycle_used="incremental",
+        exchanges_processed=5, files_generated=3, error="",
+    )
+    assert r_b.files_generated == 3
+    print(f"[OK] Fix Bug B: OrchestratorResult usa files_generated (no files_updated)")
 
     print("\n[PASS] orchestrator.py: tests basicos pasaron")
     print("   Tests de integracion: tests/test_orchestrator.py")

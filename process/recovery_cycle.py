@@ -107,24 +107,13 @@ class RecoveryCycle:
 
     Args:
         jwt: JWT del Director (para autenticación).
-        chat_id: UUID interno del chat. Opcional si se pasa ``share_id``
-            externo (se descubre del árbol del share).
+        chat_id: UUID interno del chat.
         workspace_dir: Directorio del workspace (donde viven los archivos).
         download_dir: Directorio de descarga (copia para el Director).
         decision_extractor: Extractor LLM de decisiones (opcional).
-        share_id: UUID de un share público existente (opcional, v4.2).
-            Si se pasa, el ciclo NO crea su propio share vía
-            ``AuthClient.create_share()`` — usa este ``share_id``
-            directamente para leer el chat compartido. Esto permite
-            procesar chats de otras sesiones/agentes a partir de un
-            link ``/s/`` o ``/c/`` de Z.ai.
 
     Usage:
-        >>> # Caso 1: chat actual del agente (chat_id propio + JWT)
         >>> cycle = RecoveryCycle(jwt="...", chat_id="...")
-        >>> result = cycle.run()
-        >>> # Caso 2: chat externo vía share público (link /s/ de otro agente)
-        >>> cycle = RecoveryCycle(jwt="...", chat_id="", share_id="abc-123")
         >>> result = cycle.run()
     """
 
@@ -265,28 +254,18 @@ class RecoveryCycle:
                 # descubrirlo del árbol para que los pasos siguientes
                 # (metadata, logging) lo tengan.
                 if not self._chat_id:
-                    discovered_chat_id = (
-                        raw_messages.get("chat", {}).get("id", "")
-                        if isinstance(raw_messages, dict)
-                        else ""
-                    )
-                    # Si raw_messages no trae el árbol completo, hacer una
-                    # llamada directa a get_message_tree para descubrirlo.
-                    if not discovered_chat_id:
-                        try:
-                            tree_data = client.get_message_tree(share_id)
-                            discovered_chat_id = (
-                                tree_data.get("chat", {}).get("id", "")
+                    try:
+                        tree_data = client.get_message_tree(share_id)
+                        discovered_chat_id = tree_data.get("chat", {}).get("id", "")
+                        if discovered_chat_id:
+                            self._chat_id = discovered_chat_id
+                            logger.info(
+                                "chat_id descubierto del share externo: %s",
+                                self._chat_id,
                             )
-                        except Exception as e:
-                            logger.warning(
-                                "No se pudo descubrir el chat_id del árbol: %s", e
-                            )
-                    if discovered_chat_id:
-                        self._chat_id = discovered_chat_id
-                        logger.info(
-                            "chat_id descubierto del share externo: %s",
-                            self._chat_id,
+                    except Exception as e:
+                        logger.warning(
+                            "No se pudo descubrir el chat_id del árbol: %s", e
                         )
 
             if not messages:
@@ -720,6 +699,27 @@ if __name__ == "__main__":
         assert cycle._recovery_gen is not None
         assert cycle._metadata_mgr is not None
         print(f"[OK] Construccion con componentes inyectados")
+
+    # Test 1b (v4.2 Bug A fix): RecoveryCycle acepta share_id opcional
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cycle_share = RecoveryCycle(
+            jwt="fake-jwt",
+            chat_id="",  # vacío: se descubre del árbol del share
+            workspace_dir=tmpdir,
+            share_id="abc-123-share-id",
+        )
+        assert cycle_share._share_id_externo == "abc-123-share-id"
+        print(f"[OK] RecoveryCycle acepta share_id externo (link /s/)")
+
+    # Test 1c (v4.2): sin share_id, _share_id_externo es None (backward compatible)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cycle_no_share = RecoveryCycle(
+            jwt="fake-jwt",
+            chat_id="fake-chat-id",
+            workspace_dir=tmpdir,
+        )
+        assert cycle_no_share._share_id_externo is None
+        print(f"[OK] RecoveryCycle sin share_id: backward compatible (_share_id_externo=None)")
 
     # Test 2: paths multiplataforma (no hardcodear /home/z/...)
     with tempfile.TemporaryDirectory() as tmpdir:

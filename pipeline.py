@@ -74,7 +74,7 @@ def run(
         share_id: UUID de un share público existente (opcional, v4.2).
             Si se pasa, el proceso NO crea su propio share y usa este
             ``share_id`` para leer un chat compartido externo (link
-            ``/s/`` o ``/c/`` de otra sesión del agente).
+            ``/s/`` de otra sesión del agente).
 
     Returns:
         OrchestratorResult con el resultado de la activación.
@@ -628,44 +628,43 @@ def collect_responses(
 # -- v4.0: Ampliación de contexto desde fuentes externas (M9) ----------------
 
 
-def _extraer_share_id_de_link(url: str) -> Optional[str]:
-    """v4.2: Extrae el ``share_id`` de un link ``/s/`` o ``/c/`` de Z.ai.
-
-    Soporta varios formatos posibles:
-        - https://chat.z.ai/s/<uuid>
-        - https://chat.z.ai/c/<uuid>
-        - https://chat.z.ai/s/<uuid>?query=...
-        - http://chat.z.ai/s/<uuid>#
+def _extraer_id_de_link(url: str, tipo: str = "share") -> Optional[str]:
+    """v4.2: Extrae el ``id`` de un link ``/s/`` o ``/c/`` de Z.ai.
 
     Args:
         url: URL del link de Z.ai.
+        tipo: "share" para ``/s/<share_id>`` (link público de un chat
+            compartido) o "chat" para ``/c/<chat_id>`` (link de un
+            chat completo).
 
     Returns:
-        El ``share_id`` (string) o ``None`` si no se pudo extraer.
+        El ``share_id`` o ``chat_id`` extraído (string), o ``None`` si
+        no se pudo extraer.
 
     Example:
-        >>> _extraer_share_id_de_link("https://chat.z.ai/s/abc-123-def")
+        >>> _extraer_id_de_link("https://chat.z.ai/s/abc-123-def", "share")
         'abc-123-def'
-        >>> _extraer_share_id_de_link("https://chat.z.ai/s/abc-123?ref=x")
+        >>> _extraer_id_de_link("https://chat.z.ai/c/xyz-789", "chat")
+        'xyz-789'
+        >>> _extraer_id_de_link("https://chat.z.ai/s/abc-123?ref=x", "share")
         'abc-123'
-        >>> _extraer_share_id_de_link("https://example.com/otra") is None
+        >>> _extraer_id_de_link("https://example.com/otra", "share") is None
         True
     """
-    from urllib.parse import urlparse, parse_qs, unquote
     import re as _re
-
     if not url or not isinstance(url, str):
         return None
-
-    # Patron: /s/<uuid> o /c/<uuid> (cualquier longitud de uuid, con guiones o no)
-    # El uuid puede contener: letras, numeros, guiones.
-    match = _re.search(r"/[sc]/([A-Za-z0-9\-]+)", url)
+    # tipo="share" → /s/<id>, tipo="chat" → /c/<id>
+    prefijo = "s" if tipo == "share" else "c"
+    # Patrón: /<prefijo>/<id> donde id puede contener letras, números, guiones.
+    # Query strings y fragmentos se descartan.
+    match = _re.search(rf"/{prefijo}/([A-Za-z0-9\-]+)", url)
     if not match:
         return None
-    share_id = match.group(1)
-    # Quitar cualquier sufijo de query string o fragmento (defensivo)
-    share_id = share_id.split("?")[0].split("#")[0]
-    return share_id if share_id else None
+    id_extraido = match.group(1)
+    # Quitar sufijos de query string o fragmento (defensivo)
+    id_extraido = id_extraido.split("?")[0].split("#")[0]
+    return id_extraido if id_extraido else None
 
 
 def ampliar_contexto(
@@ -718,46 +717,97 @@ def ampliar_contexto(
     workspace = Path(workspace_dir)
     metadata = metadata or {}
 
-    # 1. v4.2: Si es URL de Z.ai (/s/ o /c/), enrutar a pipeline.run(share_id=...).
-    # No se rechaza el link — se procesa como recuperación completa (con los
-    # 3 archivos de recuperación) porque puede ser una sesión anterior del
-    # agente cuya reanudación requiere estado actual + índice + decisiones.
-    if source_type == "url" and ("chat.z.ai/s/" in source_path or "chat.z.ai/c/" in source_path):
-        share_id = _extraer_share_id_de_link(source_path)
-        if not share_id:
+    # 1. v4.2: Si es URL de Z.ai, distinguir /s/ (share público) de /c/ (chat completo).
+    # Ambos se procesan como recuperación completa (con los 3 archivos de
+    # recuperación), porque pueden ser una sesión anterior del agente cuya
+    # reanudación requiere estado actual + índice + decisiones.
+    if source_type == "url" and "chat.z.ai/" in source_path:
+        # v4.2 Bug A fix: distinguir /s/ (share) de /c/ (chat completo).
+        # /s/<share_id> → flujo share público: pipeline.run(chat_id="", share_id=...)
+        # /c/<chat_id>  → flujo chat_id normal: pipeline.run(chat_id=..., share_id=None)
+        es_link_share = "/s/" in source_path
+        es_link_chat = "/c/" in source_path
+
+        if es_link_share:
+            share_id_extraido = _extraer_id_de_link(source_path, "share")
+            if not share_id_extraido:
+                return {
+                    "error": f"No se pudo extraer el share_id del link /s/: {source_path}. "
+                    f"Formato esperado: https://chat.z.ai/s/<uuid>."
+                }
+            logger.info(
+                "ampliar_contexto: link /s/ de Z.ai detectado, share_id='%s' — "
+                "procesando como recuperación (vía pipeline.run)",
+                share_id_extraido,
+            )
+            # JWT: del metadata o del parámetro jwt
+            jwt_para_run = metadata.get("jwt", "") if isinstance(metadata, dict) else ""
+            if not jwt_para_run and jwt:
+                jwt_para_run = jwt
+            if not jwt_para_run:
+                return {
+                    "error": "Se requiere JWT del Director para procesar un link /s/ "
+                    "de Z.ai. Pásalo en metadata={'jwt': '...'}."
+                }
+            resultado = run(
+                chat_id="",  # se descubre del árbol del share
+                jwt=jwt_para_run,
+                workspace_dir=workspace_dir,
+                download_dir=workspace,  # mismo dir
+                share_id=share_id_extraido,
+            )
             return {
-                "error": f"No se pudo extraer el share_id del link: {source_path}. "
-                f"Formato esperado: https://chat.z.ai/s/<uuid> o /c/<uuid>."
+                "procesado_como_recuperacion": True,
+                "tipo_link": "share_publico",
+                "share_id": share_id_extraido,
+                "success": resultado.success,
+                "cycle_used": resultado.cycle_used,
+                "exchanges_processed": resultado.exchanges_processed,
+                "files_generated": resultado.files_generated,
+                "error": resultado.error,
+                "pending_tasks": resultado.pending_tasks,
             }
-        logger.info(
-            "ampliar_contexto: link /s/ de Z.ai detectado, share_id='%s' — "
-            "procesando como recuperación (vía pipeline.run)",
-            share_id,
-        )
-        # El JWT viene del metadata o, si no, debe proveerse externamente.
-        jwt_para_run = metadata.get("jwt", "") if isinstance(metadata, dict) else ""
-        if not jwt_para_run:
+
+        elif es_link_chat:
+            chat_id_extraido = _extraer_id_de_link(source_path, "chat")
+            if not chat_id_extraido:
+                return {
+                    "error": f"No se pudo extraer el chat_id del link /c/: {source_path}. "
+                    f"Formato esperado: https://chat.z.ai/c/<uuid>."
+                }
+            logger.info(
+                "ampliar_contexto: link /c/ de Z.ai detectado, chat_id='%s' — "
+                "procesando como recuperación (vía pipeline.run)",
+                chat_id_extraido,
+            )
+            # JWT: del metadata o del parámetro jwt
+            jwt_para_run = metadata.get("jwt", "") if isinstance(metadata, dict) else ""
+            if not jwt_para_run and jwt:
+                jwt_para_run = jwt
+            if not jwt_para_run:
+                return {
+                    "error": "Se requiere JWT del Director para procesar un link /c/ "
+                    "de Z.ai. Pásalo en metadata={'jwt': '...'}."
+                }
+            # /c/ usa el flujo normal de create_share(chat_id)
+            resultado = run(
+                chat_id=chat_id_extraido,
+                jwt=jwt_para_run,
+                workspace_dir=workspace_dir,
+                download_dir=workspace,
+                share_id=None,  # se crea con create_share(chat_id)
+            )
             return {
-                "error": "Se requiere JWT del Director para procesar un link /s/ "
-                "de Z.ai. Pásalo en metadata={'jwt': '...'}."
+                "procesado_como_recuperacion": True,
+                "tipo_link": "chat_completo",
+                "chat_id": chat_id_extraido,
+                "success": resultado.success,
+                "cycle_used": resultado.cycle_used,
+                "exchanges_processed": resultado.exchanges_processed,
+                "files_generated": resultado.files_generated,
+                "error": resultado.error,
+                "pending_tasks": resultado.pending_tasks,
             }
-        resultado = run(
-            chat_id="",  # se descubre del árbol del share
-            jwt=jwt_para_run,
-            workspace_dir=workspace_dir,
-            download_dir=workspace,  # mismo dir; no se usa download externo aquí
-            share_id=share_id,
-        )
-        return {
-            "procesado_como_recuperacion": True,
-            "share_id": share_id,
-            "success": resultado.success,
-            "cycle_used": resultado.cycle_used,
-            "exchanges_processed": resultado.exchanges_processed,
-            "files_generated": resultado.files_generated,
-            "error": resultado.error,
-            "pending_tasks": resultado.pending_tasks,
-        }
 
     # 2. Obtener el contenido
     temp_path = None
@@ -843,9 +893,10 @@ def ampliar_contexto(
     ATTACHMENTS_INDEXED_DIR.mkdir(parents=True, exist_ok=True)
     indexed_path = ATTACHMENTS_INDEXED_DIR / safe_filename
     if temp_path.exists():
-        # v4.2: Path.rename() en Windows lanza FileExistsError si el destino
-        # ya existe; en Linux lo sobrescribe. Para comportamiento cross-platform
-        # consistente, eliminamos el destino si existe antes de renombrar.
+        # v4.2 fix Windows: Path.rename() en Windows lanza FileExistsError si
+        # el destino ya existe; en Linux lo sobrescribe. Para comportamiento
+        # cross-platform consistente, eliminamos el destino si existe antes
+        # de renombrar (igual que documento_indexer_subagent.py líneas 247-249).
         if indexed_path.exists():
             indexed_path.unlink()
         temp_path.rename(indexed_path)
@@ -1160,27 +1211,42 @@ if __name__ == "__main__":
     assert "no encontrado" in result["error"].lower()
     print(f"[OK] ampliar_contexto archivo inexistente: error reportado")
 
-    # Test 21 (v4.2): ampliar_contexto con URL de chat de Z.ai (/s/)
-    # v4.2: ya NO se rechaza — se enruta a pipeline.run(share_id=...).
-    # Sin JWT en metadata, debe pedirlo explícitamente.
+    # Test 21 (v4.2 Bug A fix): ampliar_contexto con link /s/ de Z.ai
+    # v4.2: ya NO se rechaza — se distingue /s/ (share público) de /c/ (chat completo).
+    # Sin JWT, debe pedirlo explícitamente.
     result_sin_jwt = ampliar_contexto("url", "https://chat.z.ai/s/abc-123")
     assert "error" in result_sin_jwt
     assert "JWT" in result_sin_jwt["error"]
     print(f"[OK] ampliar_contexto URL /s/ sin JWT: pide JWT en metadata")
 
-    # Test 21b (v4.2): ampliar_contexto con link mal formado (sin share_id)
+    # Test 21b (v4.2 Bug A fix): ampliar_contexto con link /c/ sin JWT
+    result_c_sin_jwt = ampliar_contexto("url", "https://chat.z.ai/c/xyz-789")
+    assert "error" in result_c_sin_jwt
+    assert "JWT" in result_c_sin_jwt["error"]
+    print(f"[OK] ampliar_contexto URL /c/ sin JWT: pide JWT en metadata")
+
+    # Test 21c (v4.2 Bug A fix): link /s/ mal formado (sin share_id)
     result_mal = ampliar_contexto("url", "https://chat.z.ai/s/")
     assert "error" in result_mal
     assert "share_id" in result_mal["error"]
     print(f"[OK] ampliar_contexto URL /s/ sin share_id: error claro")
 
-    # Test 21c (v4.2): _extraer_share_id_de_link parsea correctamente
-    assert _extraer_share_id_de_link("https://chat.z.ai/s/abc-123-def") == "abc-123-def"
-    assert _extraer_share_id_de_link("https://chat.z.ai/c/xyz-789") == "xyz-789"
-    assert _extraer_share_id_de_link("https://chat.z.ai/s/abc-123?ref=x") == "abc-123"
-    assert _extraer_share_id_de_link("https://example.com/otra") is None
-    assert _extraer_share_id_de_link("") is None
-    print(f"[OK] _extraer_share_id_de_link: parsea /s/, /c/, query, vacío, inválido")
+    # Test 21d (v4.2 Bug A fix): _extraer_id_de_link parsea /s/ y /c/ correctamente
+    assert _extraer_id_de_link("https://chat.z.ai/s/abc-123-def", "share") == "abc-123-def"
+    assert _extraer_id_de_link("https://chat.z.ai/c/xyz-789", "chat") == "xyz-789"
+    assert _extraer_id_de_link("https://chat.z.ai/s/abc-123?ref=x", "share") == "abc-123"
+    assert _extraer_id_de_link("https://chat.z.ai/s/abc-123#frag", "share") == "abc-123"
+    assert _extraer_id_de_link("https://example.com/otra", "share") is None
+    assert _extraer_id_de_link("", "share") is None
+    assert _extraer_id_de_link("https://chat.z.ai/s/abc", "chat") is None  # tipo incorrecto
+    assert _extraer_id_de_link("https://chat.z.ai/c/abc", "share") is None  # tipo incorrecto
+    print(f"[OK] _extraer_id_de_link: parsea /s/, /c/, query, fragmento, vacío, inválido")
+
+    # Test 21e (v4.2 Bug A fix): ampliar_contexto con link /c/ mal formado
+    result_c_mal = ampliar_contexto("url", "https://chat.z.ai/c/")
+    assert "error" in result_c_mal
+    assert "chat_id" in result_c_mal["error"]
+    print(f"[OK] ampliar_contexto URL /c/ sin chat_id: error claro")
 
     # Test 22 (v4.0): ampliar_contexto con source_type inválido
     result = ampliar_contexto("invalid", "/path/to/file")
@@ -1201,8 +1267,8 @@ if __name__ == "__main__":
         assert len(result.get("pending_tasks", [])) >= 1, f"Esperaba al menos 1 tarea, obtuvo: {result}"
         print(f"[OK] ampliar_contexto archivo grande: {len(result.get('pending_tasks', []))} tarea(s) publicada(s)")
 
-    # Test 23b (v4.2): ampliar_contexto archivo grande DOS VECES (sobrescritura indexed/)
-    # Bug detectado en Windows: Path.rename() lanza FileExistsError si el destino ya existe.
+    # Test 23b (v4.2 fix Windows): ampliar_contexto archivo grande DOS VECES (sobrescritura indexed/)
+    # Bug Windows: Path.rename() lanza FileExistsError si el destino ya existe.
     # v4.2: el código elimina el destino antes de renombrar — comportamiento cross-platform.
     with tempfile.TemporaryDirectory() as tmpdir:
         from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
