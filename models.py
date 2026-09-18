@@ -350,17 +350,47 @@ class Decision(BaseModel):
     impact: str = ""
     tema: str = ""
 
-class RecoveryMetadata(BaseModel):
-    """Metadata de recuperación (archivo _metadata.json).
+class ChatInfo(BaseModel):
+    """v4.4: Información de un chat procesado en el workspace.
+
+    Permite que el workspace tenga información de múltiples chats
+    coexistiendo (ampliación de contexto desde varios chats).
 
     Attributes:
         chat_id: UUID interno del chat.
-        share_id: UUID del share.
-        ultimo_timestamp: Último mensaje procesado (para incremental).
-        total_exchanges: Total de exchanges procesados.
+        share_id: UUID del share si se procesó por link /s/.
+        ultimo_timestamp: Último mensaje procesado de este chat.
+        total_exchanges: Total de intercambios procesados de este chat.
+    """
+
+    chat_id: str = ""
+    share_id: str = ""
+    ultimo_timestamp: float = 0.0
+    total_exchanges: int = 0
+
+
+class RecoveryMetadata(BaseModel):
+    """Metadata de recuperación (archivo _metadata.json).
+
+    v4.4: soporta múltiples chats coexistiendo en el workspace.
+    El campo ``chats_procesados`` es una lista de ``ChatInfo``,
+    cada uno con su ``chat_id``, ``ultimo_timestamp`` y ``share_id``.
+
+    Para compatibilidad con versiones anteriores (v4.3 y anteriores),
+    los campos ``chat_id``, ``share_id`` y ``ultimo_timestamp`` siguen
+    existiendo como campos del "chat activo" (el último procesado).
+    La migración del formato viejo al nuevo es automática al leer.
+
+    Attributes:
+        chat_id: UUID del chat activo (último procesado).
+        share_id: UUID del share del chat activo.
+        ultimo_timestamp: Último mensaje procesado del chat activo.
+        total_exchanges: Total de exchanges del chat activo.
         tema_a_archivo: Mapeo tema -> archivo (unicidad garantizada).
         subtemas_derivados: Registro de subtemas creados al subdividir.
         ultima_activacion: ISO timestamp de la última activación.
+        chats_procesados: Lista de chats procesados (v4.4 multi-chat).
+        archivo_a_source: Mapeo archivo -> información de procedencia (v4.4).
     """
 
     chat_id: str = ""
@@ -370,6 +400,9 @@ class RecoveryMetadata(BaseModel):
     tema_a_archivo: dict[str, str] = Field(default_factory=dict)
     subtemas_derivados: dict[str, list[str]] = Field(default_factory=dict)
     ultima_activacion: str = ""
+    # v4.4: soporte multi-chat
+    chats_procesados: list[ChatInfo] = Field(default_factory=list)
+    archivo_a_source: dict[str, dict] = Field(default_factory=dict)
 
     def archivo_para_tema(self, tema: str) -> str | None:
         """Devuelve el archivo que contiene el tema, o None si no existe."""
@@ -395,6 +428,76 @@ class RecoveryMetadata(BaseModel):
             self.subtemas_derivados[tema_padre] = []
         if subtema not in self.subtemas_derivados[tema_padre]:
             self.subtemas_derivados[tema_padre].append(subtema)
+
+    # -- v4.4: Métodos multi-chat ----------------------------------
+
+    def registrar_chat(
+        self,
+        chat_id: str,
+        share_id: str = "",
+        ultimo_timestamp: float = 0.0,
+        total_exchanges: int = 0,
+    ) -> None:
+        """v4.4: Registra o actualiza un chat en ``chats_procesados``.
+
+        Si el chat ya existe en la lista, actualiza sus campos.
+        Si no existe, lo añade.
+
+        Args:
+            chat_id: UUID interno del chat.
+            share_id: UUID del share (si se procesó por link /s/).
+            ultimo_timestamp: Último mensaje procesado de este chat.
+            total_exchanges: Total de intercambios procesados de este chat.
+        """
+        for chat in self.chats_procesados:
+            if chat.chat_id == chat_id:
+                chat.share_id = share_id or chat.share_id
+                chat.ultimo_timestamp = max(chat.ultimo_timestamp, ultimo_timestamp)
+                chat.total_exchanges = max(chat.total_exchanges, total_exchanges)
+                return
+        self.chats_procesados.append(ChatInfo(
+            chat_id=chat_id,
+            share_id=share_id,
+            ultimo_timestamp=ultimo_timestamp,
+            total_exchanges=total_exchanges,
+        ))
+
+    def buscar_chat(self, chat_id: str) -> Optional[ChatInfo]:
+        """v4.4: Busca un chat en ``chats_procesados`` por su ``chat_id``.
+
+        Returns:
+            ``ChatInfo`` si lo encuentra, ``None`` si no.
+        """
+        for chat in self.chats_procesados:
+            if chat.chat_id == chat_id:
+                return chat
+        return None
+
+    def actualizar_timestamp_chat(self, chat_id: str, nuevo_ts: float) -> bool:
+        """v4.4: Actualiza el ``ultimo_timestamp`` de un chat específico.
+
+        Returns:
+            ``True`` si se actualizó, ``False`` si el chat no estaba.
+        """
+        chat = self.buscar_chat(chat_id)
+        if chat:
+            chat.ultimo_timestamp = max(chat.ultimo_timestamp, nuevo_ts)
+            return True
+        return False
+
+    def _migrar_formato_viejo(self) -> None:
+        """v4.4: Migra el formato viejo (sin ``chats_procesados``) al nuevo.
+
+        Si ``chats_procesados`` está vacío pero ``chat_id`` tiene valor,
+        crea una entrada en ``chats_procesados`` con los datos del chat activo.
+        """
+        if not self.chats_procesados and self.chat_id:
+            self.chats_procesados.append(ChatInfo(
+                chat_id=self.chat_id,
+                share_id=self.share_id,
+                ultimo_timestamp=self.ultimo_timestamp,
+                total_exchanges=self.total_exchanges,
+            ))
 
 class DetectionTrigger(str, Enum):
     """Tipos de disparador de la recuperación de contexto."""

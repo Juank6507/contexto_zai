@@ -507,6 +507,105 @@ def test_sintesis_contexto_e2e():
         print("[OK] SINTESIS_CONTEXTO E2E: G0.B pasa de placeholder a síntesis del subagente")
 
 
+def test_orchestrator_4_casos_decision():
+    """E2E v4.4 F1: el Orchestrator distingue mismo chat de otro chat.
+
+    Simula los 4 casos:
+    1. Primera vez (sin metadata) → recovery.
+    2. Mismo chat (metadata con mismo chat_id) → incremental.
+    3. Otro chat distinto (metadata con distinto chat_id) → recovery.
+    """
+    from unittest.mock import patch
+    from contexto_zai.process.orchestrator import Orchestrator, OrchestratorResult
+    from contexto_zai.models import DetectionTrigger
+
+    # Caso 1: primera vez (sin metadata)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        orch = Orchestrator(chat_id="chat-A", jwt="fake", workspace_dir=tmpdir)
+        with patch.object(orch, "_ejecutar_recovery", return_value=OrchestratorResult(
+            success=True, cycle_used="recovery", exchanges_processed=10, files_generated=5
+        )) as mock_r:
+            with patch.object(orch, "_ejecutar_incremental") as mock_i:
+                result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_r.assert_called_once()
+                mock_i.assert_not_called()
+                assert result.cycle_used == "recovery"
+        print("[OK] F1 E2E Caso 1 (primera vez): recovery")
+
+    # Caso 2/3: mismo chat
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
+            "chat_id": "chat-A", "share_id": "share-A",
+            "ultimo_timestamp": 1000, "total_exchanges": 50,
+            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "ultima_activacion": "2026-09-15T00:00:00Z",
+        }), encoding="utf-8")
+        orch = Orchestrator(chat_id="chat-A", jwt="fake", workspace_dir=tmpdir)
+        with patch.object(orch, "_ejecutar_incremental", return_value=OrchestratorResult(
+            success=True, cycle_used="incremental", exchanges_processed=5, files_generated=2
+        )) as mock_i:
+            with patch.object(orch, "_ejecutar_recovery") as mock_r:
+                result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_i.assert_called_once()
+                mock_r.assert_not_called()
+                assert result.cycle_used == "incremental"
+        print("[OK] F1 E2E Caso 2/3 (mismo chat): incremental")
+
+    # Caso 4: otro chat distinto
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
+            "chat_id": "chat-A", "share_id": "share-A",
+            "ultimo_timestamp": 1000, "total_exchanges": 50,
+            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "ultima_activacion": "2026-09-15T00:00:00Z",
+        }), encoding="utf-8")
+        orch = Orchestrator(chat_id="chat-B", jwt="fake", workspace_dir=tmpdir)
+        with patch.object(orch, "_ejecutar_recovery", return_value=OrchestratorResult(
+            success=True, cycle_used="recovery", exchanges_processed=30, files_generated=8
+        )) as mock_r:
+            with patch.object(orch, "_ejecutar_incremental") as mock_i:
+                result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_r.assert_called_once()
+                mock_i.assert_not_called()
+                assert result.cycle_used == "recovery"
+        print("[OK] F1 E2E Caso 4 (otro chat): recovery (no incremental)")
+
+
+def test_query_context_atajo_resumenes():
+    """E2E v4.4 F4: query_context usa resúmenes como atajo.
+
+    Si existe ``04_resumenes_bloques.md`` y un resumen contiene las
+    palabras de la pregunta, query_context devuelve el resumen directamente
+    (modo ``resumen_atajo``) sin preparar prompts para subagentes.
+    """
+    from contexto_zai.pipeline import query_context
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+        # Crear bloque físico
+        (ws / "bloque_01.md").write_text(
+            "# Bloque 01\n\nRESUMEN: Sistema de autenticación JWT con tokens.\n\n## Tema\n\nContenido...",
+            encoding="utf-8",
+        )
+        # Crear 04_resumenes_bloques.md
+        (ws / "04_resumenes_bloques.md").write_text(
+            "# Resúmenes de bloques\n\n## bloque_01.md\n\nSistema de autenticación JWT con tokens.\n",
+            encoding="utf-8",
+        )
+        # Crear _metadata.json con el tema
+        (ws / "_metadata.json").write_text(json.dumps({
+            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+        }), encoding="utf-8")
+
+        # query_context con pregunta que coincide con el resumen
+        result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
+        assert result.get("mode") == "resumen_atajo", \
+            f"Esperaba modo resumen_atajo, obtuvo: {result.get('mode')}"
+        assert "autenticación JWT" in result.get("resumen_atajo", "")
+        assert "prompts" not in result or len(result.get("prompts", [])) == 0
+        print("[OK] F4 E2E atajo de resúmenes: query_context devuelve resumen sin subagente")
+
+
 def main():
     print("=== Tests E2E v4.2 ===\n")
 
@@ -524,6 +623,8 @@ def main():
         test_clasificacion_temas_e2e,
         test_query_context_encuentra_bloque_externo,
         test_sintesis_contexto_e2e,
+        test_orchestrator_4_casos_decision,
+        test_query_context_atajo_resumenes,
     ]
 
     passed = 0

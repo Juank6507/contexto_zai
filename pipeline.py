@@ -514,7 +514,25 @@ def query_context(
         question[:60], len(bloques_a_consultar), total_tokens,
     )
 
-    # 5. Elegir modo según tamaño
+    # 5. v4.4: Atajo de resúmenes (Sistema 2).
+    # Antes de preparar prompts para subagentes, mirar si algún resumen
+    # de los bloques candidatos ya responde la pregunta. Si responde,
+    # el agente puede leer el resumen directamente sin lanzar subagente.
+    resumenes_atajo = _buscar_en_resumenes(workspace, question, bloques_info)
+    if resumenes_atajo:
+        logger.info(
+            "query_context: atajo de resúmenes encontrado (%d chars)",
+            len(resumenes_atajo),
+        )
+        return {
+            "mode": "resumen_atajo",
+            "question": question,
+            "resumen_atajo": resumenes_atajo,
+            "bloques": [b["filename"] for b in bloques_info],
+            "bloques_info": bloques_info,
+        }
+
+    # 6. Elegir modo según tamaño (solo si el atajo no respondió)
     if total_tokens < QUERY_DIRECT_MODE_THRESHOLD_TOKENS:
         modo = "direct"
     else:
@@ -626,6 +644,70 @@ def collect_responses(
 
 
 # -- v4.0: Ampliación de contexto desde fuentes externas (M9) ----------------
+
+
+def _buscar_en_resumenes(
+    workspace: Path,
+    question: str,
+    bloques_info: list[dict],
+) -> Optional[str]:
+    """v4.4: Busca en ``04_resumenes_bloques.md`` como atajo para query_context.
+
+    Lee el archivo de resúmenes (si existe) y busca las palabras de la
+    pregunta en los resúmenes de los bloques candidatos. Si un resumen
+    contiene las palabras clave, lo devuelve como respuesta directa.
+
+    Args:
+        workspace: Directorio del workspace.
+        question: Pregunta del agente.
+        bloques_info: Lista de bloques candidatos (con ``filename``).
+
+    Returns:
+        Texto del resumen si encuentra coincidencia, o ``None`` si no.
+    """
+    resumenes_path = workspace / "04_resumenes_bloques.md"
+    if not resumenes_path.exists():
+        return None
+
+    try:
+        content_original = resumenes_path.read_text(encoding="utf-8")
+        content_lower = content_original.lower()
+    except Exception:
+        return None
+
+    # Palabras clave de la pregunta (mismas que usa query_context)
+    question_lower = question.lower()
+    import re as _re
+    question_words = _re.findall(r"[a-záéíóúñ_]+", question_lower)
+    _stop = {"que", "de", "la", "el", "en", "y", "a", "los", "las", "del",
+             "para", "con", "por", "es", "se", "un", "una", "como", "cual",
+             "cuales", "sobre", "al"}
+    question_words = [w for w in question_words if len(w) > 2 and w not in _stop]
+    if not question_words:
+        return None
+
+    # Bloques candidatos (por filename)
+    candidatos_filenames = {b["filename"] for b in bloques_info}
+
+    # Buscar secciones de resumen por bloque en el archivo original (no lowercase)
+    import re as _re2
+    pattern = _re2.compile(r"##\s*(\S+\.md)\s*\n\n(.*?)(?=\n##\s|\Z)", _re2.DOTALL)
+
+    resultados: list[str] = []
+    for match in pattern.finditer(content_original):
+        filename = match.group(1).strip()
+        resumen = match.group(2).strip()
+        if filename not in candidatos_filenames:
+            continue
+        # ¿El resumen contiene las palabras clave? (buscar en lowercase)
+        resumen_lower = resumen.lower()
+        matches = sum(1 for w in question_words if w in resumen_lower)
+        if matches >= 1:
+            resultados.append(f"**{filename}:**\n{resumen}")
+
+    if resultados:
+        return "\n\n".join(resultados)
+    return None
 
 
 def _extraer_id_de_link(url: str, tipo: str = "share") -> Optional[str]:

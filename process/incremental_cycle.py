@@ -96,9 +96,11 @@ class IncrementalCycle:
         chat_id: str,
         workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
         download_dir: Path | str = DOWNLOAD_OUTPUT_DIR,
+        share_id: Optional[str] = None,
     ) -> None:
         self._jwt = jwt
         self._chat_id = chat_id
+        self._share_id_externo = share_id  # v4.4: share externo (F3 lo hará funcional)
         self._workspace_dir = Path(workspace_dir)
         self._download_dir = Path(download_dir)
 
@@ -113,6 +115,9 @@ class IncrementalCycle:
     def run(self) -> IncrementalCycleResult:
         """Ejecuta la actualización incremental.
 
+        v4.4: reempaquetado selectivo (solo temas afectados), acepta
+        ``share_id`` externo, y regenera el índice tras actualizar.
+
         Returns:
             IncrementalCycleResult con el resultado.
         """
@@ -121,16 +126,23 @@ class IncrementalCycle:
             metadata = self._metadata_mgr.read()
             previous_ts = metadata.ultimo_timestamp
 
-            if not metadata.share_id:
+            if not metadata.share_id and not self._share_id_externo:
                 return IncrementalCycleResult(
                     success=False,
-                    error="No hay metadata previa. Ejecutar RecoveryCycle primero.",
+                    error="No hay metadata previa ni share_id. Ejecutar RecoveryCycle primero.",
                 )
 
             # 2. Extraer mensajes nuevos (filtrar por timestamp)
-            with AuthClient(token=self._jwt) as auth:
-                # Reutilizar share_id existente (idempotente)
-                share_id = auth.create_share(self._chat_id)
+            # v4.4: si hay share_id externo, usarlo directamente (saltar create_share)
+            if self._share_id_externo:
+                share_id = self._share_id_externo
+                logger.info(
+                    "Incremental: usando share_id externo %s (se salta create_share)",
+                    share_id[:12],
+                )
+            else:
+                with AuthClient(token=self._jwt) as auth:
+                    share_id = auth.create_share(self._chat_id)
 
             with ChatClient(token=self._jwt) as client:
                 all_messages = client.extract_all(
@@ -161,20 +173,24 @@ class IncrementalCycle:
             new_exchanges = self._exchange_builder.build(new_messages)
             self._classifier.classify_exchanges(new_exchanges)
 
-            # 4. Para cada intercambio nuevo, añadirlo al bloque existente
-            # (o crear uno nuevo si no cabe)
-            # Esto requiere reempaquetar todos los intercambios (viejos + nuevos)
-            # Optimización: solo reempaquetar los temas que recibieron nuevos intercambios
-            updated_files: list[RecoveryFile] = []
-
-            # Agrupar intercambios por tema
-            by_topic: dict = {}
+            # 4. v4.4: Reempaquetado selectivo.
+            # Solo reempaquetar los temas que recibieron intercambios nuevos.
+            # Los demás bloques no se tocan.
+            by_topic_new: dict = {}
             for ex in new_exchanges:
-                by_topic.setdefault(ex.topic, []).append(ex)
+                by_topic_new.setdefault(ex.topic, []).append(ex)
 
-            # Reempaquetar bloques para los temas afectados
-            # Para simplicidad: regenerar todos los bloques con todos los intercambios
-            # (optimización futura: solo los temas afectados)
+            # Temas afectados (los que recibieron intercambios nuevos)
+            temas_afectados = set(by_topic_new.keys())
+            logger.info(
+                "Incremental: %d temas afectados de %d totales",
+                len(temas_afectados),
+                len(metadata.tema_a_archivo),
+            )
+
+            # Reempaquetar solo los temas afectados
+            # Para esto, reconstruir los intercambios de los temas afectados
+            # (viejos + nuevos) y reempaquetarlos.
             all_exchanges = self._exchange_builder.build(all_messages)
             self._classifier.classify_exchanges(all_exchanges)
 
@@ -182,19 +198,21 @@ class IncrementalCycle:
             for ex in all_exchanges:
                 all_by_topic.setdefault(ex.topic, []).append(ex)
 
-            # Subdividir temas grandes
+            # Solo reempaquetar temas afectados
             expanded: dict = {}
             for tema, exs in all_by_topic.items():
-                if self._subdivider.needs_subdivision(tema, exs):
-                    result = self._subdivider.subdivide(tema, exs)
-                    for name, sub_exs in result.subtemas:
-                        for ex in sub_exs:
-                            ex.topic = name
-                        expanded[name] = sub_exs
-                else:
-                    expanded[tema] = exs
+                if tema in temas_afectados:
+                    # Subdividir si hace falta
+                    if self._subdivider.needs_subdivision(tema, exs):
+                        result = self._subdivider.subdivide(tema, exs)
+                        for name, sub_exs in result.subtemas:
+                            for ex in sub_exs:
+                                ex.topic = name
+                            expanded[name] = sub_exs
+                    else:
+                        expanded[tema] = exs
 
-            blocks = self._packer.pack(expanded)
+            blocks = self._packer.pack(expanded) if expanded else []
 
             # Actualizar metadata
             new_ts = max(m.timestamp for m in all_messages)
@@ -202,15 +220,19 @@ class IncrementalCycle:
             metadata.total_exchanges = len(all_exchanges)
             from datetime import datetime, timezone
             metadata.ultima_activacion = datetime.now(timezone.utc).isoformat()
-            # Reconstruir tema_a_archivo desde los nuevos bloques
-            metadata.tema_a_archivo = {}
+            # v4.4: actualizar tema_a_archivo solo para los temas reempaquetados
             for block in blocks:
                 for tema in block.temas:
-                    metadata.registrar_tema(tema, block.filename)
+                    metadata.tema_a_archivo[tema] = block.filename
+            # v4.4: actualizar timestamp del chat en la lista de chats procesados
+            metadata.actualizar_timestamp_chat(self._chat_id, new_ts)
             self._metadata_mgr.write(metadata)
 
+            # v4.4: regenerar el índice (Sistema 3)
+            self._regenerar_indice(metadata)
+
             logger.info(
-                "Incremental completado: %d nuevos intercambios, %d bloques regenerados",
+                "Incremental completado: %d nuevos intercambios, %d bloques regenerados (selectivo)",
                 len(new_exchanges),
                 len(blocks),
             )
@@ -220,7 +242,7 @@ class IncrementalCycle:
                 new_messages_count=len(new_messages),
                 new_exchanges_count=len(new_exchanges),
                 new_blocks_count=len(blocks),
-                files_updated=0,  # se regeneran todos
+                files_updated=0,
                 previous_timestamp=previous_ts,
                 new_timestamp=new_ts,
             )
@@ -228,6 +250,50 @@ class IncrementalCycle:
         except Exception as e:
             logger.exception("Error en ciclo incremental")
             return IncrementalCycleResult(success=False, error=str(e))
+
+    def _regenerar_indice(self, metadata: RecoveryMetadata) -> None:
+        """v4.4: Regenera ``01_indice_recuperacion.md`` tras un incremental.
+
+        Usa el ``IndiceGenerator`` para que el índice legible refleje
+        los bloques actualizados (incluyendo los reempaquetados).
+        """
+        try:
+            from contexto_zai.generation.indice_generator import IndiceGenerator
+            from contexto_zai.models import ThematicBlock
+
+            indice_gen = IndiceGenerator()
+
+            # Construir ThematicBlock a partir de los archivos físicos
+            tema_a_archivo = metadata.tema_a_archivo
+            blocks: list[ThematicBlock] = []
+            archivos_vistos: set[str] = set()
+            for tema, archivo in tema_a_archivo.items():
+                if archivo in archivos_vistos:
+                    continue
+                archivos_vistos.add(archivo)
+                bloque_path = self._workspace_dir / archivo
+                if not bloque_path.exists():
+                    continue
+                temas_en_este_archivo = [
+                    t for t, a in tema_a_archivo.items() if a == archivo
+                ]
+                block = ThematicBlock(filename=archivo)
+                block._temas = list(temas_en_este_archivo)
+                blocks.append(block)
+
+            indice_content = indice_gen.generate(
+                blocks=blocks,
+                metadata=metadata,
+                chat_label=self._chat_id[:8] if self._chat_id else "Chat",
+            )
+            indice_path = self._workspace_dir / "01_indice_recuperacion.md"
+            indice_path.write_text(indice_content, encoding="utf-8")
+            logger.info(
+                "Incremental: 01_indice_recuperacion.md regenerado (%d bloques)",
+                len(blocks),
+            )
+        except Exception as e:
+            logger.warning("Incremental: no se pudo regenerar índice: %s", e)
 
     def __repr__(self) -> str:
         return f"IncrementalCycle(chat_id={self._chat_id[:8]}...)"
