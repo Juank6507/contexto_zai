@@ -82,6 +82,9 @@ class MetadataManager:
     def read(self) -> RecoveryMetadata:
         """Lee la metadata del archivo. Si no existe, devuelve una vacía.
 
+        v4.4: si la metadata tiene el formato viejo (sin ``chats_procesados``),
+        la migra automáticamente al formato nuevo (multi-chat).
+
         Returns:
             RecoveryMetadata con el contenido del archivo, o vacía.
         """
@@ -94,11 +97,17 @@ class MetadataManager:
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             meta = RecoveryMetadata(**data)
+            # v4.4: migrar formato viejo si hace falta
+            meta._migrar_formato_viejo()
+            # Si había archivo_a_source suelto en el JSON, integrarlo al modelo
+            if "archivo_a_source" in data and not meta.archivo_a_source:
+                meta.archivo_a_source = data.get("archivo_a_source", {})
             logger.debug(
-                "Metadata leida: chat_id=%s, ultimo_ts=%s, temas=%d",
+                "Metadata leida: chat_id=%s, ultimo_ts=%s, temas=%d, chats=%d",
                 meta.chat_id,
                 meta.ultimo_timestamp,
                 len(meta.tema_a_archivo),
+                len(meta.chats_procesados),
             )
             return meta
         except (json.JSONDecodeError, ValueError) as e:

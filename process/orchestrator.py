@@ -120,8 +120,16 @@ class Orchestrator:
     ) -> OrchestratorResult:
         """Activa el proceso de recuperación.
 
+        v4.4: lógica de decisión de 4 casos. El proceso entiende su
+        situación antes de actuar: descubre el ``chat_id`` real, lo
+        compara con el de la metadata, y decide entre:
+
+        - Caso 1 (primera vez): sin metadata → RecoveryCycle.
+        - Caso 2/3 (mismo chat): metadata del mismo chat → IncrementalCycle.
+        - Caso 4 (otro chat distinto): metadata de OTRO chat → RecoveryCycle.
+
         Args:
-            trigger: Tipo de disparador (lexico, contador, auto_preguntas, explicito).
+            trigger: Tipo de disparador.
             reason: Descripción legible del motivo.
             chat_label: Etiqueta del chat (opcional).
 
@@ -139,65 +147,121 @@ class Orchestrator:
             trigger.value, reason or "(sin razon)",
         )
 
-        # Decidir qué ciclo ejecutar
-        if self._metadata_mgr.exists() and self._has_metadata():
-            # Metadata ya existe -> ciclo incremental
-            logger.info("Metadata existente -> ejecutando IncrementalCycle")
-            cycle = IncrementalCycle(
-                jwt=self._jwt,
-                chat_id=self._chat_id,
-                workspace_dir=self._workspace_dir,
-                download_dir=self._download_dir,
-            )
-            result = cycle.run()
-            return OrchestratorResult(
-                success=result.success,
-                cycle_used="incremental",
-                exchanges_processed=result.new_exchanges_count,
-                # v4.3 fix Bug B: el campo correcto es files_generated (no files_updated).
-                # OrchestratorResult no tiene files_updated; usar files_generated.
-                files_generated=result.new_blocks_count,
-                error=result.error,
-            )
-        else:
-            # Sin metadata -> ciclo completo de recuperación
-            # F4 v4.2: crear Orquestador + ProcesadorIntercambios y pasar al RecoveryCycle.
-            # Los generadores usan el ProcesadorIntercambios para publicar tareas,
-            # el agente las ejecuta con el Task tool, y collect_responses() las aplica.
-            from contexto_zai.coordinador.orquestador import Orquestador
-            from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+        # v4.4: descubrir el chat_id real si viene por share_id (link /s/).
+        # Si no hay chat_id pero sí share_id, leer el árbol del share
+        # para descubrir de qué chat se trata.
+        chat_id_real = self._chat_id
+        if not chat_id_real and self._share_id:
+            chat_id_real = self._descubrir_chat_id_del_share()
+            if chat_id_real:
+                self._chat_id = chat_id_real
+                logger.info("chat_id descubierto del share: %s", chat_id_real)
 
-            logger.info("Sin metadata previa -> ejecutando RecoveryCycle (con Orquestador F4)")
-            orquestador = Orquestador(workspace_dir=self._workspace_dir)
-            procesador = ProcesadorIntercambios(
-                workspace_dir=self._workspace_dir,
-                orquestador=orquestador,
+        # v4.4: decidir qué ciclo ejecutar con 4 casos.
+        if not self._metadata_mgr.exists() or not self._has_metadata():
+            # Caso 1: primera vez (sin metadata) → RecoveryCycle
+            logger.info("Caso 1 (primera vez): RecoveryCycle")
+            return self._ejecutar_recovery(chat_label)
+        else:
+            # Metadata existe. ¿Es el mismo chat?
+            meta = self._metadata_mgr.read()
+            chat_id_metadata = meta.chat_id
+
+            if chat_id_real and chat_id_metadata and chat_id_real == chat_id_metadata:
+                # Caso 2/3: mismo chat → IncrementalCycle
+                logger.info(
+                    "Caso 2/3 (mismo chat %s): IncrementalCycle",
+                    chat_id_real[:12],
+                )
+                return self._ejecutar_incremental()
+            else:
+                # Caso 4: otro chat distinto → RecoveryCycle
+                logger.info(
+                    "Caso 4 (otro chat: metadata=%s, actual=%s): RecoveryCycle",
+                    (chat_id_metadata or "")[:12],
+                    (chat_id_real or "")[:12],
+                )
+                return self._ejecutar_recovery(chat_label)
+
+    def _ejecutar_recovery(self, chat_label: str) -> OrchestratorResult:
+        """Ejecuta el ciclo de recuperación completo (RecoveryCycle)."""
+        from contexto_zai.coordinador.orquestador import Orquestador
+        from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+
+        orquestador = Orquestador(workspace_dir=self._workspace_dir)
+        procesador = ProcesadorIntercambios(
+            workspace_dir=self._workspace_dir,
+            orquestador=orquestador,
+        )
+        cycle = RecoveryCycle(
+            jwt=self._jwt,
+            chat_id=self._chat_id,
+            workspace_dir=self._workspace_dir,
+            download_dir=self._download_dir,
+            decision_extractor=self._decision_extractor,
+            subagent_launcher=procesador,
+            enable_capa3=True,  # v4.4 F5: subagentes de calidad cableados por defecto
+            enable_attachments=False,
+            share_id=self._share_id,
+        )
+        result = cycle.run(chat_label=chat_label)
+        return OrchestratorResult(
+            success=result.success,
+            cycle_used="recovery",
+            exchanges_processed=result.exchanges_count,
+            files_generated=result.files_count,
+            error=result.error,
+            pending_tasks=result.pending_tasks,
+        )
+
+    def _ejecutar_incremental(self) -> OrchestratorResult:
+        """Ejecuta el ciclo incremental (IncrementalCycle)."""
+        cycle = IncrementalCycle(
+            jwt=self._jwt,
+            chat_id=self._chat_id,
+            workspace_dir=self._workspace_dir,
+            download_dir=self._download_dir,
+            share_id=self._share_id,  # v4.4: pasar share_id (F3 lo hará funcional)
+        )
+        result = cycle.run()
+        return OrchestratorResult(
+            success=result.success,
+            cycle_used="incremental",
+            exchanges_processed=result.new_exchanges_count,
+            files_generated=result.new_blocks_count,
+            error=result.error,
+        )
+
+    def _descubrir_chat_id_del_share(self) -> str:
+        """v4.4: Descubre el ``chat_id`` real de un share público.
+
+        Si el proceso recibe un ``share_id`` externo (link ``/s/``),
+        el ``chat_id`` interno se descubre leyendo el árbol del share.
+        Esto permite al Orchestrator comparar el chat que llega con el
+        que ya está en la metadata.
+
+        Returns:
+            El ``chat_id`` descubierto, o string vacío si falla.
+        """
+        if not self._share_id or not self._jwt:
+            return ""
+        try:
+            from contexto_zai.client.chat_client import ChatClient
+            with ChatClient(token=self._jwt) as client:
+                tree_data = client.get_message_tree(self._share_id)
+                chat_id = tree_data.get("chat", {}).get("id", "")
+                if chat_id:
+                    logger.info(
+                        "chat_id descubierto del share %s: %s",
+                        self._share_id[:12], chat_id[:12],
+                    )
+                return chat_id
+        except Exception as e:
+            logger.warning(
+                "No se pudo descubrir chat_id del share %s: %s",
+                self._share_id[:12] if self._share_id else "?", e,
             )
-            # F4 v4.2: enable_capa3=False y enable_attachments=False porque esos
-            # subagentes (DiscriminatorSubagent, DocumentoIndexerSubagent) usan
-            # launch() síncrono (legacy). Los generadores usan el patrón diferido
-            # vía ProcesadorIntercambios. Los attachments se procesan vía
-            # ampliar_contexto() que usa ProcesadorDocumento.
-            cycle = RecoveryCycle(
-                jwt=self._jwt,
-                chat_id=self._chat_id,
-                workspace_dir=self._workspace_dir,
-                download_dir=self._download_dir,
-                decision_extractor=self._decision_extractor,
-                subagent_launcher=procesador,
-                enable_capa3=False,
-                enable_attachments=False,
-                share_id=self._share_id,  # v4.2: share externo (link /s/)
-            )
-            result = cycle.run(chat_label=chat_label)
-            return OrchestratorResult(
-                success=result.success,
-                cycle_used="recovery",
-                exchanges_processed=result.exchanges_count,
-                files_generated=result.files_count,
-                error=result.error,
-                pending_tasks=result.pending_tasks,
-            )
+            return ""
 
     def status(self) -> dict:
         """Devuelve el estado actual del proceso.
@@ -303,6 +367,101 @@ if __name__ == "__main__":
     )
     assert r_b.files_generated == 3
     print(f"[OK] Fix Bug B: OrchestratorResult usa files_generated (no files_updated)")
+
+    # === Tests v4.4 (F1): lógica de decisión de 4 casos ===
+    from unittest.mock import patch, MagicMock as _MagicMock
+
+    # Test 7 (v4.4 F1): Caso 1 (primera vez) → RecoveryCycle
+    # Sin metadata en el workspace → debe ir a recovery.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from contexto_zai.models import DetectionTrigger as _DT
+        orch_v44 = Orchestrator(
+            chat_id="chat-nuevo-001",
+            jwt="fake-jwt",
+            workspace_dir=Path(tmpdir),
+        )
+        mock_result = _MagicMock()
+        mock_result.success = True
+        mock_result.cycle_used = "recovery"
+        mock_result.exchanges_count = 10
+        mock_result.files_count = 5
+        mock_result.error = ""
+        mock_result.pending_tasks = []
+        with patch.object(orch_v44, "_ejecutar_recovery", return_value=OrchestratorResult(
+            success=True, cycle_used="recovery", exchanges_processed=10, files_generated=5
+        )) as mock_recovery:
+            with patch.object(orch_v44, "_ejecutar_incremental") as mock_incremental:
+                result_v44 = orch_v44.activate(trigger=_DT.EXPLICITO)
+                mock_recovery.assert_called_once()
+                mock_incremental.assert_not_called()
+                assert result_v44.cycle_used == "recovery"
+        print(f"[OK] F1 Caso 1 (primera vez): RecoveryCycle (sin metadata)")
+
+    # Test 8 (v4.4 F1): Caso 2/3 (mismo chat) → IncrementalCycle
+    # Metadata existe con chat_id="A", llega chat_id="A" → debe ir a incremental.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import json as _json_t8
+        # Crear _metadata.json con chat_id="chat-A"
+        (Path(tmpdir) / "_metadata.json").write_text(_json_t8.dumps({
+            "chat_id": "chat-A",
+            "share_id": "share-A",
+            "ultimo_timestamp": 1000,
+            "total_exchanges": 50,
+            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "ultima_activacion": "2026-09-15T00:00:00Z",
+        }), encoding="utf-8")
+        orch_v44_t8 = Orchestrator(
+            chat_id="chat-A",  # mismo chat_id que metadata
+            jwt="fake-jwt",
+            workspace_dir=Path(tmpdir),
+        )
+        with patch.object(orch_v44_t8, "_ejecutar_incremental", return_value=OrchestratorResult(
+            success=True, cycle_used="incremental", exchanges_processed=5, files_generated=2
+        )) as mock_incremental:
+            with patch.object(orch_v44_t8, "_ejecutar_recovery") as mock_recovery:
+                result_t8 = orch_v44_t8.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_incremental.assert_called_once()
+                mock_recovery.assert_not_called()
+                assert result_t8.cycle_used == "incremental"
+        print(f"[OK] F1 Caso 2/3 (mismo chat): IncrementalCycle")
+
+    # Test 9 (v4.4 F1): Caso 4 (otro chat distinto) → RecoveryCycle
+    # Metadata existe con chat_id="A", llega chat_id="B" → debe ir a recovery.
+    with tempfile.TemporaryDirectory() as tmpdir:
+        import json as _json_t9
+        (Path(tmpdir) / "_metadata.json").write_text(_json_t9.dumps({
+            "chat_id": "chat-A",
+            "share_id": "share-A",
+            "ultimo_timestamp": 1000,
+            "total_exchanges": 50,
+            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "ultima_activacion": "2026-09-15T00:00:00Z",
+        }), encoding="utf-8")
+        orch_v44_t9 = Orchestrator(
+            chat_id="chat-B",  # DISTINTO chat_id que metadata
+            jwt="fake-jwt",
+            workspace_dir=Path(tmpdir),
+        )
+        with patch.object(orch_v44_t9, "_ejecutar_recovery", return_value=OrchestratorResult(
+            success=True, cycle_used="recovery", exchanges_processed=30, files_generated=8
+        )) as mock_recovery:
+            with patch.object(orch_v44_t9, "_ejecutar_incremental") as mock_incremental:
+                result_t9 = orch_v44_t9.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_recovery.assert_called_once()
+                mock_incremental.assert_not_called()
+                assert result_t9.cycle_used == "recovery"
+        print(f"[OK] F1 Caso 4 (otro chat distinto): RecoveryCycle (no incremental)")
+
+    # Test 10 (v4.4 F1): IncrementalCycle acepta share_id
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cycle_v44 = IncrementalCycle(
+            jwt="fake-jwt",
+            chat_id="chat-test",
+            workspace_dir=tmpdir,
+            share_id="share-externo-001",
+        )
+        assert cycle_v44._share_id_externo == "share-externo-001"
+        print(f"[OK] F1 IncrementalCycle acepta share_id (backward compatible)")
 
     print("\n[PASS] orchestrator.py: tests basicos pasaron")
     print("   Tests de integracion: tests/test_orchestrator.py")
