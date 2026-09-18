@@ -407,7 +407,7 @@ if __name__ == "__main__":
             "share_id": "share-A",
             "ultimo_timestamp": 1000,
             "total_exchanges": 50,
-            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
             "ultima_activacion": "2026-09-15T00:00:00Z",
         }), encoding="utf-8")
         orch_v44_t8 = Orchestrator(
@@ -434,7 +434,7 @@ if __name__ == "__main__":
             "share_id": "share-A",
             "ultimo_timestamp": 1000,
             "total_exchanges": 50,
-            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
             "ultima_activacion": "2026-09-15T00:00:00Z",
         }), encoding="utf-8")
         orch_v44_t9 = Orchestrator(

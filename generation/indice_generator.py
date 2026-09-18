@@ -120,10 +120,16 @@ class IndiceGenerator:
         ]
 
         # Filas de la tabla
-        for tema, archivo in sorted(tema_a_archivo.items()):
+        # v4.5: un tema puede apuntar a varios bloques — mostrarlos todos
+        for tema, archivos in sorted(tema_a_archivo.items()):
             # Buscar el bloque que contiene este tema para obtener tokens
             tokens_str = self._find_tokens_for_tema(tema, blocks)
-            lines.append(f"| `{tema}` | `{archivo}` | ~{tokens_str} |")
+            # v4.5: archivos es una lista — mostrarlos separados por comas
+            if isinstance(archivos, list):
+                archivos_str = ", ".join(archivos)
+            else:
+                archivos_str = str(archivos)
+            lines.append(f"| `{tema}` | `{archivos_str}` | ~{tokens_str} |")
 
         lines.extend([
             "",
@@ -237,9 +243,10 @@ class IndiceGenerator:
         self,
         blocks: list["ThematicBlock"],
         metadata: Optional[RecoveryMetadata],
-    ) -> dict[str, str]:
-        """Construye el mapeo tema -> archivo.
+    ) -> dict[str, list[str]]:
+        """Construye el mapeo tema -> lista de archivos.
 
+        v4.5: un tema puede apuntar a varios bloques (de distintos chats).
         Prioriza la metadata si se proporciona (es la fuente de verdad).
         Si no, lo construye a partir de los bloques.
         """
@@ -247,16 +254,13 @@ class IndiceGenerator:
             return dict(metadata.tema_a_archivo)
 
         # Construir desde los bloques
-        mapping: dict[str, str] = {}
+        mapping: dict[str, list[str]] = {}
         for b in blocks:
             for tema in b.temas:
-                if tema in mapping and mapping[tema] != b.filename:
-                    logger.warning(
-                        "Tema '%s' aparece en multiples archivos: %s y %s "
-                        "(violacion de unicidad)",
-                        tema, mapping[tema], b.filename,
-                    )
-                mapping[tema] = b.filename
+                if tema not in mapping:
+                    mapping[tema] = [b.filename]
+                elif b.filename not in mapping[tema]:
+                    mapping[tema].append(b.filename)
         return mapping
 
     def _find_tokens_for_tema(

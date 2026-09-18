@@ -95,8 +95,13 @@ class EstadoSubagent:
         archivo = None
 
         # Buscar el archivo del tema en la metadata
+        # v4.5: archivo_para_tema devuelve list[str] (puede haber varios bloques)
         if metadata:
-            archivo = metadata.archivo_para_tema(tema)
+            archivos = metadata.archivo_para_tema(tema)
+            # Tomar el primer archivo de la lista
+            archivo = archivos[0] if archivos else None
+        else:
+            archivo = None
 
         # Fallback: buscar archivo por nombre de tema en el directorio
         if not archivo:

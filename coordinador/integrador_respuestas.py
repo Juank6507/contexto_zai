@@ -50,6 +50,33 @@ from contexto_zai.models import SubagentResponse
 logger = logging.getLogger(__name__)
 
 
+def _registrar_tema_en_dict(tema_a_archivo: dict, tema: str, archivo: str) -> None:
+    """v4.5: Registra un tema en un dict ``tema_a_archivo`` (formato multi-bloque).
+
+    Si el tema no existe → crea ``[archivo]``.
+    Si el tema existe y el archivo ya está → no hace nada (idempotente).
+    Si el tema existe y el archivo no está → lo añade a la lista.
+
+    Compatible con formato viejo (``dict[str, str]``): si el valor es ``str``,
+    lo convierte a ``list``.
+    """
+    if tema not in tema_a_archivo:
+        tema_a_archivo[tema] = [archivo]
+        return
+    valor = tema_a_archivo[tema]
+    if isinstance(valor, str):
+        # Formato viejo: convertir a lista
+        if valor != archivo:
+            tema_a_archivo[tema] = [valor, archivo]
+        else:
+            tema_a_archivo[tema] = [valor]
+    elif isinstance(valor, list):
+        if archivo not in valor:
+            valor.append(archivo)
+    else:
+        tema_a_archivo[tema] = [archivo]
+
+
 class IntegradorRespuestas:
     """Aplica respuestas de subagentes a los archivos de recuperación.
 
@@ -408,7 +435,14 @@ class IntegradorRespuestas:
             tema_padre = task_id.split("clasificacion_temas_", 1)[1]
 
         # Buscar el archivo del tema padre para asignarlo a los subtemas
-        archivo_padre = tema_a_archivo.get(tema_padre, "")
+        # v4.5: tema_a_archivo es dict[str, list[str]] — tomar el primer archivo
+        valor_padre = tema_a_archivo.get(tema_padre, "")
+        if isinstance(valor_padre, list) and valor_padre:
+            archivo_padre = valor_padre[0]
+        elif isinstance(valor_padre, str):
+            archivo_padre = valor_padre
+        else:
+            archivo_padre = ""
 
         # Agregar cada subtema al mapeo (sin sobrescribir el tema padre:
         # el Subdivider físico se ejecuta en el próximo ciclo).
@@ -500,10 +534,8 @@ class IntegradorRespuestas:
             metadata["tema_a_archivo"] = {}
 
         # v4.2: Registrar los temas reales en tema_a_archivo.
-        # Cada tema real apunta al bloque externo. Si no hay temas
-        # parseables, se cae a un nombre genérico para no perder el bloque.
-        # v4.3 (F0.2): la deduplicación distingue "mismo bloque" (idempotente)
-        # vs "otro bloque" (prefijar con filename + sufijo numérico si hace falta).
+        # v4.5: tema_a_archivo es dict[str, list[str]] — un tema puede apuntar
+        # a varios bloques. Usar la misma lógica que registrar_tema().
         temas_registrados: list[str] = []
         if temas_reales:
             for tema in temas_reales:
@@ -513,12 +545,13 @@ class IntegradorRespuestas:
                     bloque_filename=bloque_filename,
                     tema_a_archivo=metadata["tema_a_archivo"],
                 )
-                metadata["tema_a_archivo"][clave] = bloque_filename
+                # v4.5: registrar como lista (multi-bloque)
+                _registrar_tema_en_dict(metadata["tema_a_archivo"], clave, bloque_filename)
                 temas_registrados.append(clave)
         else:
             # Fallback: nombre genérico (compatibilidad con respuestas mal formadas)
             clave_generica = f"documento_externo_{filename}_lote_{lote_idx}"
-            metadata["tema_a_archivo"][clave_generica] = bloque_filename
+            _registrar_tema_en_dict(metadata["tema_a_archivo"], clave_generica, bloque_filename)
             temas_registrados.append(clave_generica)
             logger.warning(
                 "documento: sin temas reales parseables, usando nombre genérico '%s'",
@@ -588,12 +621,21 @@ class IntegradorRespuestas:
         # Sanitizar filename para usarlo en la clave (sin espacios ni slashes)
         filename_safe = re.sub(r"[^a-zA-Z0-9_]+", "_", filename).strip("_").lower()
 
+        # v4.5: función auxiliar para verificar si un valor apunta a un bloque
+        # (compatible con formato viejo str y nuevo list[str])
+        def _apunta_a(valor, bloque):
+            if isinstance(valor, str):
+                return valor == bloque
+            elif isinstance(valor, list):
+                return bloque in valor
+            return False
+
         # Caso 1 y 5: tema_nombre no existe, o existe apuntando al mismo bloque
         existente = tema_a_archivo.get(tema_nombre)
         if existente is None:
             # Caso 5: no existe, usar tema_nombre
             return tema_nombre
-        if existente == bloque_filename:
+        if _apunta_a(existente, bloque_filename):
             # Caso 1: existe pero apunta al mismo bloque, idempotente
             return tema_nombre
 
@@ -603,7 +645,7 @@ class IntegradorRespuestas:
         if existente_prefijada is None:
             # Caso 2: no existe la prefijada, usarla
             return clave_prefijada
-        if existente_prefijada == bloque_filename:
+        if _apunta_a(existente_prefijada, bloque_filename):
             # Caso 3: existe la prefijada y apunta al mismo bloque, idempotente
             return clave_prefijada
 
@@ -614,7 +656,7 @@ class IntegradorRespuestas:
             existente_sufijo = tema_a_archivo.get(clave_con_sufijo)
             if existente_sufijo is None:
                 return clave_con_sufijo
-            if existente_sufijo == bloque_filename:
+            if _apunta_a(existente_sufijo, bloque_filename):
                 return clave_con_sufijo
             sufijo += 1
             # Seguridad: evitar loop infinito (en la práctica, no debería pasar)
@@ -640,33 +682,34 @@ class IntegradorRespuestas:
             indice_gen = IndiceGenerator()
 
             # Construir ThematicBlock a partir de los archivos físicos del workspace
-            tema_a_archivo = metadata.get("tema_a_archivo", {})
+            # v4.5: tema_a_archivo es dict[str, list[str]] — iterar correctamente
+            tema_a_archivo_raw = metadata.get("tema_a_archivo", {})
             blocks: list[ThematicBlock] = []
             archivos_vistos: set[str] = set()
-            for tema, archivo in tema_a_archivo.items():
-                if archivo in archivos_vistos:
-                    continue
-                archivos_vistos.add(archivo)
-                bloque_path = ws / archivo
-                if not bloque_path.exists():
-                    continue
-                # Construir ThematicBlock mínimo (solo filename + temas)
-                # El IndiceGenerator solo usa filename, temas y estimated_tokens
-                temas_en_este_archivo = [
-                    t for t, a in tema_a_archivo.items() if a == archivo
-                ]
-                block = ThematicBlock(filename=archivo)
-                # ThematicBlock.add_exchange requiere un Exchange, pero como solo
-                # nos importa el filename y los temas para el índice, lo dejamos vacío.
-                # El IndiceGenerator._build_tema_a_archivo prioriza metadata si se pasa.
-                block._temas = list(temas_en_este_archivo)
-                blocks.append(block)
+            for tema, archivos in tema_a_archivo_raw.items():
+                # v4.5: archivos puede ser str (viejo) o list[str] (nuevo)
+                lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+                for archivo in lista_archivos:
+                    if archivo in archivos_vistos:
+                        continue
+                    archivos_vistos.add(archivo)
+                    bloque_path = ws / archivo
+                    if not bloque_path.exists():
+                        continue
+                    # Construir ThematicBlock mínimo (solo filename + temas)
+                    temas_en_este_archivo = [
+                        t for t, archs in tema_a_archivo_raw.items()
+                        if (archivo in archs if isinstance(archs, list) else archs == archivo)
+                    ]
+                    block = ThematicBlock(filename=archivo)
+                    block._temas = list(temas_en_este_archivo)
+                    blocks.append(block)
 
             # Construir RecoveryMetadata para que IndiceGenerator priorice metadata
             recovery_meta = RecoveryMetadata(
                 chat_id=metadata.get("chat_id", ""),
                 share_id=metadata.get("share_id", ""),
-                tema_a_archivo=dict(tema_a_archivo),
+                tema_a_archivo=dict(tema_a_archivo_raw),
             )
 
             # Generar y escribir el índice
@@ -680,7 +723,7 @@ class IntegradorRespuestas:
 
             logger.info(
                 "documento: 01_indice_recuperacion.md regenerado con %d bloques (%d temas)",
-                len(blocks), len(tema_a_archivo),
+                len(blocks), len(tema_a_archivo_raw),
             )
         except Exception as e:
             logger.warning(
@@ -882,7 +925,7 @@ if __name__ == "__main__":
         integrador = IntegradorRespuestas(workspace_dir=tmpdir)
         metadata_path = Path(tmpdir) / "_metadata.json"
         metadata_path.write_text(json.dumps({
-            "tema_a_archivo": {"general_2026sep09": "bloque_01.md"}
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
         }), encoding="utf-8")
         resp = SubagentResponse(
             task_id="subdivider_nombre_general_2026sep09",
@@ -1016,8 +1059,8 @@ SECCIONES: roles, permisos""",
             f"Esperaba 'autenticacion_jwt' en tema_a_archivo, obtuvo: {metadata['tema_a_archivo']}"
         assert "control_acceso" in metadata["tema_a_archivo"]
         # Ambos temas apuntan al mismo bloque externo
-        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_externo_doc_seguridad_lote_0.md"
-        assert metadata["tema_a_archivo"]["control_acceso"] == "bloque_externo_doc_seguridad_lote_0.md"
+        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == ["bloque_externo_doc_seguridad_lote_0.md"]
+        assert metadata["tema_a_archivo"]["control_acceso"] == ["bloque_externo_doc_seguridad_lote_0.md"]
         # NO debe estar el nombre genérico (documento_externo_*)
         assert not any(k.startswith("documento_externo_") for k in metadata["tema_a_archivo"])
         # El bloque físico debe existir
@@ -1051,7 +1094,7 @@ SECCIONES: roles, permisos""",
         metadata_path = Path(tmpdir) / "_metadata.json"
         # Ya existe un tema 'autenticacion_jwt' del chat apuntando a bloque_01.md
         metadata_path.write_text(json.dumps({
-            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+            "tema_a_archivo": {"autenticacion_jwt": ["bloque_01.md"]}
         }), encoding="utf-8")
         resp = SubagentResponse(
             task_id="documento_doc_pdf_lote_0",
@@ -1066,10 +1109,10 @@ SECCIONES: firma, verificacion""",
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         # El tema del chat se mantiene
-        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_01.md"
+        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == ["bloque_01.md"]
         # El tema del documento externo se prefija con el filename
         assert "doc_pdf_autenticacion_jwt" in metadata["tema_a_archivo"]
-        assert metadata["tema_a_archivo"]["doc_pdf_autenticacion_jwt"] == "bloque_externo_doc_pdf_lote_0.md"
+        assert metadata["tema_a_archivo"]["doc_pdf_autenticacion_jwt"] == ["bloque_externo_doc_pdf_lote_0.md"]
         print(f"[OK] _integrar_documento: no sobrescribe tema existente (prefija con filename)")
 
     # Test 15 (F0.2 v4.3): reprocesar el mismo documento DOS VECES → no crea entradas fantasma
@@ -1105,7 +1148,7 @@ SECCIONES: header, payload""",
         metadata_path = Path(tmpdir) / "_metadata.json"
         # Tema del chat preexistente
         metadata_path.write_text(json.dumps({
-            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+            "tema_a_archivo": {"autenticacion_jwt": ["bloque_01.md"]}
         }), encoding="utf-8")
 
         # Doc A: tema autenticacion_jwt → crea doc_a_autenticacion_jwt

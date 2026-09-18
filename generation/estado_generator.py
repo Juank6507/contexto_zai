@@ -734,22 +734,14 @@ class EstadoGenerator:
             return f"_(error leyendo objetivo: {e})_"
 
     def _asegurar_objetivo_proyecto(self) -> None:
-        """v4.3 (F5): Crea ``03_objetivo_proyecto.md`` si no existe.
+        """v4.3/v4.5: Crea ``03_objetivo_proyecto.md`` si no existe.
 
-        Aplica una cascada de dos fuentes para derivar el contenido inicial:
+        v4.5: el archivo pasa a tener 3 componentes:
+        1. Quién eres (identidad del agente, derivada de documentación).
+        2. Cuál es tu norte (objetivo del proyecto, derivado de documentación).
+        3. Qué te pasó y cómo recuperarte (template fijo con el camino del proceso).
 
-        - **Caso A (documentación):** lee los archivos de documentación
-          del proyecto (``estrategia/agent-context/*.md``, ``upload/worklog_*.md``)
-          relativos al workspace raíz. Extrae el primer párrafo que mencione
-          "proyecto" o "objetivo" y lo escribe como objetivo declarado.
-        - **Caso B (bloques):** si la documentación no aporta suficiente,
-          lee ``_metadata.json["tema_a_archivo"]`` y construye un objetivo
-          tentativo con los temas más representativos.
-        - **Caso C (sin fuentes):** si no hay ni documentación ni bloques,
-          escribe un contenido mínimo pidiendo al Director que lo declare.
-
-        Si el archivo ya existe, NO se sobrescribe (la cascada solo se
-        ejecuta la primera vez).
+        Si el archivo ya existe, NO se sobrescribe.
         """
         if not self._workspace_dir:
             return
@@ -760,20 +752,88 @@ class EstadoGenerator:
         # Localizar el workspace raíz del proyecto (donde están estrategia/ y upload/)
         from contexto_zai.config import WORKSPACE_ROOT as _PROJECT_ROOT
 
-        contenido_objetivo = self._extraer_objetivo_de_documentacion(_PROJECT_ROOT)
-        if not contenido_objetivo:
-            contenido_objetivo = self._extraer_objetivo_de_bloques()
-        if not contenido_objetivo:
-            contenido_objetivo = ("Proyecto sin objetivo declarado. "
-                                  "Edita este archivo para declararlo.")
+        # v4.5: Componente 1 — Quién eres
+        quien_es = self._extraer_quien_es(_PROJECT_ROOT)
+
+        # v4.5: Componente 2 — Cuál es tu norte (objetivo)
+        objetivo = self._extraer_objetivo_de_documentacion(_PROJECT_ROOT)
+        if not objetivo:
+            objetivo = self._extraer_objetivo_de_bloques()
+        if not objetivo:
+            objetivo = "Proyecto sin objetivo declarado. Edita este archivo para declararlo."
+
+        # v4.5: Componente 3 — Qué te pasó y cómo recuperarte (template fijo)
+        recuperacion_template = self._template_recuperacion()
+
+        # Ensamblar el archivo completo
+        contenido = f"""# Recuperación de contexto del proyecto
+
+## Quién eres
+
+{quien_es}
+
+## Cuál es tu norte
+
+{objetivo}
+
+{recuperacion_template}
+"""
 
         try:
             objetivo_path.parent.mkdir(parents=True, exist_ok=True)
-            objetivo_path.write_text(contenido_objetivo, encoding="utf-8")
-            logger.info("F5 v4.3: 03_objetivo_proyecto.md creado (%d chars)",
-                        len(contenido_objetivo))
+            objetivo_path.write_text(contenido, encoding="utf-8")
+            logger.info("v4.5: 03_objetivo_proyecto.md creado con 3 componentes (%d chars)",
+                        len(contenido))
         except Exception as e:
-            logger.warning("F5 v4.3: no se pudo crear 03_objetivo_proyecto.md: %s", e)
+            logger.warning("v4.5: no se pudo crear 03_objetivo_proyecto.md: %s", e)
+
+    def _extraer_quien_es(self, project_root: Path) -> str:
+        """v4.5: Extrae quién es el agente de la documentación del proyecto.
+
+        Lee ``estrategia/agent-context/identidad.md`` y/o ``entorno.md``.
+        Si no encuentra, deriva de los bloques existentes.
+        """
+        if not project_root:
+            return "Agente del proyecto contexto_zai."
+        candidatos = [
+            project_root / "estrategia" / "agent-context" / "identidad.md",
+            project_root / "estrategia" / "agent-context" / "entorno.md",
+        ]
+        for candidato in candidatos:
+            if not candidato.exists():
+                continue
+            try:
+                contenido = candidato.read_text(encoding="utf-8").strip()
+                # Buscar el primer párrafo sustantivo
+                parrafos = [p.strip() for p in contenido.split("\n\n") if p.strip()]
+                for parrafo in parrafos:
+                    limpio = "\n".join(
+                        line for line in parrafo.split("\n")
+                        if not line.strip().startswith("<!--")
+                        and not line.strip().startswith("#")
+                    ).strip()
+                    if limpio and len(limpio) > 20:
+                        return limpio
+            except Exception:
+                continue
+        # Fallback: derivar de los bloques
+        return self._extraer_objetivo_de_bloques() or "Agente del proyecto contexto_zai."
+
+    @staticmethod
+    def _template_recuperacion() -> str:
+        """v4.5: Template fijo del Componente 3 — qué te pasó y cómo recuperarte."""
+        return """## Qué te pasó y cómo recuperarte
+
+Has perdido contexto. Esto es normal y tienes un proceso que te ayuda.
+
+1. Estás leyendo este archivo — ya empezaste a recuperarte.
+2. Lee `00_estado_actual.md` para saber qué estaba pasando.
+3. Consulta `01_indice_recuperacion.md` para saber dónde está cada tema.
+4. Revisa `02_decisiones_clave.md` para no repetir lo ya decidido.
+5. Si necesitas detalle de un tema, usa `query_context("tu pregunta")`.
+6. Si el proceso te dejó tareas pendientes, lánzalas y llama `collect_responses()`.
+7. Si el Director te pasa información nueva, usa `ampliar_contexto()`.
+"""
 
     @staticmethod
     def _extraer_objetivo_de_documentacion(project_root: Path) -> Optional[str]:

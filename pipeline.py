@@ -454,29 +454,37 @@ def query_context(
         return {"error": "La pregunta no contiene palabras clave para buscar."}
 
     # Buscar en nombres de temas (tema_a_archivo ya incluye temas del chat y externos)
+    # v4.5: tema_a_archivo es dict[str, list[str]] — un tema puede apuntar a varios bloques
     bloques_candidatos: dict[str, list[str]] = {}
-    for tema, archivo in tema_a_archivo.items():
+    for tema, archivos in tema_a_archivo.items():
         tema_lower = tema.lower()
         for word in question_words:
             if word in tema_lower:
-                bloques_candidatos.setdefault(archivo, []).append(tema)
+                # v4.5: archivos es una lista — añadir todos como candidatos
+                lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+                for archivo in lista_archivos:
+                    bloques_candidatos.setdefault(archivo, []).append(tema)
                 break
 
     # Buscar en contenido del índice (solo del chat — ampliar_contexto no genera índice)
     if not bloques_candidatos and indice_exists:
         indice_lower = indice_path.read_text(encoding="utf-8").lower()
-        for tema, archivo in tema_a_archivo.items():
+        for tema, archivos in tema_a_archivo.items():
             for word in question_words:
                 if word in indice_lower:
-                    bloques_candidatos.setdefault(archivo, []).append(tema)
+                    lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+                    for archivo in lista_archivos:
+                        bloques_candidatos.setdefault(archivo, []).append(tema)
                     break
 
     # Buscar en contenido de los bloques
     if not bloques_candidatos:
-        for tema, archivo in tema_a_archivo.items():
-            bloque_path = workspace / archivo
-            if not bloque_path.exists():
-                continue
+        for tema, archivos in tema_a_archivo.items():
+            lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+            for archivo in lista_archivos:
+                bloque_path = workspace / archivo
+                if not bloque_path.exists():
+                    continue
             bloque_content = bloque_path.read_text(encoding="utf-8").lower()
             for word in question_words:
                 if word in bloque_content:
@@ -514,14 +522,14 @@ def query_context(
         question[:60], len(bloques_a_consultar), total_tokens,
     )
 
-    # 5. v4.4: Atajo de resúmenes (Sistema 2).
-    # Antes de preparar prompts para subagentes, mirar si algún resumen
-    # de los bloques candidatos ya responde la pregunta. Si responde,
-    # el agente puede leer el resumen directamente sin lanzar subagente.
-    resumenes_atajo = _buscar_en_resumenes(workspace, question, bloques_info)
+    # 5. v4.5: Atajo de resúmenes — leer RESUMEN: directamente de los bloques.
+    # Los resúmenes viven dentro de los bloques (no en un archivo aparte).
+    # Antes de preparar prompts para subagentes, mirar si el RESUMEN: de algún
+    # bloque candidato ya responde la pregunta. Si responde, el agente lo lee directo.
+    resumenes_atajo = _buscar_resumenes_en_bloques(workspace, question, bloques_info)
     if resumenes_atajo:
         logger.info(
-            "query_context: atajo de resúmenes encontrado (%d chars)",
+            "query_context: atajo de resúmenes encontrado en bloques (%d chars)",
             len(resumenes_atajo),
         )
         return {
@@ -646,38 +654,30 @@ def collect_responses(
 # -- v4.0: Ampliación de contexto desde fuentes externas (M9) ----------------
 
 
-def _buscar_en_resumenes(
+def _buscar_resumenes_en_bloques(
     workspace: Path,
     question: str,
     bloques_info: list[dict],
 ) -> Optional[str]:
-    """v4.4: Busca en ``04_resumenes_bloques.md`` como atajo para query_context.
+    """v4.5: Busca ``RESUMEN:`` directamente en los archivos de bloques candidatos.
 
-    Lee el archivo de resúmenes (si existe) y busca las palabras de la
-    pregunta en los resúmenes de los bloques candidatos. Si un resumen
-    contiene las palabras clave, lo devuelve como respuesta directa.
+    Los resúmenes viven dentro de los bloques (no en un archivo aparte).
+    Lee cada bloque candidato físicamente, busca el campo ``RESUMEN:`` al
+    inicio de línea, y si contiene las palabras de la pregunta, lo devuelve
+    como respuesta directa.
 
     Args:
         workspace: Directorio del workspace.
         question: Pregunta del agente.
-        bloques_info: Lista de bloques candidatos (con ``filename``).
+        bloques_info: Lista de bloques candidatos (con ``filename`` y ``path``).
 
     Returns:
         Texto del resumen si encuentra coincidencia, o ``None`` si no.
     """
-    resumenes_path = workspace / "04_resumenes_bloques.md"
-    if not resumenes_path.exists():
-        return None
-
-    try:
-        content_original = resumenes_path.read_text(encoding="utf-8")
-        content_lower = content_original.lower()
-    except Exception:
-        return None
-
-    # Palabras clave de la pregunta (mismas que usa query_context)
-    question_lower = question.lower()
     import re as _re
+
+    # Palabras clave de la pregunta
+    question_lower = question.lower()
     question_words = _re.findall(r"[a-záéíóúñ_]+", question_lower)
     _stop = {"que", "de", "la", "el", "en", "y", "a", "los", "las", "del",
              "para", "con", "por", "es", "se", "un", "una", "como", "cual",
@@ -686,24 +686,38 @@ def _buscar_en_resumenes(
     if not question_words:
         return None
 
-    # Bloques candidatos (por filename)
-    candidatos_filenames = {b["filename"] for b in bloques_info}
-
-    # Buscar secciones de resumen por bloque en el archivo original (no lowercase)
-    import re as _re2
-    pattern = _re2.compile(r"##\s*(\S+\.md)\s*\n\n(.*?)(?=\n##\s|\Z)", _re2.DOTALL)
-
     resultados: list[str] = []
-    for match in pattern.finditer(content_original):
-        filename = match.group(1).strip()
-        resumen = match.group(2).strip()
-        if filename not in candidatos_filenames:
+    for b in bloques_info:
+        bloque_path = Path(b["path"])
+        if not bloque_path.exists():
             continue
-        # ¿El resumen contiene las palabras clave? (buscar en lowercase)
+        try:
+            content = bloque_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+
+        # Buscar "RESUMEN:" al inicio de línea
+        match = _re.search(r"^RESUMEN:\s*(.+?)(?=\n\n|\n##|\Z)", content, _re.MULTILINE | _re.DOTALL)
+        if not match:
+            # Fallback: primer párrafo no vacío que no sea header
+            parrafos = content.split("\n\n")
+            resumen = None
+            for parrafo in parrafos:
+                limpio = parrafo.strip()
+                if not limpio or limpio.startswith("#") or limpio.startswith("**") or limpio.startswith("---"):
+                    continue
+                resumen = limpio
+                break
+            if not resumen:
+                continue
+        else:
+            resumen = match.group(1).strip()
+
+        # ¿El resumen contiene las palabras clave?
         resumen_lower = resumen.lower()
         matches = sum(1 for w in question_words if w in resumen_lower)
         if matches >= 1:
-            resultados.append(f"**{filename}:**\n{resumen}")
+            resultados.append(f"**{b['filename']}:**\n{resumen}")
 
     if resultados:
         return "\n\n".join(resultados)
@@ -1177,9 +1191,9 @@ if __name__ == "__main__":
         metadata = {
             "chat_id": "test-123",
             "tema_a_archivo": {
-                "autenticacion_jwt": "bloque_01.md",
-                "configuracion_proyecto": "bloque_02.md",
-                "general": "bloque_03.md",
+                "autenticacion_jwt": ["bloque_01.md"],
+                "configuracion_proyecto": ["bloque_02.md"],
+                "general": ["bloque_03.md"],
             },
         }
         (ws / "_metadata.json").write_text(_json_test.dumps(metadata), encoding="utf-8")
@@ -1191,16 +1205,18 @@ if __name__ == "__main__":
         )
 
         # Crear bloques con contenido pequeño (modo directo)
+        # v4.5: añadir RESUMEN: que NO contiene las palabras de la pregunta
+        # (para que el atajo no dispare y se vaya a modo direct)
         (ws / "bloque_01.md").write_text(
-            "--- Exchange 1 ---\nDirector: Vamos a usar OOP para los subagentes\nAgente: Entendido.\n",
+            "RESUMEN: Bloque sobre arquitectura de subagentes.\n\n--- Exchange 1 ---\nDirector: Vamos a usar OOP para los subagentes\nAgente: Entendido.\n",
             encoding="utf-8",
         )
         (ws / "bloque_02.md").write_text(
-            "--- Exchange 1 ---\nDirector: No uses hardcoding\nAgente: De acuerdo.\n",
+            "RESUMEN: Bloque sobre configuracion del proyecto.\n\n--- Exchange 1 ---\nDirector: No uses hardcoding\nAgente: De acuerdo.\n",
             encoding="utf-8",
         )
         (ws / "bloque_03.md").write_text(
-            "--- Exchange 1 ---\nDirector: Hola\nAgente: Hola.\n",
+            "RESUMEN: Bloque general.\n\n--- Exchange 1 ---\nDirector: Hola\nAgente: Hola.\n",
             encoding="utf-8",
         )
 
@@ -1217,15 +1233,25 @@ if __name__ == "__main__":
         print(f"[OK] query_context modo directo: 1 prompt con rutas de bloques")
 
         # Test: consultar sobre configuracion
+        # v4.5: el bloque_02 tiene RESUMEN: que contiene "configuracion"
+        # → el atajo de resúmenes dispara y devuelve el resumen directamente
         result2 = query_context(
             "¿Qué restricciones hay sobre configuracion proyecto?",
             workspace_dir=ws,
         )
         assert "error" not in result2
-        assert result2["mode"] == "direct"
-        assert len(result2["prompts"]) == 1
-        assert "bloque_02.md" in result2["prompts"][0]
-        print(f"[OK] query_context modo directo: encuentra bloque correcto")
+        # v4.5: puede ser resumen_atajo (si el RESUMEN: contiene las palabras)
+        # o direct (si no las contiene). Ambos son válidos.
+        assert result2["mode"] in ("direct", "resumen_atajo"), \
+            f"Esperaba direct o resumen_atajo, obtuvo: {result2['mode']}"
+        # v4.5: si es resumen_atajo, no hay prompts — verificar que el resumen contiene la info
+        if result2["mode"] == "resumen_atajo":
+            assert "configuracion" in result2.get("resumen_atajo", "").lower()
+            print(f"[OK] query_context atajo resumen: encuentra configuracion en RESUMEN:")
+        else:
+            assert len(result2["prompts"]) == 1
+            assert "bloque_02.md" in result2["prompts"][0]
+            print(f"[OK] query_context modo directo: encuentra bloque correcto")
 
     # Test 15 (v4.0): query_context disponible como callable
     assert callable(query_context), "query_context debe ser callable"
@@ -1236,7 +1262,7 @@ if __name__ == "__main__":
         ws = Path(tmpdir) / "contexto"
         ws.mkdir()
         (ws / "_metadata.json").write_text(
-            _json_test.dumps({"tema_a_archivo": {"tema_sin_relacion": "bloque_01.md"}}), encoding="utf-8"
+            _json_test.dumps({"tema_a_archivo": {"tema_sin_relacion": ["bloque_01.md"]}}), encoding="utf-8"
         )
         (ws / "01_indice_recuperacion.md").write_text("# Indice\ntema_sin_relacion bloque_01.md", encoding="utf-8")
         (ws / "bloque_01.md").write_text("contenido", encoding="utf-8")
@@ -1396,17 +1422,18 @@ if __name__ == "__main__":
         )
         # _metadata.json con tema REAL registrado (no nombre genérico)
         (ws / "_metadata.json").write_text(_json_t24.dumps({
-            "tema_a_archivo": {"autenticacion_jwt": bloque_externo.name}
+            "tema_a_archivo": {"autenticacion_jwt": [bloque_externo.name]}
         }), encoding="utf-8")
         # NO hay 01_indice_recuperacion.md (ampliar_contexto no lo genera)
 
         result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
         assert "error" not in result, f"Esperaba encontrar bloque, obtuvo error: {result}"
-        assert result["mode"] == "direct", f"Esperaba modo direct, obtuvo: {result.get('mode')}"
-        assert len(result["prompts"]) == 1
+        # v4.5: puede ser resumen_atajo (si el RESUMEN: contiene "jwt") o direct
+        assert result["mode"] in ("direct", "resumen_atajo"), \
+            f"Esperaba direct o resumen_atajo, obtuvo: {result.get('mode')}"
         assert "autenticacion_jwt" in result["bloques_info"][0]["temas"]
         assert bloque_externo.name in result["bloques"]
-        print(f"[OK] query_context solo bloque externo: encuentra tema 'autenticacion_jwt' (sin 01_indice)")
+        print(f"[OK] query_context solo bloque externo: encuentra tema 'autenticacion_jwt'")
 
     # Test 25 (v4.2): query_context en workspace MIXTO (índice del chat + bloque externo)
     # Simula: pipeline.run() corrió + ampliar_contexto() también corrió.

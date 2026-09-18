@@ -220,10 +220,11 @@ class IncrementalCycle:
             metadata.total_exchanges = len(all_exchanges)
             from datetime import datetime, timezone
             metadata.ultima_activacion = datetime.now(timezone.utc).isoformat()
-            # v4.4: actualizar tema_a_archivo solo para los temas reempaquetados
+            # v4.4/v4.5: actualizar tema_a_archivo solo para los temas reempaquetados
+            # v4.5: usar registrar_tema (multi-bloque) en vez de asignación directa
             for block in blocks:
                 for tema in block.temas:
-                    metadata.tema_a_archivo[tema] = block.filename
+                    metadata.registrar_tema(tema, block.filename)
             # v4.4: actualizar timestamp del chat en la lista de chats procesados
             metadata.actualizar_timestamp_chat(self._chat_id, new_ts)
             self._metadata_mgr.write(metadata)
@@ -264,22 +265,26 @@ class IncrementalCycle:
             indice_gen = IndiceGenerator()
 
             # Construir ThematicBlock a partir de los archivos físicos
+            # v4.5: tema_a_archivo es dict[str, list[str]]
             tema_a_archivo = metadata.tema_a_archivo
             blocks: list[ThematicBlock] = []
             archivos_vistos: set[str] = set()
-            for tema, archivo in tema_a_archivo.items():
-                if archivo in archivos_vistos:
-                    continue
-                archivos_vistos.add(archivo)
-                bloque_path = self._workspace_dir / archivo
-                if not bloque_path.exists():
-                    continue
-                temas_en_este_archivo = [
-                    t for t, a in tema_a_archivo.items() if a == archivo
-                ]
-                block = ThematicBlock(filename=archivo)
-                block._temas = list(temas_en_este_archivo)
-                blocks.append(block)
+            for tema, archivos in tema_a_archivo.items():
+                lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+                for archivo in lista_archivos:
+                    if archivo in archivos_vistos:
+                        continue
+                    archivos_vistos.add(archivo)
+                    bloque_path = self._workspace_dir / archivo
+                    if not bloque_path.exists():
+                        continue
+                    temas_en_este_archivo = [
+                        t for t, archs in tema_a_archivo.items()
+                        if (archivo in archs if isinstance(archs, list) else archs == archivo)
+                    ]
+                    block = ThematicBlock(filename=archivo)
+                    block._temas = list(temas_en_este_archivo)
+                    blocks.append(block)
 
             indice_content = indice_gen.generate(
                 blocks=blocks,

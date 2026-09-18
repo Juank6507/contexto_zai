@@ -125,7 +125,7 @@ def test_integrador_subdivider_nombre():
     with tempfile.TemporaryDirectory() as tmpdir:
         integrador = IntegradorRespuestas(workspace_dir=tmpdir)
         Path(tmpdir, "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"general_2026sep09": "bloque_01.md"}
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
         }), encoding="utf-8")
         resp = SubagentResponse(
             task_id="subdivider_nombre_general_2026sep09", success=True,
@@ -148,7 +148,7 @@ def test_flujo_completo_collect_responses():
         )
         Path(tmpdir, "02_decisiones_clave.md").write_text("# Decisiones\n\nPlaceholder.\n", encoding="utf-8")
         Path(tmpdir, "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"general_2026sep09": "bloque_01.md"}
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
         }), encoding="utf-8")
 
         # 2. Proceso publica tareas
@@ -258,7 +258,7 @@ def test_procesador_consulta():
         # Crear contexto simulado
         Path(tmpdir, "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         Path(tmpdir, "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"jwt_autenticacion": "bloque_01.md"}
+            "tema_a_archivo": {"jwt_autenticacion": ["bloque_01.md"]}
         }), encoding="utf-8")
         Path(tmpdir, "bloque_01.md").write_text("Contenido sobre JWT y autenticación.", encoding="utf-8")
 
@@ -537,7 +537,7 @@ def test_orchestrator_4_casos_decision():
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
             "chat_id": "chat-A", "share_id": "share-A",
             "ultimo_timestamp": 1000, "total_exchanges": 50,
-            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
             "ultima_activacion": "2026-09-15T00:00:00Z",
         }), encoding="utf-8")
         orch = Orchestrator(chat_id="chat-A", jwt="fake", workspace_dir=tmpdir)
@@ -556,7 +556,7 @@ def test_orchestrator_4_casos_decision():
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
             "chat_id": "chat-A", "share_id": "share-A",
             "ultimo_timestamp": 1000, "total_exchanges": 50,
-            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
             "ultima_activacion": "2026-09-15T00:00:00Z",
         }), encoding="utf-8")
         orch = Orchestrator(chat_id="chat-B", jwt="fake", workspace_dir=tmpdir)
@@ -594,7 +594,7 @@ def test_query_context_atajo_resumenes():
         )
         # Crear _metadata.json con el tema
         (ws / "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+            "tema_a_archivo": {"autenticacion_jwt": ["bloque_01.md"]}
         }), encoding="utf-8")
 
         # query_context con pregunta que coincide con el resumen

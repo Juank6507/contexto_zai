@@ -200,8 +200,11 @@ class MetadataManager:
         """Actualiza el último timestamp procesado."""
         return self.update(ultimo_timestamp=timestamp)
 
-    def get_archivo_for_tema(self, tema: str) -> Optional[str]:
-        """Devuelve el archivo que contiene el tema, o None si no está registrado."""
+    def get_archivo_for_tema(self, tema: str) -> list[str]:
+        """Devuelve la lista de archivos que contienen el tema, o [] si no está registrado.
+
+        v4.5: un tema puede estar en varios bloques.
+        """
         return self.read().archivo_para_tema(tema)
 
     def touch_activacion(self) -> RecoveryMetadata:
@@ -270,35 +273,33 @@ if __name__ == "__main__":
         assert meta2.ultimo_timestamp == 1234567890
         print(f"[OK] read() recupera datos: chat_id={meta2.chat_id}")
 
-        # Test 4: register_tema
+        # Test 4: register_tema (v4.5: multi-bloque)
         mgr.register_tema("validaciones", "bloque_01.md")
         mgr.register_tema("configuracion_proyecto", "bloque_01.md")  # mismo archivo
         meta3 = mgr.read()
-        assert meta3.tema_a_archivo["validaciones"] == "bloque_01.md"
-        assert meta3.tema_a_archivo["configuracion_proyecto"] == "bloque_01.md"
+        assert meta3.tema_a_archivo["validaciones"] == ["bloque_01.md"]
+        assert meta3.tema_a_archivo["configuracion_proyecto"] == ["bloque_01.md"]
         print(f"[OK] register_tema: 2 temas en bloque_01.md")
 
-        # Test 5: violación de unicidad lanza error
-        try:
-            mgr.register_tema("validaciones", "bloque_02.md")
-            assert False, "Debería lanzar ValueError"
-        except ValueError as e:
-            assert "Violación de unicidad" in str(e)
-            print(f"[OK] Unicidad: violacion detectada correctamente")
+        # Test 5 (v4.5): un tema puede apuntar a varios bloques (no revienta)
+        mgr.register_tema("validaciones", "bloque_02.md")
+        meta3b = mgr.read()
+        assert meta3b.tema_a_archivo["validaciones"] == ["bloque_01.md", "bloque_02.md"]
+        print(f"[OK] Multi-bloque v4.5: tema apunta a varios bloques sin error")
 
         # Test 6: register_subtema
         mgr.register_subtema("validaciones", "validaciones_server", "bloque_02.md")
         meta4 = mgr.read()
         assert "validaciones_server" in meta4.tema_a_archivo
-        assert meta4.tema_a_archivo["validaciones_server"] == "bloque_02.md"
+        assert meta4.tema_a_archivo["validaciones_server"] == ["bloque_02.md"]
         assert "validaciones_server" in meta4.subtemas_derivados["validaciones"]
         print(f"[OK] register_subtema: 'validaciones_server' registrado")
 
-        # Test 7: get_archivo_for_tema
-        assert mgr.get_archivo_for_tema("validaciones") == "bloque_01.md"
-        assert mgr.get_archivo_for_tema("validaciones_server") == "bloque_02.md"
-        assert mgr.get_archivo_for_tema("no_existe") is None
-        print(f"[OK] get_archivo_for_tema: consultas OK")
+        # Test 7: get_archivo_for_tema (v4.5: devuelve lista)
+        assert mgr.get_archivo_for_tema("validaciones") == ["bloque_01.md", "bloque_02.md"]
+        assert mgr.get_archivo_for_tema("validaciones_server") == ["bloque_02.md"]
+        assert mgr.get_archivo_for_tema("no_existe") == []
+        print(f"[OK] get_archivo_for_tema: consultas OK (lista multi-bloque)")
 
         # Test 8: get/set_ultimo_timestamp
         mgr.set_ultimo_timestamp(9999999)

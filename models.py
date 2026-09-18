@@ -397,29 +397,38 @@ class RecoveryMetadata(BaseModel):
     share_id: str = ""
     ultimo_timestamp: float = 0.0
     total_exchanges: int = 0
-    tema_a_archivo: dict[str, str] = Field(default_factory=dict)
+    # v4.5: tema_a_archivo pasa de dict[str, str] a dict[str, list[str]]
+    # Un tema puede apuntar a varios bloques (de distintos chats).
+    tema_a_archivo: dict[str, list[str]] = Field(default_factory=dict)
     subtemas_derivados: dict[str, list[str]] = Field(default_factory=dict)
     ultima_activacion: str = ""
     # v4.4: soporte multi-chat
     chats_procesados: list[ChatInfo] = Field(default_factory=list)
     archivo_a_source: dict[str, dict] = Field(default_factory=dict)
 
-    def archivo_para_tema(self, tema: str) -> str | None:
-        """Devuelve el archivo que contiene el tema, o None si no existe."""
-        return self.tema_a_archivo.get(tema)
+    def archivo_para_tema(self, tema: str) -> list[str]:
+        """Devuelve la lista de archivos que contienen el tema, o [] si no existe.
+
+        v4.5: un tema puede estar en varios bloques (de distintos chats).
+        """
+        return self.tema_a_archivo.get(tema, [])
 
     def tiene_tema(self, tema: str) -> bool:
         """Verifica si un tema ya está registrado."""
         return tema in self.tema_a_archivo
 
     def registrar_tema(self, tema: str, archivo: str) -> None:
-        """Registra un tema en un archivo. Falla si el tema ya existe en otro archivo."""
-        if tema in self.tema_a_archivo and self.tema_a_archivo[tema] != archivo:
-            raise ValueError(
-                f"Violación de unicidad: tema '{tema}' ya está en "
-                f"'{self.tema_a_archivo[tema]}', no puede registrarse en '{archivo}'"
-            )
-        self.tema_a_archivo[tema] = archivo
+        """Registra un tema en un archivo.
+
+        v4.5: un tema puede apuntar a varios bloques. Si el tema ya existe
+        y el archivo no está en la lista, se añade. Si el archivo ya está,
+        no hace nada (idempotente). No revienta nunca.
+        """
+        if tema not in self.tema_a_archivo:
+            self.tema_a_archivo[tema] = [archivo]
+        elif archivo not in self.tema_a_archivo[tema]:
+            self.tema_a_archivo[tema].append(archivo)
+        # Si archivo ya está en la lista, no hace nada (idempotente)
 
     def registrar_subtema(self, tema_padre: str, subtema: str, archivo: str) -> None:
         """Registra un subtema derivado de una subdivisión."""
@@ -486,11 +495,16 @@ class RecoveryMetadata(BaseModel):
         return False
 
     def _migrar_formato_viejo(self) -> None:
-        """v4.4: Migra el formato viejo (sin ``chats_procesados``) al nuevo.
+        """v4.4/v4.5: Migra el formato viejo al nuevo.
 
-        Si ``chats_procesados`` está vacío pero ``chat_id`` tiene valor,
+        v4.4: si ``chats_procesados`` está vacío pero ``chat_id`` tiene valor,
         crea una entrada en ``chats_procesados`` con los datos del chat activo.
+
+        v4.5: si ``tema_a_archivo`` tiene valores ``str`` (formato viejo, un tema →
+        un archivo), los convierte a ``list[str]`` (formato nuevo, un tema →
+        varios archivos).
         """
+        # v4.4: migrar chats_procesados
         if not self.chats_procesados and self.chat_id:
             self.chats_procesados.append(ChatInfo(
                 chat_id=self.chat_id,
@@ -498,6 +512,10 @@ class RecoveryMetadata(BaseModel):
                 ultimo_timestamp=self.ultimo_timestamp,
                 total_exchanges=self.total_exchanges,
             ))
+        # v4.5: migrar tema_a_archivo de dict[str, str] a dict[str, list[str]]
+        for tema, valor in self.tema_a_archivo.items():
+            if isinstance(valor, str):
+                self.tema_a_archivo[tema] = [valor]
 
 class DetectionTrigger(str, Enum):
     """Tipos de disparador de la recuperación de contexto."""
@@ -783,18 +801,19 @@ if __name__ == "__main__":
     assert not bloque.would_exceed_limit(ex, max_tokens=100_000)
     print(f"[OK] ThematicBlock v3.2: {bloque.exchange_count} exchanges, {len(bloque.temas)} temas en 1 archivo")
 
-    # Test 4: RecoveryMetadata con unicidad
+    # Test 4: RecoveryMetadata con multi-bloque (v4.5)
     meta = RecoveryMetadata(chat_id="abc", share_id="def")
     meta.registrar_tema("validaciones", "bloque_01.md")
     meta.registrar_tema("configuracion", "bloque_01.md")  # mismo archivo, OK
-    assert meta.archivo_para_tema("validaciones") == "bloque_01.md"
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md"]
     assert meta.tiene_tema("validaciones")
-    # Violación de unicidad debe fallar
-    try:
-        meta.registrar_tema("validaciones", "bloque_02.md")
-        assert False, "Debería haber lanzado ValueError"
-    except ValueError as e:
-        print(f"[OK] Unicidad tematica: violacion detectada correctamente")
+    # v4.5: un tema puede apuntar a varios bloques (no revienta)
+    meta.registrar_tema("validaciones", "bloque_02.md")  # otro bloque, OK
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md", "bloque_02.md"]
+    # Idempotente: registrar el mismo archivo otra vez no duplica
+    meta.registrar_tema("validaciones", "bloque_02.md")
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md", "bloque_02.md"]
+    print(f"[OK] Multi-bloque v4.5: tema apunta a varios bloques sin error")
     meta.registrar_subtema("validaciones", "validaciones_server", "bloque_02.md")
     assert "validaciones_server" in meta.subtemas_derivados["validaciones"]
     print(f"[OK] Subtema derivado: 'validaciones_server' registrado en bloque_02.md")

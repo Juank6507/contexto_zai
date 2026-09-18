@@ -188,21 +188,26 @@ class ProcesadorConsulta:
         question_words = [w for w in question_words if len(w) > 2 and w not in _STOP_WORDS]
 
         # Buscar en nombres de temas
+        # v4.5: tema_a_archivo es dict[str, list[str]]
         bloques_candidatos: dict[str, list[str]] = {}
-        for tema, archivo in tema_a_archivo.items():
+        for tema, archivos in tema_a_archivo.items():
             tema_lower = tema.lower()
             for word in question_words:
                 if word in tema_lower:
-                    bloques_candidatos.setdefault(archivo, []).append(tema)
+                    lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+                    for archivo in lista_archivos:
+                        bloques_candidatos.setdefault(archivo, []).append(tema)
                     break
 
         # Buscar en contenido del índice
         if not bloques_candidatos:
             indice_lower = indice_path.read_text(encoding="utf-8").lower()
-            for tema, archivo in tema_a_archivo.items():
+            for tema, archivos in tema_a_archivo.items():
                 for word in question_words:
                     if word in indice_lower:
-                        bloques_candidatos.setdefault(archivo, []).append(tema)
+                        lista_archivos = archivos if isinstance(archivos, list) else [archivos]
+                        for archivo in lista_archivos:
+                            bloques_candidatos.setdefault(archivo, []).append(tema)
                         break
 
         # Limitar a max_results bloques
@@ -343,7 +348,7 @@ if __name__ == "__main__":
         # Crear contexto simulado
         (Path(tmpdir) / "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"jwt_autenticacion": "bloque_01.md"}
+            "tema_a_archivo": {"jwt_autenticacion": ["bloque_01.md"]}
         }), encoding="utf-8")
         (Path(tmpdir) / "bloque_01.md").write_text("Contenido sobre JWT y autenticación.", encoding="utf-8")
 
@@ -362,7 +367,7 @@ if __name__ == "__main__":
         (Path(tmpdir) / "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         metadata = {"tema_a_archivo": {}}
         for i in range(5):
-            metadata["tema_a_archivo"][f"jwt_tema_{i}"] = f"bloque_{i:02d}.md"
+            metadata["tema_a_archivo"][f"jwt_tema_{i}"] = [f"bloque_{i:02d}.md"]
             # Cada bloque ~40K tokens (~140K chars)
             (Path(tmpdir) / f"bloque_{i:02d}.md").write_text("jwt " * 35000, encoding="utf-8")
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
@@ -390,7 +395,7 @@ if __name__ == "__main__":
         orch = Orquestador(workspace_dir=tmpdir)
         (Path(tmpdir) / "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"jwt_autenticacion": "bloque_01.md"}
+            "tema_a_archivo": {"jwt_autenticacion": ["bloque_01.md"]}
         }), encoding="utf-8")
         (Path(tmpdir) / "bloque_01.md").write_text("Contenido sobre JWT.", encoding="utf-8")
 
@@ -404,7 +409,7 @@ if __name__ == "__main__":
         (Path(tmpdir) / "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         metadata = {"tema_a_archivo": {}}
         for i in range(5):
-            metadata["tema_a_archivo"][f"jwt_tema_{i}"] = f"bloque_{i:02d}.md"
+            metadata["tema_a_archivo"][f"jwt_tema_{i}"] = [f"bloque_{i:02d}.md"]
             (Path(tmpdir) / f"bloque_{i:02d}.md").write_text("jwt", encoding="utf-8")
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
