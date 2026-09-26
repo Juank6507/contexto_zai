@@ -685,10 +685,11 @@ def test_11_attachment_model_properties():
 
 
 def test_12_content_delegator_abstract_interface():
-    """Test 12: ContentDelegator es interfaz abstracta, Subdivider la implementa."""
-    print("\n=== Test 12: ContentDelegator interfaz abstracta ===")
+    """Test 12: ContentDelegator es interfaz abstracta, DocumentDelegator la implementa.
 
-    from contexto_zai.processing.subdivider import Subdivider
+    v6.0: Subdivider eliminado — el test ahora cubre solo ContentDelegator/DocumentDelegator.
+    """
+    print("\n=== Test 12: ContentDelegator interfaz abstracta ===")
 
     # ContentDelegator no se puede instanciar directamente (abstracta)
     try:
@@ -703,21 +704,15 @@ def test_12_content_delegator_abstract_interface():
     assert callable(delegator.should_delegate)
     print("  [OK] DocumentDelegator implementa should_delegate()")
 
-    # Subdivider también implementa should_delegate (refactor v3.5)
-    subdivider = Subdivider()
-    assert hasattr(subdivider, "should_delegate")
-    assert callable(subdivider.should_delegate)
-    print("  [OK] Subdivider implementa should_delegate() (refactor v3.5)")
-
-    # Subdivider.should_delegate: tema grande → True
+    # DocumentDelegator.should_delegate: tema grande → True
     big_tokens = 100_000  # > effective_max_tokens (67K)
-    assert subdivider.should_delegate(big_tokens, 20) is True
-    print(f"  [OK] Subdivider: {big_tokens} tokens → delega (subdivide)")
+    assert delegator.should_delegate(big_tokens, 20) is True
+    print(f"  [OK] DocumentDelegator: {big_tokens} tokens → delega")
 
-    # Subdivider.should_delegate: tema pequeño → False
+    # DocumentDelegator.should_delegate: tema pequeño → False
     small_tokens = 1000
-    assert subdivider.should_delegate(small_tokens, 20) is False
-    print(f"  [OK] Subdivider: {small_tokens} tokens → no delega")
+    assert delegator.should_delegate(small_tokens, 20) is False
+    print(f"  [OK] DocumentDelegator: {small_tokens} tokens → no delega")
 
     # _parse_override está disponible en ambas clases
     assert ContentDelegator._parse_override("lee completo") is False

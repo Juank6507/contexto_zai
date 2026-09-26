@@ -1,4 +1,4 @@
-# /home/z/my-project/mini-services/pipeline-runner/runner.py
+# contexto_zai/mini-services/pipeline-runner/runner.py -- Lanzadera del pipeline contexto_zai: ejecuta pipeline.run() contra el chat CZAI 01 y guarda el resultado.
 """Lanzadera del pipeline contexto_zai.
 
 Ejecuta pipeline.run() contra el chat CZAI 01 y guarda el resultado.

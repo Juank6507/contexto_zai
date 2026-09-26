@@ -1,4 +1,4 @@
-# /home/z/my-project/mini-services/task-bridge/index.py
+# contexto_zai/mini-services/task-bridge/index.py -- Mini-servicio lanzadera para TaskBridgeServer (puerto 8087, DEPRECATED v4.2).
 """Mini-servicio lanzadera para TaskBridgeServer (puerto 8087).
 
 El servidor HTTP corre en un thread daemon interno. Este wrapper mantiene el

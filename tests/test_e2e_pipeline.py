@@ -361,71 +361,32 @@ def test_e2e_fix1_links_externos():
 
 
 def test_e2e_fix2_capa3_discriminator():
-    """Test E2E 13 (v3.4 Fix 2): Capa 3 discriminator integrado en recovery_cycle."""
-    print("\n=== Test E2E 13 (v3.4 Fix 2): Capa 3 discriminator ===")
+    """Test E2E 13 (v6.0): Capa 3 eliminada — verificar que NO hay Capa 3 en RecoveryCycle."""
+    print("\n=== Test E2E 13 (v6.0): Capa 3 eliminada ===")
     from contexto_zai.process.recovery_cycle import RecoveryCycle, RecoveryCycleResult
-    from contexto_zai.subagents.discriminator_subagent import (
-        DiscriminatorSubagent,
-        SubdivisionProposal,
-        SubtemaProposal,
-    )
-    from contexto_zai.subagents.launcher import SubagentLauncher
-    from contexto_zai.models import Exchange, Message, MessageRole
 
-    # 1. RecoveryCycle con Capa 3 integrada
-    cycle = RecoveryCycle(jwt="x", chat_id="abc", enable_capa3=True)
-    assert cycle._discriminator is not None
-    assert isinstance(cycle._discriminator, DiscriminatorSubagent)
-    print(f"  [OK] RecoveryCycle: Capa 3 (DiscriminatorSubagent) integrada")
+    # 1. RecoveryCycle sin Capa 3 (v6.0: DiscriminatorSubagent eliminado)
+    cycle = RecoveryCycle(jwt="x", chat_id="abc")
+    # v6.0: ya NO existen _discriminator, _subdivider, ni _enable_capa3
+    assert not hasattr(cycle, "_discriminator"), "v6.0: _discriminator NO debe existir"
+    assert not hasattr(cycle, "_subdivider"), "v6.0: _subdivider NO debe existir"
+    assert not hasattr(cycle, "_enable_capa3"), "v6.0: _enable_capa3 NO debe existir"
+    print(f"  [OK] RecoveryCycle: sin Capa 3, sin _discriminator, sin _subdivider")
 
-    # 2. _apply_capa3_discriminator subdivide tema grande con mock invoker
-    def mock_subdivider(prompt: str) -> str:
-        return """SUBTEMA: auth_jwt
-DESCRIPCION: Auth JWT
-EXCHANGES: 1, 2, 3
+    # 2. El constructor NO acepta enable_capa3 (debe rechazarse con TypeError)
+    try:
+        RecoveryCycle(jwt="x", chat_id="abc", enable_capa3=True)
+        assert False, "RecoveryCycle NO debe aceptar enable_capa3 (v6.0)"
+    except TypeError as e:
+        assert "enable_capa3" in str(e) or "unexpected keyword" in str(e).lower(), \
+            f"TypeError debe mencionar enable_capa3: {e}"
+    print(f"  [OK] RecoveryCycle: constructor rechaza enable_capa3 (v6.0)")
 
-SUBTEMA: validaciones_pytest
-DESCRIPCION: Tests pytest
-EXCHANGES: 4, 5, 6"""
-
-    launcher = SubagentLauncher(task_invoker=mock_subdivider)
-    # F4 v4.2: pasar launcher=None al RecoveryCycle para que no cree ProcesadorIntercambios
-    # (que envolvería el launcher). Usamos el DiscriminatorSubagent directamente.
-    discriminator = DiscriminatorSubagent(launcher=launcher)
-
-    big_content = "x" * 100000  # ~28K tokens
-    exchanges = [
-        Exchange(
-            id=i,
-            director_msg=Message(seq=i, role=MessageRole.USER, timestamp=float(i), content=big_content),
-            topic="general",
-            start_timestamp=float(i),
-            end_timestamp=float(i + 1),
-        )
-        for i in range(1, 7)
-    ]
-
-    # Llamar al DiscriminatorSubagent directamente (no vía _apply_capa3_discriminator)
-    proposal = discriminator.run(tema="general", exchanges=exchanges)
-    subdivididos: list[str] = ["general"] if proposal.subtemas else []
-    new_by_topic = {}
-    if proposal.subtemas:
-        for subtema in proposal.subtemas:
-            sub_exchanges = [ex for ex in exchanges if ex.id in subtema.exchange_ids]
-            new_by_topic[subtema.tema] = sub_exchanges
-
-    assert "general" in subdivididos
-    assert any("auth" in k for k in new_by_topic), f"auth_jwt debe estar: {list(new_by_topic.keys())}"
-    assert len(new_by_topic) == 2  # subdividido en 2 subtemas
-    print(f"  [OK] DiscriminatorSubagent: tema 'general' -> {len(new_by_topic)} subtemas")
-
-    # 3. RecoveryCycleResult con temas_subdivididos
-    result = RecoveryCycleResult(
-        success=True,
-        temas_subdivididos=["general"],
-    )
-    assert result.temas_subdivididos == ["general"]
-    print(f"  [OK] RecoveryCycleResult: temas_subdivididos = {result.temas_subdivididos}")
+    # 3. RecoveryCycleResult NO tiene campo temas_subdivididos (v6.0)
+    result = RecoveryCycleResult(success=True)
+    assert not hasattr(result, "temas_subdivididos"), \
+        "v6.0: RecoveryCycleResult NO debe tener campo temas_subdivididos"
+    print(f"  [OK] RecoveryCycleResult: sin campo temas_subdivididos (v6.0)")
     print(f"  [PASS] PASO")
 
 

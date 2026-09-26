@@ -192,9 +192,15 @@ class ContentCleaner:
     def format_message_content(self, content: str, role: MessageRole) -> str:
         """Limpia el contenido de un mensaje según su rol.
 
-        Para mensajes del agente (assistant), elimina los bloques
-        de razonamiento. Para mensajes del usuario (user) y del
-        sistema (system), devuelve el contenido tal cual.
+        Para mensajes del agente (assistant):
+        1. Elimina los bloques de razonamiento (reasoning).
+        2. v6.0: Parsea los tool_calls y los formatea como bloques legibles:
+           - Write/Edit: muestra el archivo como bloque de código separado.
+           - Bash: muestra el comando como bloque de código.
+           - Read/Glob/Grep: muestra qué se consultó.
+           - Task: muestra la descripción del subagente lanzado.
+        Para mensajes del usuario (user) y del sistema (system), devuelve
+        el contenido tal cual.
 
         Args:
             content: Contenido textual del mensaje.
@@ -204,10 +210,244 @@ class ContentCleaner:
             Contenido procesado según el rol.
         """
         if role.value == "assistant":
-            return self.clean(content)
+            cleaned = self.clean(content)
+            # v6.0: parsear y formatear tool_calls
+            return self._parse_tool_calls(cleaned)
         return content
 
-    # -- Métodos internos ------------------------------------------
+    # v6.0: Parseo de tool_calls --------------------------------
+
+    def _parse_tool_calls(self, content: str) -> str:
+        """v6.0: Parsea los tool_calls del contenido y los formatea como bloques legibles.
+
+        El contenido del agente puede incluir bloques JSON como:
+        - {"type": "text", "content": "Voy a hacer X"}
+        - {"type": "tool_calls", "content": [...], "results": [...]}
+
+        Este método:
+        1. Extrae el texto plano (type: text).
+        2. Parsea cada tool_call y lo formatea según la herramienta:
+           - Write: bloque de código con nombre de archivo.
+           - Edit: referencia al archivo modificado.
+           - Bash: bloque de código con el comando.
+           - Read/Glob/Grep: referencia a qué se consultó.
+           - Task: descripción del subagente.
+        3. Elimina el JSON crudo de tool_calls.
+        4. Devuelve texto + bloques formateados, separados y legibles.
+
+        Args:
+            content: Contenido del agente con posibles tool_calls.
+
+        Returns:
+            Contenido procesado con tool_calls formateados.
+        """
+        if not content:
+            return content
+
+        # Si no hay tool_calls, devolver tal cual
+        if '{"type": "tool_calls"' not in content:
+            return content
+
+        parts: list[str] = []
+        remaining = content
+
+        while remaining:
+            # Buscar el inicio de un bloque JSON
+            json_start = remaining.find('{"type":')
+
+            if json_start == -1:
+                # No hay más JSON, añadir el resto como texto
+                text = remaining.strip()
+                if text:
+                    parts.append(text)
+                break
+
+            # Texto antes del JSON
+            text_before = remaining[:json_start].strip()
+            if text_before:
+                parts.append(text_before)
+
+            # Extraer el bloque JSON completo
+            json_block, json_end = self._extract_json_block(remaining, json_start)
+
+            if json_block:
+                try:
+                    data = json.loads(json_block)
+                    formatted = self._format_tool_call_block(data)
+                    if formatted:
+                        parts.append(formatted)
+                except (json.JSONDecodeError, ValueError):
+                    # Si no se puede parsear, dejar el JSON como texto
+                    parts.append(json_block)
+
+            remaining = remaining[json_end:] if json_end > 0 else ""
+
+        result = "\n\n".join(parts)
+        return result if result.strip() else content
+
+    def _extract_json_block(self, content: str, start: int) -> tuple[str, int]:
+        """Extrae un bloque JSON completo desde la posición start.
+
+        Busca el balance de llaves para encontrar el cierre del JSON.
+
+        Returns:
+            Tupla (bloque_json, posición_final).
+        """
+        depth = 0
+        in_string = False
+        escape = False
+        i = start
+
+        while i < len(content):
+            char = content[i]
+
+            if escape:
+                escape = False
+                i += 1
+                continue
+
+            if char == '\\' and in_string:
+                escape = True
+                i += 1
+                continue
+
+            if char == '"' and not escape:
+                in_string = not in_string
+
+            if not in_string:
+                if char == '{':
+                    depth += 1
+                elif char == '}':
+                    depth -= 1
+                    if depth == 0:
+                        # Encontramos el cierre del JSON
+                        block = content[start:i + 1]
+                        return block, i + 1
+
+            i += 1
+
+        # No se encontró cierre — devolver todo
+        return content[start:], len(content)
+
+    def _format_tool_call_block(self, data: dict) -> str:
+        """Formatea un bloque JSON parseado como texto legible.
+
+        Args:
+            data: Diccionario parseado del JSON.
+
+        Returns:
+            Texto formateado con la información de la herramienta.
+        """
+        block_type = data.get("type", "")
+
+        if block_type == "text":
+            # Texto plano del agente
+            return data.get("content", "").strip()
+
+        if block_type == "tool_calls":
+            calls = data.get("content", [])
+            results = data.get("results", [])
+            parts: list[str] = []
+
+            for call in calls:
+                func = call.get("function", {})
+                name = func.get("name", "desconocido")
+                args_str = func.get("arguments", "{}")
+
+                try:
+                    args = json.loads(args_str) if isinstance(args_str, str) else args_str
+                except (json.JSONDecodeError, ValueError):
+                    args = {}
+
+                # Buscar el resultado correspondiente
+                call_id = call.get("id", "")
+                result_content = ""
+                for r in results:
+                    if r.get("tool_call_id") == call_id:
+                        result_content = r.get("content", "")
+                        break
+
+                formatted = self._format_single_tool(name, args, result_content)
+                if formatted:
+                    parts.append(formatted)
+
+            return "\n\n".join(parts)
+
+        # Tipo desconocido — devolver vacío
+        return ""
+
+    def _format_single_tool(self, name: str, args: dict, result: str) -> str:
+        """Formatea una llamada individual a herramienta.
+
+        Args:
+            name: Nombre de la herramienta (Write, Edit, Bash, Read, etc.)
+            args: Argumentos parseados de la herramienta.
+            result: Resultado de la herramienta (si hay).
+
+        Returns:
+            Texto formateado según el tipo de herramienta.
+        """
+        if name == "Write":
+            filepath = args.get("filepath", "")
+            content_arg = args.get("content", "")
+            filename = filepath.split("/")[-1].split("\\")[-1] if filepath else "archivo"
+            # Determinar lenguaje por extensión
+            ext = filename.split(".")[-1] if "." in filename else ""
+            lang_map = {"py": "python", "ts": "typescript", "tsx": "tsx",
+                       "js": "javascript", "md": "markdown", "json": "json",
+                       "sh": "bash", "bat": "batch"}
+            lang = lang_map.get(ext, "")
+            # Truncar contenido si es muy largo (máximo 5000 chars)
+            if len(content_arg) > 5000:
+                content_arg = content_arg[:5000] + "\n... (contenido truncado, archivo completo en el workspace)"
+            return f"**Archivo creado:** `{filepath}`\n\n```{lang}\n{content_arg}\n```"
+
+        elif name == "Edit":
+            filepath = args.get("filepath", "")
+            return f"**Archivo modificado:** `{filepath}`"
+
+        elif name == "MultiEdit":
+            filepath = args.get("filepath", "")
+            edits = args.get("edits", [])
+            return f"**Archivo modificado:** `{filepath}` ({len(edits)} cambios)"
+
+        elif name == "Bash":
+            command = args.get("command", "")
+            description = args.get("description", "")
+            # Truncar comando si es muy largo
+            if len(command) > 500:
+                command = command[:500] + "..."
+            header = f"**Comando:** {description}\n" if description else ""
+            return f"{header}```bash\n{command}\n```"
+
+        elif name == "Read":
+            filepath = args.get("filepath", "")
+            return f"**Lectura:** `{filepath}`"
+
+        elif name == "Glob":
+            pattern = args.get("pattern", "")
+            path = args.get("path", "")
+            return f"**Búsqueda:** `{pattern}` en `{path}`"
+
+        elif name == "Grep":
+            pattern = args.get("pattern", "")
+            return f"**Búsqueda:** `{pattern}`"
+
+        elif name == "Task":
+            description = args.get("description", "")
+            prompt = args.get("prompt", "")
+            prompt_short = prompt[:200] + "..." if len(prompt) > 200 else prompt
+            return f"**Subagente lanzado:** {description}\n\n> {prompt_short}"
+
+        elif name == "TodoWrite":
+            todos = args.get("todos", [])
+            return f"**Tareas actualizadas:** {len(todos)} items"
+
+        else:
+            # Herramienta desconocida — resumen breve
+            return f"**{name}:** {str(args)[:200]}"
+
+    # -- Métodos internos (legacy) --------------------------------
 
     def _remove_reasoning_block(self, content: str) -> str:
         """Elimina un bloque de razonamiento al inicio del contenido.

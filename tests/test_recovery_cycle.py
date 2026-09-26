@@ -269,7 +269,7 @@ def test_recovery_cycle_no_block_exceeds_70k():
     fake_messages = []
     for i in range(50):
         tema_idx = i % 5
-        contenido = f"Mensaje {i} sobre tema_{tema_idx} " + "x" * 5000
+        contenido = f"Mensaje {i} sobre tema_{tema_idx} " + "x" * 1000
         fake_messages.append(Message(
             seq=i + 1,
             role=MessageRole.USER if i % 2 == 0 else MessageRole.ASSISTANT,

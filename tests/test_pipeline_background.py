@@ -1,4 +1,4 @@
-# /home/z/my-project/contexto_zai/tests/test_pipeline_background.py
+# contexto_zai/tests/test_pipeline_background.py -- Tests de diagnóstico (M6): reproducir condiciones reales del pipeline en background (Linux only).
 # Tests de diagnóstico (M6): reproducir las condiciones reales del pipeline en background
 # y medir qué lo mata. No es un test que deba pasar o fallar — es un diagnóstico.
 """Tests de diagnóstico del pipeline en background (M6, v4.0).

@@ -189,21 +189,41 @@ class ProcesadorConsulta:
 
         # Buscar en nombres de temas
         bloques_candidatos: dict[str, list[str]] = {}
-        for tema, archivo in tema_a_archivo.items():
+        for tema, archivos in tema_a_archivo.items():
             tema_lower = tema.lower()
+            match = False
             for word in question_words:
                 if word in tema_lower:
-                    bloques_candidatos.setdefault(archivo, []).append(tema)
+                    match = True
                     break
+            if not match:
+                continue
+            # v6.0: archivos puede ser str (legacy) o list[str] (multi-bloque)
+            if isinstance(archivos, str):
+                archivos_list = [archivos]
+            else:
+                archivos_list = list(archivos)
+            for archivo in archivos_list:
+                bloques_candidatos.setdefault(archivo, []).append(tema)
 
         # Buscar en contenido del índice
         if not bloques_candidatos:
             indice_lower = indice_path.read_text(encoding="utf-8").lower()
-            for tema, archivo in tema_a_archivo.items():
+            for tema, archivos in tema_a_archivo.items():
+                match = False
                 for word in question_words:
                     if word in indice_lower:
-                        bloques_candidatos.setdefault(archivo, []).append(tema)
+                        match = True
                         break
+                if not match:
+                    continue
+                # v6.0: multi-bloque
+                if isinstance(archivos, str):
+                    archivos_list = [archivos]
+                else:
+                    archivos_list = list(archivos)
+                for archivo in archivos_list:
+                    bloques_candidatos.setdefault(archivo, []).append(tema)
 
         # Limitar a max_results bloques
         return list(bloques_candidatos.keys())[:max_results]

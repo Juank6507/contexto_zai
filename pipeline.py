@@ -428,7 +428,8 @@ def query_context(
         }
 
     # 2. Leer metadata para obtener mapeo tema -> archivo (fuente única de verdad)
-    tema_a_archivo: dict[str, str] = {}
+    # v6.0: los valores pueden ser str (legacy) o list[str] (multi-bloque).
+    tema_a_archivo: dict = {}
     if metadata_exists:
         try:
             metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -455,31 +456,61 @@ def query_context(
 
     # Buscar en nombres de temas (tema_a_archivo ya incluye temas del chat y externos)
     bloques_candidatos: dict[str, list[str]] = {}
-    for tema, archivo in tema_a_archivo.items():
+    for tema, archivos in tema_a_archivo.items():
         tema_lower = tema.lower()
+        match = False
         for word in question_words:
             if word in tema_lower:
-                bloques_candidatos.setdefault(archivo, []).append(tema)
+                match = True
                 break
+        if not match:
+            continue
+        # v6.0: archivos puede ser str (legacy) o list[str] (multi-bloque)
+        if isinstance(archivos, str):
+            archivos_list = [archivos]
+        else:
+            archivos_list = list(archivos)
+        for archivo in archivos_list:
+            bloques_candidatos.setdefault(archivo, []).append(tema)
 
     # Buscar en contenido del índice (solo del chat — ampliar_contexto no genera índice)
     if not bloques_candidatos and indice_exists:
         indice_lower = indice_path.read_text(encoding="utf-8").lower()
-        for tema, archivo in tema_a_archivo.items():
+        for tema, archivos in tema_a_archivo.items():
+            match = False
             for word in question_words:
                 if word in indice_lower:
-                    bloques_candidatos.setdefault(archivo, []).append(tema)
+                    match = True
                     break
+            if not match:
+                continue
+            # v6.0: multi-bloque
+            if isinstance(archivos, str):
+                archivos_list = [archivos]
+            else:
+                archivos_list = list(archivos)
+            for archivo in archivos_list:
+                bloques_candidatos.setdefault(archivo, []).append(tema)
 
     # Buscar en contenido de los bloques
     if not bloques_candidatos:
-        for tema, archivo in tema_a_archivo.items():
-            bloque_path = workspace / archivo
-            if not bloque_path.exists():
-                continue
-            bloque_content = bloque_path.read_text(encoding="utf-8").lower()
-            for word in question_words:
-                if word in bloque_content:
+        for tema, archivos in tema_a_archivo.items():
+            # v6.0: multi-bloque
+            if isinstance(archivos, str):
+                archivos_list = [archivos]
+            else:
+                archivos_list = list(archivos)
+            for archivo in archivos_list:
+                bloque_path = workspace / archivo
+                if not bloque_path.exists():
+                    continue
+                bloque_content = bloque_path.read_text(encoding="utf-8").lower()
+                match = False
+                for word in question_words:
+                    if word in bloque_content:
+                        match = True
+                        break
+                if match:
                     bloques_candidatos.setdefault(archivo, []).append(tema)
                     break
 

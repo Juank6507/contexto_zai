@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # -- Enums ----------------------------------------------------------
 
@@ -386,7 +386,8 @@ class RecoveryMetadata(BaseModel):
         share_id: UUID del share del chat activo.
         ultimo_timestamp: Último mensaje procesado del chat activo.
         total_exchanges: Total de exchanges del chat activo.
-        tema_a_archivo: Mapeo tema -> archivo (unicidad garantizada).
+        tema_a_archivo: Mapeo tema -> lista de archivos que lo contienen
+            (v6.0: multi-bloque — un tema puede abarcar varios archivos).
         subtemas_derivados: Registro de subtemas creados al subdividir.
         ultima_activacion: ISO timestamp de la última activación.
         chats_procesados: Lista de chats procesados (v4.4 multi-chat).
@@ -397,29 +398,57 @@ class RecoveryMetadata(BaseModel):
     share_id: str = ""
     ultimo_timestamp: float = 0.0
     total_exchanges: int = 0
-    tema_a_archivo: dict[str, str] = Field(default_factory=dict)
+    tema_a_archivo: dict[str, list[str]] = Field(default_factory=dict)
     subtemas_derivados: dict[str, list[str]] = Field(default_factory=dict)
     ultima_activacion: str = ""
     # v4.4: soporte multi-chat
     chats_procesados: list[ChatInfo] = Field(default_factory=list)
     archivo_a_source: dict[str, dict] = Field(default_factory=dict)
 
-    def archivo_para_tema(self, tema: str) -> str | None:
-        """Devuelve el archivo que contiene el tema, o None si no existe."""
-        return self.tema_a_archivo.get(tema)
+    @field_validator("tema_a_archivo", mode="before")
+    @classmethod
+    def _migrate_tema_a_archivo(cls, v):
+        """Migra el formato viejo (dict[str, str]) al nuevo (dict[str, list[str]]).
+
+        v6.0: tema_a_archivo ahora es multi-bloque. Si al cargar de JSON
+        vienen valores str (formato v5.x), se convierten a lista de 1 elemento.
+        """
+        if not isinstance(v, dict):
+            return v
+        out: dict[str, list[str]] = {}
+        for k, val in v.items():
+            if isinstance(val, str):
+                out[k] = [val]
+            elif isinstance(val, list):
+                out[k] = list(val)
+            else:
+                out[k] = [str(val)]
+        return out
+
+    def archivo_para_tema(self, tema: str) -> list[str]:
+        """Devuelve la lista de archivos que contienen el tema (vacía si no existe).
+
+        v6.0: multi-bloque — un tema puede estar repartido en varios
+        archivos cuando supera el límite de tokens de un bloque.
+        """
+        return list(self.tema_a_archivo.get(tema, []))
 
     def tiene_tema(self, tema: str) -> bool:
         """Verifica si un tema ya está registrado."""
-        return tema in self.tema_a_archivo
+        return tema in self.tema_a_archivo and len(self.tema_a_archivo[tema]) > 0
 
     def registrar_tema(self, tema: str, archivo: str) -> None:
-        """Registra un tema en un archivo. Falla si el tema ya existe en otro archivo."""
-        if tema in self.tema_a_archivo and self.tema_a_archivo[tema] != archivo:
-            raise ValueError(
-                f"Violación de unicidad: tema '{tema}' ya está en "
-                f"'{self.tema_a_archivo[tema]}', no puede registrarse en '{archivo}'"
-            )
-        self.tema_a_archivo[tema] = archivo
+        """Registra un tema en un archivo. Idempotente (v6.0).
+
+        Si el tema no existe, crea la lista con ese archivo.
+        Si existe y el archivo ya está en la lista, no hace nada.
+        Si existe y el archivo NO está, lo añade (multi-bloque).
+        Ya NO lanza ValueError: un tema puede abarcar varios bloques.
+        """
+        if tema not in self.tema_a_archivo:
+            self.tema_a_archivo[tema] = []
+        if archivo not in self.tema_a_archivo[tema]:
+            self.tema_a_archivo[tema].append(archivo)
 
     def registrar_subtema(self, tema_padre: str, subtema: str, archivo: str) -> None:
         """Registra un subtema derivado de una subdivisión."""
@@ -783,18 +812,17 @@ if __name__ == "__main__":
     assert not bloque.would_exceed_limit(ex, max_tokens=100_000)
     print(f"[OK] ThematicBlock v3.2: {bloque.exchange_count} exchanges, {len(bloque.temas)} temas en 1 archivo")
 
-    # Test 4: RecoveryMetadata con unicidad
+    # Test 4: RecoveryMetadata multi-bloque (v6.0)
     meta = RecoveryMetadata(chat_id="abc", share_id="def")
     meta.registrar_tema("validaciones", "bloque_01.md")
     meta.registrar_tema("configuracion", "bloque_01.md")  # mismo archivo, OK
-    assert meta.archivo_para_tema("validaciones") == "bloque_01.md"
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md"]
     assert meta.tiene_tema("validaciones")
-    # Violación de unicidad debe fallar
-    try:
-        meta.registrar_tema("validaciones", "bloque_02.md")
-        assert False, "Debería haber lanzado ValueError"
-    except ValueError as e:
-        print(f"[OK] Unicidad tematica: violacion detectada correctamente")
+    # v6.0: un tema puede abarcar varios bloques (idempotente, no lanza)
+    meta.registrar_tema("validaciones", "bloque_02.md")  # añade a la lista
+    meta.registrar_tema("validaciones", "bloque_02.md")  # idempotente, no añade
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md", "bloque_02.md"]
+    print(f"[OK] Multi-bloque: 'validaciones' registrado en 2 bloques sin error")
     meta.registrar_subtema("validaciones", "validaciones_server", "bloque_02.md")
     assert "validaciones_server" in meta.subtemas_derivados["validaciones"]
     print(f"[OK] Subtema derivado: 'validaciones_server' registrado en bloque_02.md")

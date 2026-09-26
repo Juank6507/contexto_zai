@@ -142,6 +142,10 @@ class IntegradorRespuestas:
         """Obtiene el método handler según el task_id o context del response."""
         task_id = response.task_id
 
+        # v6.0: handler para bloques procesados por la cascada (Worker 1-4)
+        if task_id.endswith("_nombre") or task_id.endswith("_decisiones") or task_id.endswith("_temas"):
+            return self._integrar_bloque_cascada
+
         # Mapear task_id a handler (formatos del ProcesadorIntercambios y legacy)
         if "restricciones_tema" in task_id or "estado_d4" in task_id or "estado.d4" in task_id:
             return self._integrar_estado_d4
@@ -155,8 +159,6 @@ class IntegradorRespuestas:
             return self._integrar_consulta
         elif "documento" in task_id:
             return self._integrar_documento
-        elif "clasificacion_temas" in task_id or "capa3_" in task_id:
-            return self._integrar_clasificacion_temas
         elif "sintesis_contexto" in task_id:
             return self._integrar_sintesis_contexto
         else:
@@ -429,6 +431,160 @@ class IntegradorRespuestas:
             len(propuestas), nuevos, tema_padre,
         )
         return nuevos > 0
+
+    def _integrar_bloque_cascada(self, response: SubagentResponse, ws: Path) -> bool:
+        """v6.0: Integra las respuestas de la cascada Worker 1-4 de un bloque.
+
+        Cada bloque genera 4 respuestas:
+        - {block_id}_nombre: nombre legible (Worker 2)
+        - {block_id}_decisiones: decisiones (Worker 3)
+        - {block_id}_temas: temas principales (Worker 4)
+        - {block_id}_resumen: resumen (Worker 1, ya vive en el bloque)
+
+        Este handler se llama para cada respuesta individual (nombre, decisiones, temas).
+        Lee el bloque correspondiente del task_id y aplica la respuesta.
+        """
+        if not response.success or not response.response:
+            logger.warning("Cascada: respuesta vacía: %s", response.task_id)
+            return False
+
+        task_id = response.task_id
+        raw = response.response.strip()
+
+        # Extraer block_id y tipo del task_id (formato: bloque_NN_tipo)
+        if "_nombre" in task_id:
+            block_id = task_id.replace("_nombre", "")
+            return self._aplicar_nombre_cascada(block_id, raw, ws)
+        elif "_decisiones" in task_id:
+            block_id = task_id.replace("_decisiones", "")
+            return self._aplicar_decisiones_cascada(block_id, raw, ws)
+        elif "_temas" in task_id:
+            block_id = task_id.replace("_temas", "")
+            return self._aplicar_temas_cascada(block_id, raw, ws)
+
+        return False
+
+    def _aplicar_nombre_cascada(self, block_id: str, nombre: str, ws: Path) -> bool:
+        """v6.0: Aplica el nombre legible de un bloque al metadata."""
+        nombre = nombre.strip().lower().replace(" ", "_")
+        if not nombre or len(nombre) > 50:
+            return False
+
+        metadata_path = ws / "_metadata.json"
+        if not metadata_path.exists():
+            return False
+
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            tema_a_archivo = metadata.get("tema_a_archivo", {})
+
+            # Buscar el bloque en tema_a_archivo y renombrar la clave del tema
+            block_filename = f"{block_id}.md"
+            # Si el block_id ya existe como tema, no hacer nada (ya tiene nombre)
+            # Si no existe, añadirlo como tema apuntando al bloque
+            if block_id not in tema_a_archivo:
+                tema_a_archivo[nombre] = [block_filename]
+                metadata["tema_a_archivo"] = tema_a_archivo
+                metadata_path.write_text(
+                    json.dumps(metadata, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                logger.info("Cascada: nombre '%s' aplicado a %s", nombre, block_id)
+                return True
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error("Cascada: error aplicando nombre: %s", e)
+        return False
+
+    def _aplicar_decisiones_cascada(self, block_id: str, decisiones_raw: str, ws: Path) -> bool:
+        """v6.0: Aplica las decisiones de un bloque al archivo 02_decisiones_clave.md."""
+        if not decisiones_raw or "NO_" in decisiones_raw.upper():
+            return False
+
+        decisiones_path = ws / "02_decisiones_clave.md"
+        try:
+            existing = ""
+            if decisiones_path.exists():
+                existing = decisiones_path.read_text(encoding="utf-8")
+
+            # Parsear decisiones del formato: DECISION: ... | ALCANCE: ...
+            import re as _re
+            pattern = _re.compile(
+                r"DECISION:\s*(.+?)\s*\n\s*ALCANCE:\s*(.+?)(?=\n\n|\nDECISION:|\Z)",
+                _re.IGNORECASE | _re.DOTALL,
+            )
+            matches = pattern.findall(decisiones_raw)
+
+            if not matches:
+                return False
+
+            # Contar decisiones existentes
+            count = existing.count("## D") if existing else 0
+            new_content = existing.rstrip() + "\n\n" if existing else "# Decisiones Clave\n\n"
+
+            for decision_text, alcance_text in matches:
+                count += 1
+                new_content += f"## D{count:02d} -- {decision_text.strip()}\n\n"
+                new_content += f"- **Decisión:** {decision_text.strip()}\n"
+                new_content += f"- **Alcance:** {alcance_text.strip()}\n"
+                new_content += f"- **Bloque:** `{block_id}`\n\n"
+
+            # Actualizar total
+            if "Total de decisiones:" in new_content:
+                new_content = _re.sub(
+                    r"\*\*Total de decisiones:\*\* \d+",
+                    f"**Total de decisiones:** {count}",
+                    new_content,
+                )
+            else:
+                new_content = f"# Decisiones Clave\n\n**Total de decisiones:** {count}\n\n" + new_content.split("\n\n", 2)[-1] if "# Decisiones" in new_content else new_content
+
+            decisiones_path.write_text(new_content, encoding="utf-8")
+            logger.info("Cascada: %d decisiones aplicadas de %s", len(matches), block_id)
+            return True
+        except Exception as e:
+            logger.error("Cascada: error aplicando decisiones: %s", e)
+            return False
+
+    def _aplicar_temas_cascada(self, block_id: str, temas_raw: str, ws: Path) -> bool:
+        """v6.0: Aplica los temas principales de un bloque al metadata."""
+        temas_raw = temas_raw.strip()
+        if not temas_raw or "NO_" in temas_raw.upper():
+            return False
+
+        # Parsear temas (uno por línea o separados por comas)
+        temas = [t.strip().lower().replace(" ", "_") for t in temas_raw.replace(",", "\n").split("\n")]
+        temas = [t for t in temas if t and len(t) <= 50]
+        if not temas:
+            return False
+
+        metadata_path = ws / "_metadata.json"
+        if not metadata_path.exists():
+            return False
+
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            tema_a_archivo = metadata.get("tema_a_archivo", {})
+            block_filename = f"{block_id}.md"
+
+            nuevos = 0
+            for tema in temas:
+                if tema not in tema_a_archivo:
+                    tema_a_archivo[tema] = [block_filename]
+                    nuevos += 1
+                elif block_filename not in tema_a_archivo[tema]:
+                    tema_a_archivo[tema].append(block_filename)
+                    nuevos += 1
+
+            metadata["tema_a_archivo"] = tema_a_archivo
+            metadata_path.write_text(
+                json.dumps(metadata, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info("Cascada: %d temas aplicados de %s", nuevos, block_id)
+            return nuevos > 0
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error("Cascada: error aplicando temas: %s", e)
+            return False
 
     def _integrar_documento(self, response: SubagentResponse, ws: Path) -> bool:
         """Integra la respuesta de un subagente de documento al contexto.
@@ -941,52 +1097,7 @@ if __name__ == "__main__":
     assert "IntegradorRespuestas" in repr(integrador_repr)
     print(f"[OK] repr: {integrador_repr!r}")
 
-    # Test 10 (F4 v4.2): CLASIFICACION_TEMAS agrega subtemas a metadata
-    with tempfile.TemporaryDirectory() as tmpdir:
-        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
-        metadata_path = Path(tmpdir) / "_metadata.json"
-        metadata_path.write_text(json.dumps({
-            "tema_a_archivo": {"validaciones": "bloque_03.md"}
-        }), encoding="utf-8")
-        resp = SubagentResponse(
-            task_id="intercambios_clasificacion_temas_capa3_validaciones",
-            success=True,
-            response="""SUBTEMA: validaciones_server
-DESCRIPCION: Validaciones del servidor backend
-EXCHANGES: 1, 2
-
-SUBTEMA: validaciones_router
-DESCRIPCION: Validaciones del router HTTP
-EXCHANGES: 3, 4""",
-        )
-        result = integrador.integrar([resp])
-        assert result["total_applied"] == 1, f"Esperaba 1 aplicada, obtuvo {result['total_applied']}"
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        assert "validaciones_validaciones_server" in metadata["tema_a_archivo"]
-        assert "validaciones_validaciones_router" in metadata["tema_a_archivo"]
-        # El tema padre se mantiene (no se sobrescribe)
-        assert "validaciones" in metadata["tema_a_archivo"]
-        # Ambos subtemas apuntan al archivo del padre
-        assert metadata["tema_a_archivo"]["validaciones_validaciones_server"] == "bloque_03.md"
-        print(f"[OK] CLASIFICACION_TEMAS: 2 subtemas agregados a metadata")
-
-    # Test 11 (F4 v4.2): CLASIFICACION_TEMAS con NO_SUBDIVISION no actualiza metadata
-    with tempfile.TemporaryDirectory() as tmpdir:
-        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
-        metadata_path = Path(tmpdir) / "_metadata.json"
-        original_metadata = {"tema_a_archivo": {"validaciones": "bloque_03.md"}}
-        metadata_path.write_text(json.dumps(original_metadata), encoding="utf-8")
-        resp = SubagentResponse(
-            task_id="intercambios_clasificacion_temas_capa3_validaciones",
-            success=True,
-            response="NO_SUBDIVISION",
-        )
-        result = integrador.integrar([resp])
-        # NO_SUBDIVISION no aplica nada (total_applied=0)
-        assert result["total_applied"] == 0
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        assert metadata == original_metadata, "Metadata no debe cambiar con NO_SUBDIVISION"
-        print(f"[OK] CLASIFICACION_TEMAS: NO_SUBDIVISION no modifica metadata")
+    # v6.0: Tests 10-11 (CLASIFICACION_TEMAS) eliminados — el modo ya no existe.
 
     # Test 12 (v4.2 unificación): _integrar_documento registra temas REALES (no nombre genérico)
     # El subagente indexador devuelve formato TEMA/DESCRIPCION/SECCIONES.

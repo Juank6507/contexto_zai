@@ -1,5 +1,5 @@
 # contexto_zai/subagents/__init__.py -- Subpaquete de subagentes: launcher, clase base OOP y subagentes especializados.
-"""Paquete de subagentes del sistema Contexto Z.ai (v4.0).
+"""Paquete de subagentes del sistema Contexto Z.ai (v6.0).
 
 Subagentes especializados:
 - SubagentLauncher: wrapper sobre Task de Z.ai.
@@ -12,9 +12,7 @@ Subagentes especializados:
 - BarridoSubagent: busca información sobre un tema en un archivo.
 - DecisionesSubagent: extrae decisiones con LLM (no regex).
 - MantenimientoSubagent: actualización incremental de archivos.
-- DiscriminatorSubagent (v3.4): subdivide un tema grande en subtemas específicos (Capa 3).
 - DivisorSubagent (v3.6): Nivel 1, divide documento grande + lanza N2 en paralelo.
-- ConciliadorSubagent (v3.6): Nivel 3, consolida índices parciales de N2.
 - DocumentoIndexerSubagent (v4.0): ahora hereda de ClasificadorSubagent.
 """
 
@@ -46,13 +44,7 @@ from contexto_zai.subagents.clasificador_subagent import (
     ClasificadorResult,
     ClasificadorSubagent,
 )
-from contexto_zai.subagents.conciliador_subagent import ConciliadorSubagent
 from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
-from contexto_zai.subagents.discriminator_subagent import (
-    DiscriminatorSubagent,
-    SubdivisionProposal,
-    SubtemaProposal,
-)
 from contexto_zai.subagents.divisor_subagent import DivisorSubagent
 from contexto_zai.subagents.documento_indexer_subagent import (
     DocumentoIndexResult,
@@ -83,12 +75,8 @@ __all__ = [
     "BarridoSubagent",
     "DecisionesSubagent",
     "MantenimientoSubagent",
-    "DiscriminatorSubagent",
-    "SubdivisionProposal",
-    "SubtemaProposal",
     "DocumentoIndexerSubagent",
     "DocumentoIndexResult",
     "ThemeSection",
     "DivisorSubagent",
-    "ConciliadorSubagent",
 ]

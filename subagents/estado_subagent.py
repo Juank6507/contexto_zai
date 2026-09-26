@@ -95,8 +95,12 @@ class EstadoSubagent:
         archivo = None
 
         # Buscar el archivo del tema en la metadata
+        # v6.0: archivo_para_tema devuelve list[str] (multi-bloque).
+        # Nos quedamos con el primer archivo (suficiente para extraer contexto).
         if metadata:
-            archivo = metadata.archivo_para_tema(tema)
+            archivos = metadata.archivo_para_tema(tema)
+            if archivos:
+                archivo = archivos[0]
 
         # Fallback: buscar archivo por nombre de tema en el directorio
         if not archivo:

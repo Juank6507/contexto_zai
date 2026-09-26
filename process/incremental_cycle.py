@@ -48,7 +48,6 @@ from contexto_zai.models import RecoveryFile
 from contexto_zai.processing.block_packer import BlockPacker
 from contexto_zai.processing.classifier import MessageClassifier
 from contexto_zai.processing.exchange_builder import ExchangeBuilder
-from contexto_zai.processing.subdivider import Subdivider
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +105,7 @@ class IncrementalCycle:
 
         self._exchange_builder = ExchangeBuilder()
         self._classifier = MessageClassifier()
-        self._subdivider = Subdivider()
+        # v6.0: Subdivider eliminado — los temas grandes se reparten en bloques (multi-bloque).
         self._packer = BlockPacker()
         self._metadata_mgr = MetadataManager(output_dir=self._workspace_dir)
 
@@ -199,18 +198,11 @@ class IncrementalCycle:
                 all_by_topic.setdefault(ex.topic, []).append(ex)
 
             # Solo reempaquetar temas afectados
+            # v6.0: Subdivider eliminado — los temas grandes se reparten en bloques (multi-bloque).
             expanded: dict = {}
             for tema, exs in all_by_topic.items():
                 if tema in temas_afectados:
-                    # Subdividir si hace falta
-                    if self._subdivider.needs_subdivision(tema, exs):
-                        result = self._subdivider.subdivide(tema, exs)
-                        for name, sub_exs in result.subtemas:
-                            for ex in sub_exs:
-                                ex.topic = name
-                            expanded[name] = sub_exs
-                    else:
-                        expanded[tema] = exs
+                    expanded[tema] = exs
 
             blocks = self._packer.pack(expanded) if expanded else []
 
@@ -221,9 +213,10 @@ class IncrementalCycle:
             from datetime import datetime, timezone
             metadata.ultima_activacion = datetime.now(timezone.utc).isoformat()
             # v4.4: actualizar tema_a_archivo solo para los temas reempaquetados
+            # v6.0: usar registrar_tema() (multi-bloque) en vez de asignar str directo.
             for block in blocks:
                 for tema in block.temas:
-                    metadata.tema_a_archivo[tema] = block.filename
+                    metadata.registrar_tema(tema, block.filename)
             # v4.4: actualizar timestamp del chat en la lista de chats procesados
             metadata.actualizar_timestamp_chat(self._chat_id, new_ts)
             self._metadata_mgr.write(metadata)
@@ -264,22 +257,32 @@ class IncrementalCycle:
             indice_gen = IndiceGenerator()
 
             # Construir ThematicBlock a partir de los archivos físicos
+            # v6.0: tema_a_archivo es dict[str, list[str]] (multi-bloque).
             tema_a_archivo = metadata.tema_a_archivo
             blocks: list[ThematicBlock] = []
             archivos_vistos: set[str] = set()
-            for tema, archivo in tema_a_archivo.items():
-                if archivo in archivos_vistos:
-                    continue
-                archivos_vistos.add(archivo)
-                bloque_path = self._workspace_dir / archivo
-                if not bloque_path.exists():
-                    continue
-                temas_en_este_archivo = [
-                    t for t, a in tema_a_archivo.items() if a == archivo
-                ]
-                block = ThematicBlock(filename=archivo)
-                block._temas = list(temas_en_este_archivo)
-                blocks.append(block)
+            for tema, archivos in tema_a_archivo.items():
+                # v6.0: archivos puede ser str (legacy) o list[str]
+                if isinstance(archivos, str):
+                    archivos_list = [archivos]
+                else:
+                    archivos_list = list(archivos)
+                for archivo in archivos_list:
+                    if archivo in archivos_vistos:
+                        continue
+                    archivos_vistos.add(archivo)
+                    bloque_path = self._workspace_dir / archivo
+                    if not bloque_path.exists():
+                        continue
+                    # Temas en este archivo (pueden ser varios)
+                    temas_en_este_archivo = []
+                    for t, archs_t in tema_a_archivo.items():
+                        archs_t_list = [archs_t] if isinstance(archs_t, str) else list(archs_t)
+                        if archivo in archs_t_list:
+                            temas_en_este_archivo.append(t)
+                    block = ThematicBlock(filename=archivo)
+                    block._temas = list(temas_en_este_archivo)
+                    blocks.append(block)
 
             indice_content = indice_gen.generate(
                 blocks=blocks,

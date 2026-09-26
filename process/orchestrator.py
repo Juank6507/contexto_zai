@@ -200,7 +200,7 @@ class Orchestrator:
             download_dir=self._download_dir,
             decision_extractor=self._decision_extractor,
             subagent_launcher=procesador,
-            enable_capa3=True,  # v4.4 F5: subagentes de calidad cableados por defecto
+            # v6.0: enable_capa3 eliminado — los temas grandes se reparten en bloques.
             enable_attachments=False,
             share_id=self._share_id,
         )

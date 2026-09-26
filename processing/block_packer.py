@@ -1,5 +1,5 @@
-# contexto_zai/processing/block_packer.py -- Empaquetador de bloques: agrupa varios temas en un archivo hasta llenar 70K tokens (unicidad garantizada).
-"""Empaquetador de intercambios en bloques temáticos por tamaño (v3.2).
+# contexto_zai/processing/block_packer.py -- Empaquetador de bloques: agrupa varios temas en archivos de hasta 70K tokens (multi-bloque v6.0).
+"""Empaquetador de intercambios en bloques temáticos por tamaño (v6.0).
 
 Diferencia crítica respecto a v1.0 (BlockManager):
 - v1.0: un bloque por tema. Si un tema supera 70K tokens, lo subdivide
@@ -7,12 +7,15 @@ Diferencia crítica respecto a v1.0 (BlockManager):
 - v3.2: varios temas por bloque, hasta llenar el límite de 70K tokens.
   Si un tema individual supera el límite, lo subdivide en subtemas
   derivados únicos (lo hace Subdivider, no BlockPacker).
+- v6.0: si un tema individual supera el límite, NO lanza error ni subdividirá.
+  Reparte sus intercambios en varios bloques consecutivos (multi-bloque).
+  El mismo nombre de tema puede aparecer en múltiples archivos.
 
-Garantías de BlockPacker:
+Garantías de BlockPacker (v6.0):
 - Ningún bloque supera MAX_TOKENS_BLOQUE.
-- Un tema (o subtema) vive en un solo archivo (unicidad).
+- Un tema puede abarcar varios bloques (multi-bloque v6.0).
 - Si un intercambio individual no cabe solo en un bloque vacío,
-  se reporta como error (debería haberse subdividido antes).
+  se reporta como error (intercambio demasiado grande).
 
 Atómico standalone: importa config y models, nada más del proyecto.
 """
@@ -80,14 +83,17 @@ class BlockPacker:
         self,
         exchanges_by_topic: dict[str, list[Exchange]],
     ) -> list[ThematicBlock]:
-        """Empaqueta intercambios en bloques por tamaño.
+        """Empaqueta intercambios en bloques por tamaño (v6.0 multi-bloque).
 
         Estrategia:
         1. Para cada tema, procesar sus intercambios.
-        2. Si el tema individual cabe en un bloque, se añade al bloque actual
-           si hay espacio, o se crea un bloque nuevo.
-        3. Si el tema individual supera el límite, se reporta: debe
-           subdividirse antes (Subdivider).
+        2. Si el tema completo cabe en el bloque actual, se añade ahí.
+        3. Si no cabe pero es más chico que el límite, se crea un bloque nuevo.
+        4. Si el tema supera el límite individual, se reparte en varios
+           bloques consecutivos (multi-bloque v6.0): se van añadiendo
+           intercambios al bloque actual hasta llenarlo, luego se pasa
+           al siguiente bloque, y así sucesivamente. El mismo tema puede
+           aparecer en múltiples archivos.
 
         Args:
             exchanges_by_topic: Diccionario {tema: [intercambios]}.
@@ -96,8 +102,8 @@ class BlockPacker:
             Lista de ThematicBlock, cada uno con uno o varios temas.
 
         Raises:
-            ValueError: Si un tema individual supera el límite de tokens
-                (debe subdividirse antes con Subdivider).
+            ValueError: Solo si un intercambio individual no cabe en un
+                bloque vacío (es demasiado grande para cualquier bloque).
         """
         blocks: list[ThematicBlock] = []
         block_counter = 0
@@ -109,48 +115,62 @@ class BlockPacker:
             if not exchanges:
                 continue
 
-            # Verificar que el tema completo cabe en un bloque
             tema_tokens = sum(ex.estimated_tokens for ex in exchanges)
-            if tema_tokens > self._max_tokens:
-                raise ValueError(
-                    f"Tema '{tema}' supera el límite de tokens "
-                    f"({tema_tokens:.0f} > {self._max_tokens}). "
-                    f"Debe subdividirse con Subdivider antes de empaquetar."
-                )
+            tema_es_grande = tema_tokens > self._max_tokens
 
-            # Intentar añadir el tema al bloque actual, o crear uno nuevo
-            added = False
-            if current_block is not None:
-                # Verificar si todos los intercambios caben en el bloque actual
-                if self._tema_fits_in_block(exchanges, current_block):
+            if not tema_es_grande:
+                # Intentar añadir el tema completo al bloque actual, o crear uno nuevo
+                added = False
+                if current_block is not None:
+                    if self._tema_fits_in_block(exchanges, current_block):
+                        for ex in exchanges:
+                            current_block.add_exchange(ex)
+                        added = True
+                        logger.debug(
+                            "Tema '%s' anadido a bloque existente %s (%d intercambios)",
+                            tema, current_block.filename, len(exchanges),
+                        )
+
+                if not added:
+                    block_counter += 1
+                    current_block = ThematicBlock(
+                        filename=f"bloque_{block_counter:02d}.md",
+                    )
                     for ex in exchanges:
                         current_block.add_exchange(ex)
-                    added = True
+                    blocks.append(current_block)
                     logger.debug(
-                        "Tema '%s' anadido a bloque existente %s (%d intercambios)",
-                        tema, current_block.filename, len(exchanges),
+                        "Tema '%s' inicio nuevo bloque %s (%d intercambios, %.0f tokens)",
+                        tema, current_block.filename, len(exchanges), tema_tokens,
                     )
-
-            if not added:
-                # Crear bloque nuevo
-                block_counter += 1
-                current_block = ThematicBlock(
-                    filename=f"bloque_{block_counter:02d}.md",
+            else:
+                # v6.0: tema grande -> repartir en varios bloques consecutivos
+                logger.info(
+                    "Tema '%s' supera el limite (%.0f > %d tokens). "
+                    "Repartiendo en varios bloques (multi-bloque v6.0).",
+                    tema, tema_tokens, self._max_tokens,
                 )
-                # Verificar que el primer intercambio del tema cabe
-                if not self._tema_fits_in_block(exchanges, current_block):
-                    # El tema no cabe ni siquiera en un bloque vacío
-                    # Esto no debería pasar porque ya validamos arriba
-                    raise ValueError(
-                        f"Tema '{tema}' no cabe en un bloque vacío "
-                        f"(inconsistencia interna)"
-                    )
                 for ex in exchanges:
+                    # Si no hay bloque actual o el exchange no cabe, crear uno nuevo
+                    if current_block is None or current_block.would_exceed_limit(
+                        ex, self._max_tokens
+                    ):
+                        # Si el exchange individual no cabe ni en bloque vacío, error
+                        if ex.estimated_tokens > self._max_tokens:
+                            raise ValueError(
+                                f"Intercambio del tema '{tema}' es demasiado grande "
+                                f"({ex.estimated_tokens:.0f} > {self._max_tokens} tokens). "
+                                f"No cabe en ningún bloque."
+                            )
+                        block_counter += 1
+                        current_block = ThematicBlock(
+                            filename=f"bloque_{block_counter:02d}.md",
+                        )
+                        blocks.append(current_block)
                     current_block.add_exchange(ex)
-                blocks.append(current_block)
                 logger.debug(
-                    "Tema '%s' inicio nuevo bloque %s (%d intercambios, %.0f tokens)",
-                    tema, current_block.filename, len(exchanges), tema_tokens,
+                    "Tema grande '%s' repartido en bloques (termina en %s)",
+                    tema, current_block.filename if current_block else "?",
                 )
 
         logger.info(
@@ -247,17 +267,24 @@ if __name__ == "__main__":
     assert set(blocks2[0].temas) == {"configuracion_proyecto", "validaciones"}
     print(f"[OK] Varios temas en un bloque: {blocks2[0].temas}")
 
-    # Test 3: tema que supera el límite -> ValueError
+    # Test 3: tema que supera el límite -> multi-bloque (v6.0)
+    # Cada intercambio cabe individualmente (~285 tokens), pero el tema
+    # completo (5 * 285 = 1428) supera el límite (1000).
     big_exchanges = [
-        Exchange(id=i, director_msg=Message(seq=i, role=MessageRole.USER, timestamp=i, content="x" * 5000), topic="general", start_timestamp=i, end_timestamp=i+1)
-        for i in range(1, 6)  # 5 intercambios de ~1428 tokens cada uno = 7140 tokens
+        Exchange(id=i, director_msg=Message(seq=i, role=MessageRole.USER, timestamp=i, content="x" * 1000), topic="general", start_timestamp=i, end_timestamp=i+1)
+        for i in range(1, 6)  # 5 intercambios de ~285 tokens cada uno = 1428 tokens
     ]
-    try:
-        packer.pack_from_exchanges(big_exchanges)
-        assert False, "Debería haber lanzado ValueError"
-    except ValueError as e:
-        assert "supera el límite" in str(e)
-        print(f"[OK] Tema que supera limite: ValueError correcto")
+    blocks3 = packer.pack_from_exchanges(big_exchanges)
+    assert len(blocks3) > 1, f"Esperaba varios bloques (multi-bloque), obtuve {len(blocks3)}"
+    # Ningún bloque supera el límite
+    for b in blocks3:
+        assert b.estimated_tokens <= packer.max_tokens, (
+            f"Bloque {b.filename} supera el limite: {b.estimated_tokens:.0f} > {packer.max_tokens}"
+        )
+    # El tema 'general' puede estar en varios bloques
+    bloques_con_general = [b.filename for b in blocks3 if "general" in b.temas]
+    assert len(bloques_con_general) >= 1, "El tema 'general' debería estar en al menos un bloque"
+    print(f"[OK] Tema grande repartido en {len(blocks3)} bloques (multi-bloque v6.0)")
 
     # Test 4: cuando un tema llena el bloque, el siguiente tema va a bloque nuevo
     exchanges_4 = [

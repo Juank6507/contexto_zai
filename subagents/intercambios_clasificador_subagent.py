@@ -97,10 +97,7 @@ class ModoClasificador(str, Enum):
     # Devuelve string con nombre snake_case de máximo 5 palabras.
     NOMBRE_LEGIBLE = "nombre_legible"
 
-    # Capa 3 / F4 v4.2: clasificar intercambios por tema real (no regex).
-    # Recibe intercambios de un tema grande y propone subdivisión en subtemas
-    # específicos. Devuelve lista de SubtemaPropuesta (subtema + descripción + ids).
-    CLASIFICACION_TEMAS = "clasificacion_temas"
+    # v6.0: CLASIFICACION_TEMAS eliminado — no hay Capa 3 ni Subdivider.
 
     # v4.3: sintetizar el panorama del proyecto a partir del contexto disponible.
     # Recibe los 3 archivos de recuperación + objetivo del proyecto + resúmenes
@@ -253,10 +250,7 @@ class IntercambiosClasificadorSubagent(
             prompt = self._prompt_nombre_legible(context_text)
         elif self._modo == ModoClasificador.CONSULTA_BLOQUE:
             prompt = self._prompt_consulta_bloque(context_text)
-        elif self._modo == ModoClasificador.CLASIFICACION_TEMAS:
-            # tema_padre se pasa vía self._pregunta (convención reutilizada)
-            tema_padre = self._pregunta or "tema"
-            prompt = self._prompt_clasificacion_temas(context_text, tema_padre)
+        # v6.0: CLASIFICACION_TEMAS eliminado.
         elif self._modo == ModoClasificador.SINTESIS_CONTEXTO:
             # El contexto adicional (objetivo, índice, decisiones, resúmenes)
             # se pasa vía self._pregunta como texto concatenado.
@@ -280,7 +274,6 @@ class IntercambiosClasificadorSubagent(
             - RESUMEN_TRUNCADO: str
             - DECISIONES: list[Decision]
             - NOMBRE_LEGIBLE: str
-            - CLASIFICACION_TEMAS: list[SubtemaPropuesta]
             - SINTESIS_CONTEXTO: str
             - CONSULTA_BLOQUE: str
         """
@@ -292,8 +285,7 @@ class IntercambiosClasificadorSubagent(
             return self._parse_decisiones(raw)
         elif self._modo == ModoClasificador.NOMBRE_LEGIBLE:
             return self._parse_nombre_legible(raw)
-        elif self._modo == ModoClasificador.CLASIFICACION_TEMAS:
-            return self._parse_clasificacion_temas(raw)
+        # v6.0: CLASIFICACION_TEMAS eliminado.
         elif self._modo == ModoClasificador.SINTESIS_CONTEXTO:
             return raw.strip()
         elif self._modo == ModoClasificador.CONSULTA_BLOQUE:
@@ -971,58 +963,11 @@ ALCANCE: Aplica a EstadoGenerator y DecisionesGenerator."""
     assert "modo=decisiones" in repr_str
     print(f"[OK] __repr__: {repr_str}")
 
-    # Test 13 (F4 v4.2): modo CLASIFICACION_TEMAS
-    def mock_invoker_clasificacion(prompt: str) -> str:
-        return """SUBTEMA: autenticacion_jwt
-DESCRIPCION: Discusiones sobre obtener el JWT de chat.z.ai
-EXCHANGES: 1, 2
+    # v6.0: Test 13 eliminado (CLASIFICACION_TEMAS).
 
-SUBTEMA: subdivision_temas
-DESCRIPCION: Discusiones sobre subdividir temas grandes
-EXCHANGES: 3, 4"""
+    # v6.0: Test 14 eliminado (CLASIFICACION_TEMAS).
 
-    launcher_clt = SubagentLauncher(task_invoker=mock_invoker_clasificacion)
-    sub_clt = IntercambiosClasificadorSubagent(
-        launcher=launcher_clt,
-        modo=ModoClasificador.CLASIFICACION_TEMAS,
-        pregunta="general",  # tema_padre
-    )
-    result_clt = sub_clt.run(exchanges)
-    assert result_clt.success
-    assert isinstance(result_clt.resultado, list)
-    assert len(result_clt.resultado) == 2
-    assert result_clt.resultado[0].nombre == "autenticacion_jwt"
-    assert 1 in result_clt.resultado[0].exchange_ids
-    assert result_clt.resultado[1].nombre == "subdivision_temas"
-    assert 4 in result_clt.resultado[1].exchange_ids
-    print(f"[OK] Modo CLASIFICACION_TEMAS: 2 subtemas propuestos con IDs")
-
-    # Test 14 (F4 v4.2): CLASIFICACION_TEMAS con NO_SUBDIVISION
-    def mock_invoker_no_sub(prompt: str) -> str:
-        return "NO_SUBDIVISION"
-
-    launcher_ns = SubagentLauncher(task_invoker=mock_invoker_no_sub)
-    sub_ns = IntercambiosClasificadorSubagent(
-        launcher=launcher_ns,
-        modo=ModoClasificador.CLASIFICACION_TEMAS,
-        pregunta="general",
-    )
-    result_ns = sub_ns.run(exchanges)
-    assert result_ns.success
-    assert result_ns.resultado == []
-    print(f"[OK] Modo CLASIFICACION_TEMAS: NO_SUBDIVISION devuelve lista vacía")
-
-    # Test 15 (F4 v4.2): build_prompt de CLASIFICACION_TEMAS incluye tema_padre
-    sub_bp = IntercambiosClasificadorSubagent(
-        launcher=launcher,
-        modo=ModoClasificador.CLASIFICACION_TEMAS,
-        pregunta="validaciones",
-    )
-    prompt_bp, _files, _rec = sub_bp.build_prompt(exchanges)
-    assert "validaciones" in prompt_bp
-    assert "SUBTEMA:" in prompt_bp
-    assert "EXCHANGES:" in prompt_bp
-    print(f"[OK] build_prompt CLASIFICACION_TEMAS: incluye tema_padre y formato SUBTEMA/EXCHANGES")
+    # v6.0: Test 15 eliminado (CLASIFICACION_TEMAS).
 
     # Test 16 (F1 v4.3): modo SINTESIS_CONTEXTO devuelve texto plano
     def mock_invoker_sintesis(prompt: str) -> str:

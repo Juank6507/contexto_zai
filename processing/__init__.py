@@ -1,9 +1,9 @@
-# contexto_zai/processing/__init__.py -- Subpaquete de procesamiento: ExchangeBuilder, ContentCleaner, MessageClassifier, BlockPacker, Subdivider.
-"""Sub-paquete de procesamiento del sistema Contexto Z.ai (v3.2).
+# contexto_zai/processing/__init__.py -- Subpaquete de procesamiento: ExchangeBuilder, ContentCleaner, MessageClassifier, BlockPacker.
+"""Sub-paquete de procesamiento del sistema Contexto Z.ai (v6.0).
 
 Contiene los módulos atómicos encargados de construir exchanges,
-clasificarlos, limpiar su contenido, empaquetarlos en bloques por
-tamaño y subdividir temas grandes en subtemas derivados únicos.
+clasificarlos, limpiar su contenido y empaquetarlos en bloques por
+tamaño. Los temas grandes se reparten en varios bloques (multi-bloque).
 """
 
 from __future__ import annotations
@@ -35,12 +35,10 @@ from contexto_zai.processing.block_packer import BlockPacker
 from contexto_zai.processing.classifier import MessageClassifier
 from contexto_zai.processing.content_cleaner import ContentCleaner
 from contexto_zai.processing.exchange_builder import ExchangeBuilder
-from contexto_zai.processing.subdivider import Subdivider
 
 __all__ = [
     "ExchangeBuilder",
     "ContentCleaner",
     "MessageClassifier",
     "BlockPacker",
-    "Subdivider",
 ]

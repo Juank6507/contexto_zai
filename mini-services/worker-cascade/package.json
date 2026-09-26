@@ -1,0 +1,10 @@
+{
+  "name": "worker-cascade",
+  "version": "1.0.0",
+  "description": "Worker Bun persistente que coordina la cascada Worker 1 → Workers 2-4 sobre bloques secuenciales (v6.0)",
+  "scripts": {
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
+  },
+  "dependencies": {}
+}

@@ -190,7 +190,32 @@ class EstadoGenerator:
         # Usar los últimos 15-20 intercambios (los más relevantes)
         recent = exchanges[-20:] if len(exchanges) > 20 else exchanges
         ultimo_exchange = exchanges[-1]
-        tema_actual = ultimo_exchange.topic
+
+        # v6.0 D1: si el último exchange es virtual (director_msg empieza con
+        # "Lee este link:" — generado por ExchangeBuilder para adjuntos), buscar
+        # hacia atrás el último exchange REAL para usarlo como último intercambio
+        # del cual extraer la instrucción del Director y el tema activo.
+        # También cubre el caso en que el tema sea "link_externo" (clasificación
+        # de un exchange virtual).
+        ultimo_exchange_real = ultimo_exchange
+        for ex in reversed(exchanges):
+            content = ex.director_msg.content.strip()
+            is_virtual = content.startswith("Lee este link:") or ex.topic == "link_externo"
+            if not is_virtual:
+                ultimo_exchange_real = ex
+                break
+        tema_actual = ultimo_exchange_real.topic
+        # v6.0 A1: filtrar intercambios virtuales de la lista de recientes
+        recent_reales = [
+            ex for ex in recent
+            if not (
+                ex.director_msg.content.strip().startswith("Lee este link:")
+                or ex.topic == "link_externo"
+            )
+        ]
+        if not recent_reales:
+            # Todos virtuales (caso extremo): mantener original
+            recent_reales = recent
 
         # v4.3: secciones nuevas G0.A (objetivo), G0.B (síntesis placeholder), G1 (guía)
         g0_a = self._build_g0_a() if self._workspace_dir else ""
@@ -205,23 +230,28 @@ class EstadoGenerator:
                 logger.warning("F3 v4.3: no se pudo preparar tarea SINTESIS_CONTEXTO: %s", e)
 
         # Sección D1 -- Última instrucción del Director (literal)
-        d1 = self._build_d1(ultimo_exchange)
+        # v6.0 D1: usar el último exchange REAL (no virtual de adjuntos).
+        d1 = self._build_d1(ultimo_exchange_real)
 
         # Sección D4 -- Restricciones y preferencias activas del último tema
         # v4.0: usa subagente si hay launcher, sino regex.
-        d4 = self._build_d4(recent, tema_actual)
+        # v6.0: pasar los intercambios reales (sin virtuales).
+        d4 = self._build_d4(recent_reales, tema_actual)
 
         # Sección A1 -- Qué estaba haciendo el agente (con truncado inteligente v4.0)
-        a1 = self._build_a1(recent, tema_actual)
+        # v6.0 A1: pasar solo intercambios reales.
+        a1 = self._build_a1(recent_reales, tema_actual)
 
         # Sección A2 -- Entregables producidos (patrones ampliados v4.0)
-        a2 = self._build_a2(recent)
+        # v6.0 A2: filtrar virtuales y cortar tool_calls.
+        a2 = self._build_a2(recent_reales)
 
         # Sección A3 -- Errores abiertos (patrones ampliados v4.0)
-        a3 = self._build_a3(recent)
+        # v6.0 A3: filtrar virtuales y cortar tool_calls.
+        a3 = self._build_a3(recent_reales)
 
         # Sección A4 -- Siguiente paso lógico (analiza intercambios v4.0)
-        a4 = self._build_a4(recent, tema_actual)
+        a4 = self._build_a4(recent_reales, tema_actual)
 
         # v4.3: ensamblar con secciones G0 (si workspace) + secciones operativas
         content = self._assemble(
@@ -499,20 +529,31 @@ class EstadoGenerator:
             )
 
     def _build_a2(self, recent: list["Exchange"]) -> str:
-        """Sección A2: Entregables producidos."""
+        """Sección A2: Entregables producidos.
+
+        v6.0 A2: saltar intercambios virtuales (director_msg empieza con
+        "Lee este link:") y cortar contenido de tool_calls en los mensajes
+        del agente (buscar `{"type": "tool_calls"` y procesar solo el texto
+        anterior a esa marca).
+        """
         # Buscar menciones de archivos creados/modificados en mensajes del agente
         files: dict[str, str] = {}  # ruta -> contexto
 
         for ex in recent:
+            # v6.0 A2: saltar virtuales
+            if ex.director_msg.content.strip().startswith("Lee este link:"):
+                continue
             if not ex.agent_msgs:
                 continue
             for msg in ex.agent_msgs:
-                for match in _FILE_PATH_PATTERN.finditer(msg.content):
+                # v6.0 A2: cortar tool_calls
+                content = self._strip_tool_calls(msg.content)
+                for match in _FILE_PATH_PATTERN.finditer(content):
                     path = match.group(1)
                     if path not in files:
                         # Contexto: las 50 chars anteriores
                         start = max(0, match.start() - 50)
-                        context = msg.content[start:match.start()].strip()
+                        context = content[start:match.start()].strip()
                         files[path] = context[:80]
 
         if not files:
@@ -525,20 +566,28 @@ class EstadoGenerator:
         return "\n".join(lines)
 
     def _build_a3(self, recent: list["Exchange"]) -> str:
-        """Sección A3: Errores abiertos (con detección precisa, no ingenua)."""
+        """Sección A3: Errores abiertos (con detección precisa, no ingenua).
+
+        v6.0 A3: saltar intercambios virtuales y cortar tool_calls (igual que A2).
+        """
         errors: list[tuple[str, str]] = []  # (descripcion, contexto)
 
         for ex in recent:
+            # v6.0 A3: saltar virtuales
+            if ex.director_msg.content.strip().startswith("Lee este link:"):
+                continue
             if not ex.agent_msgs:
                 continue
             for msg in ex.agent_msgs:
-                for match in _ERROR_REGEX.finditer(msg.content):
+                # v6.0 A3: cortar tool_calls
+                content = self._strip_tool_calls(msg.content)
+                for match in _ERROR_REGEX.finditer(content):
                     # Contexto: las 100 chars posteriores
                     start = match.start()
-                    context = msg.content[start:start + 200].strip()
+                    context = content[start:start + 200].strip()
                     # Tomar las 50 chars anteriores como prefijo
                     prefix_start = max(0, start - 50)
-                    prefix = msg.content[prefix_start:start].strip()
+                    prefix = content[prefix_start:start].strip()
                     error_text = match.group(0)
                     errors.append((error_text, f"{prefix} ... {context}"))
 
@@ -558,6 +607,27 @@ class EstadoGenerator:
             lines.append(f"- **{err}**")
             lines.append(f"  Contexto: {ctx[:200]}")
         return "\n".join(lines)
+
+    @staticmethod
+    def _strip_tool_calls(content: str) -> str:
+        """v6.0: corta contenido de tool_calls en un mensaje.
+
+        Busca la marca `{"type": "tool_calls"` y devuelve solo el texto
+        anterior a esa marca. Si no la encuentra, devuelve el contenido
+        original. Esto evita que A2/A3 detecten rutas o errores falsos en
+        el JSON serializado de tool_calls.
+        """
+        if not content:
+            return content
+        marker = '{"type": "tool_calls"'
+        idx = content.find(marker)
+        if idx == -1:
+            # También probar sin espacios (por si el JSON está compacto)
+            marker = '{"type":"tool_calls"'
+            idx = content.find(marker)
+        if idx == -1:
+            return content
+        return content[:idx].rstrip()
 
     def _build_a4(
         self,

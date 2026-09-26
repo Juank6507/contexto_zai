@@ -125,7 +125,7 @@ def test_integrador_subdivider_nombre():
     with tempfile.TemporaryDirectory() as tmpdir:
         integrador = IntegradorRespuestas(workspace_dir=tmpdir)
         Path(tmpdir, "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"general_2026sep09": "bloque_01.md"}
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
         }), encoding="utf-8")
         resp = SubagentResponse(
             task_id="subdivider_nombre_general_2026sep09", success=True,
@@ -148,7 +148,7 @@ def test_flujo_completo_collect_responses():
         )
         Path(tmpdir, "02_decisiones_clave.md").write_text("# Decisiones\n\nPlaceholder.\n", encoding="utf-8")
         Path(tmpdir, "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"general_2026sep09": "bloque_01.md"}
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
         }), encoding="utf-8")
 
         # 2. Proceso publica tareas
@@ -258,7 +258,7 @@ def test_procesador_consulta():
         # Crear contexto simulado
         Path(tmpdir, "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         Path(tmpdir, "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"jwt_autenticacion": "bloque_01.md"}
+            "tema_a_archivo": {"jwt_autenticacion": ["bloque_01.md"]}
         }), encoding="utf-8")
         Path(tmpdir, "bloque_01.md").write_text("Contenido sobre JWT y autenticación.", encoding="utf-8")
 
@@ -272,69 +272,23 @@ def test_procesador_consulta():
 
 
 def test_clasificacion_temas_e2e():
-    """E2E CLASIFICACION_TEMAS (F4 v4.2): publicar tarea → simular respuesta → integrar.
+    """E2E (v6.0): CLASIFICACION_TEMAS eliminado — el modo ya no está disponible.
 
-    Verifica que el flujo completo de Capa 3 funcione:
-    1. ProcesadorIntercambios.procesar(CLASIFICACION_TEMAS) publica una tarea.
-    2. La tarea tiene el prompt correcto (SUBTEMA/EXCHANGES, no RESTRICCIONES).
-    3. (Simula) el agente lanza un subagente que responde con subtemas.
-    4. collect_responses() integra la respuesta actualizando _metadata.json.
+    Verifica que el modo CLASIFICACION_TEMAS ya no se puede usar.
     """
     from contexto_zai.procesadores import ProcesadorIntercambios
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
 
-        # Setup: metadata inicial con un tema grande
-        (ws / "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"validaciones": "bloque_03.md"}
-        }), encoding="utf-8")
-
-        # 1. ProcesadorIntercambios publica la tarea CLASIFICACION_TEMAS
         proc = ProcesadorIntercambios(workspace_dir=ws, orquestador=Orquestador(workspace_dir=ws))
-        result = proc.procesar(
-            modo="CLASIFICACION_TEMAS",
-            intercambios=[
-                # Mock simplificado de intercambios
-                type("X", (), {"id": 1, "director_msg": type("M", (), {"content": "msg 1"})(),
-                               "agent_msgs": [], "topic": "validaciones",
-                               "datetime_str": "2026-09-09"})(),
-                type("X", (), {"id": 2, "director_msg": type("M", (), {"content": "msg 2"})(),
-                               "agent_msgs": [], "topic": "validaciones",
-                               "datetime_str": "2026-09-09"})(),
-            ],
-            context={"tema_padre": "validaciones"},
-            task_id_suffix="capa3_validaciones",
-        )
-        assert len(result["pending_tasks"]) == 1
-        task = result["pending_tasks"][0]
-        # 2. El prompt es el correcto (no alias de RESTRICCIONES)
-        assert "SUBTEMA:" in task.prompt
-        assert "EXCHANGES:" in task.prompt
-        assert "RESTRICCION:" not in task.prompt
-
-        # 3. Simular: el agente lanza el subagente y escribe la respuesta
-        mock_response = """SUBTEMA: validaciones_server
-DESCRIPCION: Validaciones del servidor backend
-EXCHANGES: 1
-
-SUBTEMA: validaciones_router
-DESCRIPCION: Validaciones del router HTTP
-EXCHANGES: 2"""
-        RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(task.task_id, mock_response)
-
-        # 4. collect_responses() integra la respuesta
-        resultado = collect_responses(workspace_dir=str(ws))
-        assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada, obtuvo: {resultado}"
-
-        # Verificar que metadata se actualizó con los subtemas
-        metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
-        assert "validaciones_validaciones_server" in metadata["tema_a_archivo"]
-        assert "validaciones_validaciones_router" in metadata["tema_a_archivo"]
-        # El tema padre se mantiene
-        assert "validaciones" in metadata["tema_a_archivo"]
-
-        print("[OK] CLASIFICACION_TEMAS E2E: tarea publicada → respuesta integrada → metadata actualizada")
+        # v6.0: CLASIFICACION_TEMAS ya no es un modo válido.
+        assert "CLASIFICACION_TEMAS" not in ProcesadorIntercambios.MODOS_VALIDOS if hasattr(ProcesadorIntercambios, "MODOS_VALIDOS") else True
+        # Verificar que el enum ya no tiene CLASIFICACION_TEMAS
+        from contexto_zai.subagents.intercambios_clasificador_subagent import ModoClasificador
+        assert not hasattr(ModoClasificador, "CLASIFICACION_TEMAS")
+        print("  [OK] CLASIFICACION_TEMAS eliminado del enum (v6.0)")
+        print("  [PASS] PASO")
 
 
 def test_query_context_encuentra_bloque_externo():
@@ -537,7 +491,7 @@ def test_orchestrator_4_casos_decision():
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
             "chat_id": "chat-A", "share_id": "share-A",
             "ultimo_timestamp": 1000, "total_exchanges": 50,
-            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
             "ultima_activacion": "2026-09-15T00:00:00Z",
         }), encoding="utf-8")
         orch = Orchestrator(chat_id="chat-A", jwt="fake", workspace_dir=tmpdir)
@@ -556,7 +510,7 @@ def test_orchestrator_4_casos_decision():
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
             "chat_id": "chat-A", "share_id": "share-A",
             "ultimo_timestamp": 1000, "total_exchanges": 50,
-            "tema_a_archivo": {"tema1": "bloque_01.md"},
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
             "ultima_activacion": "2026-09-15T00:00:00Z",
         }), encoding="utf-8")
         orch = Orchestrator(chat_id="chat-B", jwt="fake", workspace_dir=tmpdir)
@@ -594,7 +548,7 @@ def test_query_context_atajo_resumenes():
         )
         # Crear _metadata.json con el tema
         (ws / "_metadata.json").write_text(json.dumps({
-            "tema_a_archivo": {"autenticacion_jwt": "bloque_01.md"}
+            "tema_a_archivo": {"autenticacion_jwt": ["bloque_01.md"]}
         }), encoding="utf-8")
 
         # query_context con pregunta que coincide con el resumen

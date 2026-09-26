@@ -120,10 +120,15 @@ class IndiceGenerator:
         ]
 
         # Filas de la tabla
-        for tema, archivo in sorted(tema_a_archivo.items()):
+        for tema, archivos in sorted(tema_a_archivo.items()):
             # Buscar el bloque que contiene este tema para obtener tokens
             tokens_str = self._find_tokens_for_tema(tema, blocks)
-            lines.append(f"| `{tema}` | `{archivo}` | ~{tokens_str} |")
+            # v6.0: archivos puede ser str (legacy) o list[str] (multi-bloque)
+            if isinstance(archivos, list):
+                archivos_str = ", ".join(f"`{a}`" for a in archivos)
+            else:
+                archivos_str = f"`{archivos}`"
+            lines.append(f"| `{tema}` | {archivos_str} | ~{tokens_str} |")
 
         lines.extend([
             "",
@@ -174,8 +179,12 @@ class IndiceGenerator:
                 "",
             ])
             for tema in sorted(script_temas):
-                archivo = tema_a_archivo[tema]
-                lines.append(f"- `{tema}` -> `{archivo}` (ver grafo en `_grafos_cambios.json`)")
+                archivos = tema_a_archivo[tema]
+                if isinstance(archivos, list):
+                    archivos_str = ", ".join(f"`{a}`" for a in archivos)
+                else:
+                    archivos_str = f"`{archivos}`"
+                lines.append(f"- `{tema}` -> {archivos_str} (ver grafo en `_grafos_cambios.json`)")
             lines.append("")
 
         # v3.5: sección de documentos indexados (attachments)
@@ -237,26 +246,23 @@ class IndiceGenerator:
         self,
         blocks: list["ThematicBlock"],
         metadata: Optional[RecoveryMetadata],
-    ) -> dict[str, str]:
-        """Construye el mapeo tema -> archivo.
+    ) -> dict[str, list[str]]:
+        """Construye el mapeo tema -> lista de archivos (v6.0 multi-bloque).
 
         Prioriza la metadata si se proporciona (es la fuente de verdad).
         Si no, lo construye a partir de los bloques.
         """
         if metadata and metadata.tema_a_archivo:
-            return dict(metadata.tema_a_archivo)
+            return {k: list(v) for k, v in metadata.tema_a_archivo.items()}
 
         # Construir desde los bloques
-        mapping: dict[str, str] = {}
+        mapping: dict[str, list[str]] = {}
         for b in blocks:
             for tema in b.temas:
-                if tema in mapping and mapping[tema] != b.filename:
-                    logger.warning(
-                        "Tema '%s' aparece en multiples archivos: %s y %s "
-                        "(violacion de unicidad)",
-                        tema, mapping[tema], b.filename,
-                    )
-                mapping[tema] = b.filename
+                if tema not in mapping:
+                    mapping[tema] = []
+                if b.filename not in mapping[tema]:
+                    mapping[tema].append(b.filename)
         return mapping
 
     def _find_tokens_for_tema(

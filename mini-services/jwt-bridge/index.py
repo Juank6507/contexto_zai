@@ -1,4 +1,4 @@
-# /home/z/my-project/mini-services/jwt-bridge/index.py
+# contexto_zai/mini-services/jwt-bridge/index.py -- Mini-servicio lanzadera para JwtBridgeServer (puerto 8086, recibe JWT del .bat del Director).
 """Mini-servicio lanzadera para JwtBridgeServer (puerto 8086).
 
 Mantiene el proceso vivo bloqueando el thread principal hasta que llega el JWT
