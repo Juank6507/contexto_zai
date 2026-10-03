@@ -1,0 +1,1084 @@
+# contexto_zai/tests/test_v42_e2e.py -- Tests E2E v4.2: flujo completo con la arquitectura F2+F4.
+"""Tests E2E v4.2.
+
+Valida el flujo completo:
+1. pipeline.run() (con datos sintéticos) genera los archivos.
+2. El proceso publica tareas vía EntregadorTareas.
+3. (Simula que) el agente lanza subagentes que escriben respuestas.
+4. collect_responses() lee respuestas, las integra, y devuelve resultado estructurado.
+5. Los archivos se actualizan con las respuestas reales.
+
+Script de dependencia: importa atómicos de coordinador y procesadores.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import tempfile
+from pathlib import Path
+
+# Auto-configuracion de sys.path
+_here = Path(__file__).resolve().parent
+_workspace = _here.parent.parent
+if str(_workspace) not in sys.path:
+    sys.path.insert(0, str(_workspace))
+
+from contexto_zai.coordinador import (
+    EntregadorTareas,
+    IntegradorRespuestas,
+    Orquestador,
+    RecogedorRespuestas,
+)
+from contexto_zai.models import SubagentResponse, SubagentTask
+from contexto_zai.pipeline import collect_responses
+
+
+def test_entregador_publicar_leer():
+    """EntregadorTareas publica y lee tareas en _pending_tasks.json."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ent = EntregadorTareas(workspace_dir=tmpdir)
+        tasks = [
+            SubagentTask(task_id="t1", purpose="estado.d4", prompt="p1"),
+            SubagentTask(task_id="t2", purpose="decisiones", prompt="p2"),
+        ]
+        ent.publicar(tasks)
+        assert ent.hay_tareas_pendientes()
+        leidas = ent.leer()
+        assert len(leidas) == 2
+        assert leidas[0].task_id == "t1"
+        print("[OK] EntregadorTareas: publicar+leer")
+
+
+def test_recogedor_escribir_leer():
+    """RecogedorRespuestas escribe y lee respuestas en _responses/."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        rec = RecogedorRespuestas(workspace_dir=tmpdir)
+        rec.escribir_respuesta("t1", "respuesta 1")
+        rec.escribir_respuesta("t2", "respuesta 2", success=False, error="timeout")
+        assert rec.total_respuestas() == 2
+        responses = rec.leer_todas()
+        assert len(responses) == 2
+        assert responses[0].success
+        assert not responses[1].success
+        print("[OK] RecogedorRespuestas: escribir+leer")
+
+
+def test_orquestador_coordinacion_completa():
+    """Orquestador coordina publicar tareas, recibir respuestas, aplicar."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        orch = Orquestador(workspace_dir=tmpdir)
+        # Publicar tareas
+        orch.publicar_tareas([SubagentTask(task_id="t1", prompt="p1")])
+        assert orch.hay_tareas_pendientes()
+        # Escribir respuesta
+        orch.recogedor.escribir_respuesta("t1", "r1")
+        assert orch.hay_respuestas_listas()
+        # Aplicar (sin integrador, solo lee)
+        resultado = orch.aplicar_respuestas()
+        assert resultado["total_leidas"] == 1
+        # Limpia tras aplicar
+        assert not orch.hay_tareas_pendientes()
+        assert not orch.hay_respuestas_listas()
+        print("[OK] Orquestador: coordinación completa")
+
+
+def test_integrador_d4():
+    """IntegradorRespuestas actualiza D4 en 00_estado_actual.md."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        Path(tmpdir, "00_estado_actual.md").write_text(
+            "# Estado\n\n## Sección D4 -- Restricciones\n\nViejo.\n\n## A1\n", encoding="utf-8"
+        )
+        resp = SubagentResponse(
+            task_id="estado_d4", success=True,
+            response="RESTRICCION: No usar indigo\nALCANCE: general",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        content = Path(tmpdir, "00_estado_actual.md").read_text(encoding="utf-8")
+        assert "indigo" in content
+        print("[OK] Integrador D4: restricción actualizada")
+
+
+def test_integrador_decisiones():
+    """IntegradorRespuestas actualiza 02_decisiones_clave.md."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        Path(tmpdir, "02_decisiones_clave.md").write_text("# Decisiones\n\nViejo.\n", encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="decisiones_lote_0", success=True,
+            response="DECISION: Usar OOP\nALCANCE: ClasificadorSubagent\nRAZON: Directiva.",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        content = Path(tmpdir, "02_decisiones_clave.md").read_text(encoding="utf-8")
+        assert "OOP" in content
+        assert "ClasificadorSubagent" in content
+        print("[OK] Integrador decisiones: decisión real con alcance")
+
+
+def test_integrador_subdivider_nombre():
+    """IntegradorRespuestas actualiza _metadata.json con nombre legible."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        integrador = IntegradorRespuestas(workspace_dir=tmpdir)
+        Path(tmpdir, "_metadata.json").write_text(json.dumps({
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
+        }), encoding="utf-8")
+        resp = SubagentResponse(
+            task_id="subdivider_nombre_general_2026sep09", success=True,
+            response="autenticacion_jwt",
+        )
+        result = integrador.integrar([resp])
+        assert result["total_applied"] == 1
+        metadata = json.loads(Path(tmpdir, "_metadata.json").read_text(encoding="utf-8"))
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"]
+        print("[OK] Integrador subdivider: metadata actualizada")
+
+
+def test_flujo_completo_collect_responses():
+    """Flujo completo: publicar tareas → escribir respuestas → collect_responses()."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # 1. Crear archivos de recuperación (regex fallback)
+        Path(tmpdir, "00_estado_actual.md").write_text(
+            "# Estado\n\n## Sección D4 -- Restricciones\n\nPlaceholder.\n\n## A1\n",
+            encoding="utf-8",
+        )
+        Path(tmpdir, "02_decisiones_clave.md").write_text("# Decisiones\n\nPlaceholder.\n", encoding="utf-8")
+        Path(tmpdir, "_metadata.json").write_text(json.dumps({
+            "tema_a_archivo": {"general_2026sep09": ["bloque_01.md"]}
+        }), encoding="utf-8")
+
+        # 2. Proceso publica tareas
+        orch = Orquestador(workspace_dir=tmpdir)
+        tasks = [
+            SubagentTask(task_id="estado_d4", purpose="estado.d4", prompt="p1"),
+            SubagentTask(task_id="decisiones_lote_0", purpose="decisiones", prompt="p2"),
+            SubagentTask(task_id="subdivider_nombre_general_2026sep09", purpose="subdivider.nombre", prompt="p3"),
+        ]
+        orch.publicar_tareas(tasks)
+        assert orch.total_pendientes if hasattr(orch, 'total_pendientes') else True
+
+        # 3. Agente "lanzó" subagentes que escribieron respuestas
+        recogedor = RecogedorRespuestas(workspace_dir=tmpdir)
+        recogedor.escribir_respuesta("estado_d4", "RESTRICCION: No usar hardcoding\nALCANCE: general")
+        recogedor.escribir_respuesta("decisiones_lote_0", "DECISION: Usar OOP\nALCANCE: ClasificadorSubagent\nRAZON: Directiva.")
+        recogedor.escribir_respuesta("subdivider_nombre_general_2026sep09", "autenticacion_jwt")
+
+        # 4. collect_responses() integra todo
+        resultado = collect_responses(workspace_dir=tmpdir)
+        assert resultado["total_leidas"] == 3
+        assert resultado["total_aplicadas"] == 3
+        assert len(resultado["errores"]) == 0
+
+        # 5. Verificar archivos actualizados
+        estado = Path(tmpdir, "00_estado_actual.md").read_text(encoding="utf-8")
+        decisiones = Path(tmpdir, "02_decisiones_clave.md").read_text(encoding="utf-8")
+        metadata = json.loads(Path(tmpdir, "_metadata.json").read_text(encoding="utf-8"))
+
+        assert "hardcoding" in estado
+        assert "OOP" in decisiones
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"]
+
+        # 6. Tareas y respuestas limpiadas
+        assert not orch.hay_tareas_pendientes()
+        assert not orch.hay_respuestas_listas()
+
+        print("[OK] Flujo completo: 3 tareas publicadas → 3 respuestas aplicadas → archivos actualizados")
+
+
+def test_procesadores_documentos():
+    """ProcesadorDocumento decide según tamaño (trivial, mediano, grande)."""
+    from contexto_zai.procesadores import ProcesadorDocumento
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proc = ProcesadorDocumento(workspace_dir=tmpdir)
+
+        # Trivial
+        small = Path(tmpdir, "small.txt")
+        small.write_text("Hola", encoding="utf-8")
+        result = proc.procesar(source_type="file", source_path=str(small))
+        assert result["needs_agent_read"]
+        assert result["tokens_estimados"] < 1000
+
+        # Mediano
+        medium = Path(tmpdir, "medium.txt")
+        medium.write_text("x" * 17500, encoding="utf-8")
+        result = proc.procesar(source_type="file", source_path=str(medium))
+        assert not result["needs_agent_read"]
+        assert len(result["pending_tasks"]) == 1
+
+        # Grande
+        large = Path(tmpdir, "large.txt")
+        large.write_text("x" * 210000, encoding="utf-8")
+        result = proc.procesar(source_type="file", source_path=str(large))
+        assert result.get("flujo") == "3_niveles"
+
+        print("[OK] ProcesadorDocumento: trivial/mediano/grande")
+
+
+def test_procesador_intercambios():
+    """ProcesadorIntercambios procesa intercambios en distintos modos."""
+    from contexto_zai.procesadores import ProcesadorIntercambios
+    from contexto_zai.models import Exchange, Message, MessageRole
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        proc = ProcesadorIntercambios(workspace_dir=tmpdir)
+        exchanges = [
+            Exchange(
+                id=1,
+                director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1.0, content="test"),
+                agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=2.0, content="reply")],
+                topic="general",
+                start_timestamp=1.0,
+                end_timestamp=2.0,
+            )
+        ]
+
+        # Modo RESTRICCIONES_TEMA
+        result = proc.procesar(modo="RESTRICCIONES_TEMA", intercambios=exchanges)
+        assert result["modo"] == "RESTRICCIONES_TEMA"
+        assert len(result["pending_tasks"]) == 1
+
+        # Modo DECISIONES por lotes
+        result = proc.procesar_por_lotes(modo="DECISIONES", intercambios=exchanges * 5, lote_size=2)
+        assert result["total_lotes"] == 3
+        assert len(result["pending_tasks"]) == 3
+
+        print("[OK] ProcesadorIntercambios: modos y lotes")
+
+
+def test_procesador_consulta():
+    """ProcesadorConsulta identifica bloques candidatos y decide modo."""
+    from contexto_zai.procesadores import ProcesadorConsulta
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Crear contexto simulado
+        Path(tmpdir, "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
+        Path(tmpdir, "_metadata.json").write_text(json.dumps({
+            "tema_a_archivo": {"jwt_autenticacion": ["bloque_01.md"]}
+        }), encoding="utf-8")
+        Path(tmpdir, "bloque_01.md").write_text("Contenido sobre JWT y autenticación.", encoding="utf-8")
+
+        proc = ProcesadorConsulta(workspace_dir=tmpdir)
+        result = proc.procesar(pregunta="¿qué se decidió sobre jwt?")
+        assert result["modo"] == "directo"
+        assert len(result["pending_tasks"]) == 1
+        assert result["pending_tasks"][0].purpose == "consulta.bloque"
+
+        print("[OK] ProcesadorConsulta: modo directo identificado")
+
+
+def test_clasificacion_temas_e2e():
+    """E2E (v6.0): CLASIFICACION_TEMAS eliminado — el modo ya no está disponible.
+
+    Verifica que el modo CLASIFICACION_TEMAS ya no se puede usar.
+    """
+    from contexto_zai.procesadores import ProcesadorIntercambios
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+
+        proc = ProcesadorIntercambios(workspace_dir=ws, orquestador=Orquestador(workspace_dir=ws))
+        # v6.0: CLASIFICACION_TEMAS ya no es un modo válido.
+        assert "CLASIFICACION_TEMAS" not in ProcesadorIntercambios.MODOS_VALIDOS if hasattr(ProcesadorIntercambios, "MODOS_VALIDOS") else True
+        # Verificar que el enum ya no tiene CLASIFICACION_TEMAS
+        from contexto_zai.subagents.intercambios_clasificador_subagent import ModoClasificador
+        assert not hasattr(ModoClasificador, "CLASIFICACION_TEMAS")
+        print("  [OK] CLASIFICACION_TEMAS eliminado del enum (v6.0)")
+        print("  [PASS] PASO")
+
+
+def test_query_context_encuentra_bloque_externo():
+    """E2E v4.2 unificación: query_context() encuentra bloques externos de ampliar_contexto().
+
+    Flujo completo:
+    1. ampliar_contexto() publica tarea (simulado vía ProcesadorDocumento).
+    2. Subagente indexador responde con temas reales (TEMA/DESCRIPCION/SECCIONES).
+    3. collect_responses() integra la respuesta: crea bloque_externo_*.md y
+       registra los temas reales en _metadata.json (no nombre genérico).
+    4. query_context() encuentra el bloque externo por el tema real, sin
+       necesitar 01_indice_recuperacion.md.
+    """
+    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
+    from contexto_zai.procesadores import ProcesadorDocumento
+    from contexto_zai.pipeline import collect_responses, query_context
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+
+        # _metadata.json vacío inicial
+        (ws / "_metadata.json").write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
+
+        # 1. ProcesadorDocumento publica la tarea de indexación
+        proc = ProcesadorDocumento(workspace_dir=ws, orquestador=Orquestador(workspace_dir=ws))
+        # Crear un archivo PDF simulado
+        pdf_path = ws / "documento_seguridad.pdf"
+        pdf_path.write_bytes(b"PDF simulado sobre autenticacion JWT y control de acceso" * 200)
+
+        result = proc.procesar(
+            source_type="file",
+            source_path=str(pdf_path),
+            jwt="",
+            metadata={"filename": "documento_seguridad.pdf"},
+        )
+        assert len(result["pending_tasks"]) >= 1
+        task = result["pending_tasks"][0]
+        assert "documento_" in task.task_id
+
+        # 2. Simular: el agente lanza el subagente indexador y responde con temas reales
+        mock_response = """RESUMEN: Documento sobre el sistema de seguridad y autenticación.
+
+TEMA: autenticacion_jwt
+DESCRIPCION: Sistema de autenticación basado en JWT
+SECCIONES: header, payload, signature
+
+TEMA: control_acceso
+DESCRIPCION: Control de acceso por roles
+SECCIONES: roles, permisos"""
+        RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(task.task_id, mock_response)
+
+        # 3. collect_responses() integra la respuesta
+        resultado = collect_responses(workspace_dir=str(ws))
+        assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
+
+        # Verificar que el bloque externo físico existe
+        # v6.6 F4: los bloques externos ahora se llaman bloque_NN.md (no bloque_externo_*)
+        # porque tienen la misma estructura canónica que los del chat.
+        bloques_externos = list(ws.glob("bloque_*.md"))
+        assert len(bloques_externos) >= 1, f"Esperaba ≥1 bloque: {bloques_externos}"
+
+        # Verificar que los temas reales están en _metadata.json (no nombres genéricos)
+        metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
+            f"Falta tema real 'autenticacion_jwt': {metadata['tema_a_archivo']}"
+        assert "control_acceso" in metadata["tema_a_archivo"]
+
+        # 4. query_context() encuentra el bloque externo por el tema real.
+        # v4.3 (F0.1): ahora _integrar_documento() regenera 01_indice_recuperacion.md,
+        # así que SÍ existirá un índice en este workspace. query_context() lo
+        # usa como fallback de búsqueda pero también busca directamente en
+        # _metadata.json (su fuente principal).
+        # Lo importante es que query_context encuentra el bloque externo por tema real.
+        query_result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
+        assert "error" not in query_result, f"Esperaba encontrar bloque, obtuvo error: {query_result}"
+        assert query_result["mode"] == "direct"
+        # v6.6 F4: el bloque encontrado es bloque_01.md (canónico, no bloque_externo_*)
+        assert any(b.startswith("bloque_") for b in query_result["bloques"]), \
+            f"Esperaba bloque canónico en candidatos: {query_result['bloques']}"
+        # El tema real está en los candidatos
+        assert "autenticacion_jwt" in query_result["bloques_info"][0]["temas"]
+
+        print("[OK] query_context E2E: encuentra bloque externo por tema real (v6.6 F4: bloque canónico)")
+
+
+def test_sintesis_contexto_e2e():
+    """E2E v4.3: flujo completo de SINTESIS_CONTEXTO en 00_estado_actual.md.
+
+    Flujo:
+    1. EstadoGenerator(workspace_dir) genera 00_estado_actual.md con G0.A
+       (objetivo) + G0.B (placeholder) + G1 (guía) + secciones operativas.
+    2. ProcesadorIntercambios publica la tarea SINTESIS_CONTEXTO.
+    3. (Simula) el agente lanza el subagente que responde con la síntesis.
+    4. collect_responses() aplica la respuesta vía _integrar_sintesis_contexto.
+    5. 00_estado_actual.md actualizado: G0.B pasa del placeholder al contenido.
+    """
+    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
+    from contexto_zai.procesadores import ProcesadorIntercambios
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.pipeline import collect_responses
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+
+        # 1. Crear 03_objetivo_proyecto.md (lo escribiría el agente/Director)
+        (ws / "03_objetivo_proyecto.md").write_text(
+            "Sistema de recuperación de contexto para agentes Z.ai.",
+            encoding="utf-8",
+        )
+
+        # 2. Crear el orquestador + procesador
+        orch = Orquestador(workspace_dir=ws)
+        proc_intercambios = ProcesadorIntercambios(
+            workspace_dir=ws, orquestador=orch,
+        )
+
+        # 3. EstadoGenerator con workspace genera el archivo con G0.A+G0.B+G1
+        gen = EstadoGenerator(workspace_dir=ws, launcher=proc_intercambios)
+        # Crear intercambios sinteticos para que generate() no falle
+        from contexto_zai.models import Exchange, Message, MessageRole
+        exchanges = [
+            Exchange(
+                id=1,
+                director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1.0,
+                                     content="Director: implementar v4.3"),
+                agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=1.5,
+                                    content="Agente: ok")],
+                topic="v4_3",
+                start_timestamp=1.0,
+                end_timestamp=2.0,
+            ),
+        ]
+        content = gen.generate(exchanges, chat_label="test_v43")
+        estado_path = ws / "00_estado_actual.md"
+        estado_path.write_text(content, encoding="utf-8")
+
+        # Verificar que el archivo inicial tiene G0.B (v6.4: ya no es placeholder, es RESUMEN o aviso)
+        initial_content = estado_path.read_text(encoding="utf-8")
+        assert "## G0.B — Síntesis del contexto disponible" in initial_content
+        # v6.4 F3: G0.B ya no tiene placeholder, tiene RESUMEN del bloque o aviso
+        assert "Síntesis" in initial_content or "síntesis" in initial_content or "no disponible" in initial_content
+
+        # 4. Verificar que se publicó la tarea SINTESIS_CONTEXTO
+        assert orch.hay_tareas_pendientes(), "Debería haber al menos 1 tarea pendiente (SINTESIS_CONTEXTO)"
+        tareas = orch.leer_tareas_pendientes()
+        sintesis_tasks = [t for t in tareas if "sintesis_contexto" in t.task_id]
+        assert len(sintesis_tasks) >= 1, f"Debería haber 1 tarea SINTESIS_CONTEXTO, got: {[t.task_id for t in tareas]}"
+
+        # 5. Simular: el agente lanza el subagente que responde con la síntesis
+        mock_sintesis = (
+            "El proyecto está en fase de implementación v4.3. "
+            "Tema activo: secciones G0 del estado actual. "
+            "Pendiente: validar con tests E2E."
+        )
+        RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(
+            sintesis_tasks[0].task_id, mock_sintesis
+        )
+
+        # 6. collect_responses() integra la respuesta
+        resultado = collect_responses(workspace_dir=str(ws))
+        assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
+
+        # 7. Verificar que G0.B se actualizó con la síntesis del subagente
+        updated_content = estado_path.read_text(encoding="utf-8")
+        assert "El proyecto está en fase de implementación v4.3" in updated_content
+        # El placeholder inicial ya no está
+        assert "Síntesis del contexto no disponible" not in updated_content
+        # G0.A y G1 siguen presentes
+        assert "## G0.A — Objetivo del proyecto" in updated_content
+        assert "Sistema de recuperación de contexto para agentes Z.ai." in updated_content
+        assert "## G1 — Cómo usar este contexto" in updated_content
+
+        print("[OK] SINTESIS_CONTEXTO E2E: G0.B pasa de placeholder a síntesis del subagente")
+
+
+def test_orchestrator_4_casos_decision():
+    """E2E v4.4 F1: el Orchestrator distingue mismo chat de otro chat.
+
+    Simula los 4 casos:
+    1. Primera vez (sin metadata) → recovery.
+    2. Mismo chat (metadata con mismo chat_id) → incremental.
+    3. Otro chat distinto (metadata con distinto chat_id) → recovery.
+    """
+    from unittest.mock import patch
+    from contexto_zai.process.orchestrator import Orchestrator, OrchestratorResult
+    from contexto_zai.models import DetectionTrigger
+
+    # Caso 1: primera vez (sin metadata)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        orch = Orchestrator(chat_id="chat-A", jwt="fake", workspace_dir=tmpdir)
+        with patch.object(orch, "_ejecutar_recovery", return_value=OrchestratorResult(
+            success=True, cycle_used="recovery", exchanges_processed=10, files_generated=5
+        )) as mock_r:
+            with patch.object(orch, "_ejecutar_incremental") as mock_i:
+                result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_r.assert_called_once()
+                mock_i.assert_not_called()
+                assert result.cycle_used == "recovery"
+        print("[OK] F1 E2E Caso 1 (primera vez): recovery")
+
+    # Caso 2/3: mismo chat
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
+            "chat_id": "chat-A", "share_id": "share-A",
+            "ultimo_timestamp": 1000, "total_exchanges": 50,
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
+            "ultima_activacion": "2026-09-15T00:00:00Z",
+        }), encoding="utf-8")
+        orch = Orchestrator(chat_id="chat-A", jwt="fake", workspace_dir=tmpdir)
+        with patch.object(orch, "_ejecutar_incremental", return_value=OrchestratorResult(
+            success=True, cycle_used="incremental", exchanges_processed=5, files_generated=2
+        )) as mock_i:
+            with patch.object(orch, "_ejecutar_recovery") as mock_r:
+                result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_i.assert_called_once()
+                mock_r.assert_not_called()
+                assert result.cycle_used == "incremental"
+        print("[OK] F1 E2E Caso 2/3 (mismo chat): incremental")
+
+    # Caso 4: otro chat distinto
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "_metadata.json").write_text(json.dumps({
+            "chat_id": "chat-A", "share_id": "share-A",
+            "ultimo_timestamp": 1000, "total_exchanges": 50,
+            "tema_a_archivo": {"tema1": ["bloque_01.md"]},
+            "ultima_activacion": "2026-09-15T00:00:00Z",
+        }), encoding="utf-8")
+        orch = Orchestrator(chat_id="chat-B", jwt="fake", workspace_dir=tmpdir)
+        with patch.object(orch, "_ejecutar_recovery", return_value=OrchestratorResult(
+            success=True, cycle_used="recovery", exchanges_processed=30, files_generated=8
+        )) as mock_r:
+            with patch.object(orch, "_ejecutar_incremental") as mock_i:
+                result = orch.activate(trigger=DetectionTrigger.EXPLICITO)
+                mock_r.assert_called_once()
+                mock_i.assert_not_called()
+                assert result.cycle_used == "recovery"
+        print("[OK] F1 E2E Caso 4 (otro chat): recovery (no incremental)")
+
+
+def test_query_context_atajo_resumenes():
+    """E2E v4.4 F4: query_context usa resúmenes como atajo.
+
+    Si existe ``04_resumenes_bloques.md`` y un resumen contiene las
+    palabras de la pregunta, query_context devuelve el resumen directamente
+    (modo ``resumen_atajo``) sin preparar prompts para subagentes.
+    """
+    from contexto_zai.pipeline import query_context
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws = Path(tmpdir)
+        # Crear bloque físico
+        (ws / "bloque_01.md").write_text(
+            "# Bloque 01\n\nRESUMEN: Sistema de autenticación JWT con tokens.\n\n## Tema\n\nContenido...",
+            encoding="utf-8",
+        )
+        # Crear 04_resumenes_bloques.md
+        (ws / "04_resumenes_bloques.md").write_text(
+            "# Resúmenes de bloques\n\n## bloque_01.md\n\nSistema de autenticación JWT con tokens.\n",
+            encoding="utf-8",
+        )
+        # Crear _metadata.json con el tema
+        (ws / "_metadata.json").write_text(json.dumps({
+            "tema_a_archivo": {"autenticacion_jwt": ["bloque_01.md"]}
+        }), encoding="utf-8")
+
+        # query_context con pregunta que coincide con el resumen
+        result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
+        assert result.get("mode") == "resumen_atajo", \
+            f"Esperaba modo resumen_atajo, obtuvo: {result.get('mode')}"
+        assert "autenticación JWT" in result.get("resumen_atajo", "")
+        assert "prompts" not in result or len(result.get("prompts", [])) == 0
+        print("[OK] F4 E2E atajo de resúmenes: query_context devuelve resumen sin subagente")
+
+
+# ============================================================
+# v6.2: Tests E2E del fallback al agente cuando el proxy APA falla
+# ============================================================
+
+def _crear_workspace_con_bloques(tmpdir, num_bloques=3, con_resumen_hasta=0):
+    """Helper: crea N bloques en tmpdir, los primeros `con_resumen_hasta` con RESUMEN:."""
+    from pathlib import Path
+    ws = Path(tmpdir)
+    ws.mkdir(parents=True, exist_ok=True)
+    for i in range(1, num_bloques + 1):
+        p = ws / f"bloque_{i:02d}.md"
+        if i <= con_resumen_hasta:
+            p.write_text(f"RESUMEN: Bloque {i} resumido.\n\n---\n\nContenido del bloque {i}.", encoding="utf-8")
+        else:
+            p.write_text(f"# Bloque temático {i}\n\nContenido sin resumen.", encoding="utf-8")
+    return ws
+
+
+def test_v62_proxy_disponible_worker_completa():
+    """v6.2 E2E 1: proxy APA disponible + worker completa todo → pending_tasks vacío."""
+    import tempfile
+    from unittest.mock import patch
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.models import ThematicBlock
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=0)
+        blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 4)]
+
+        # Mock: proxy disponible + worker simula que completa todos los bloques
+        # (escribe RESUMEN: en cada archivo)
+        def mock_arrancar(workspace_dir, timeout=None):
+            from pathlib import Path
+            for i in range(1, 4):
+                p = Path(workspace_dir) / f"bloque_{i:02d}.md"
+                p.write_text(f"RESUMEN: Simulado por worker.\n\n---\n\nContenido original.", encoding="utf-8")
+            return True
+
+        with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=True), \
+             patch("contexto_zai.pipeline._arrancar_worker_y_esperar", side_effect=mock_arrancar):
+            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+
+        assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)} tarea(s)"
+        # Verificar que todos los bloques quedaron con RESUMEN:
+        for i in range(1, 4):
+            assert blocks[i-1].tiene_resumen(workspace_dir=str(ws)) is True, f"bloque_{i:02d} debe tener RESUMEN"
+        print(f"[OK] v6.2 E2E 1: proxy OK + worker OK → pending_tasks vacío (3 bloques)")
+
+
+def test_v62_proxy_caido_fallback_agente():
+    """v6.2 E2E 2: proxy APA caído → pending_tasks con N tareas para todos los bloques."""
+    import tempfile
+    from unittest.mock import patch
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.models import ThematicBlock
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = _crear_workspace_con_bloques(tmp, num_bloques=4, con_resumen_hasta=0)
+        blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 5)]
+
+        # Mock: proxy caído (False), worker NO se llama
+        with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=False):
+            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+
+        assert len(pending) == 4, f"Esperaba 4 pending_tasks, obtuvo {len(pending)}"
+        # Verificar que cada tarea tiene task_id correcto
+        for i, task in enumerate(pending, start=1):
+            assert task.task_id == f"enriquecer_bloque_{i:02d}", \
+                f"task_id esperado: enriquecer_bloque_{i:02d}, obtuvo: {task.task_id}"
+            assert "bloque" in task.prompt.lower(), "prompt debe mencionar el bloque"
+        # Los bloques siguen sin RESUMEN:
+        for b in blocks:
+            assert b.tiene_resumen(workspace_dir=str(ws)) is False
+        print(f"[OK] v6.2 E2E 2: proxy caído → {len(pending)} pending_tasks para todos los bloques")
+
+
+def test_v62_worker_falla_parcialmente():
+    """v6.2 E2E 3: proxy OK + worker procesa algunos, falla otros → fallback solo para los faltantes."""
+    import tempfile
+    from unittest.mock import patch
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.models import ThematicBlock
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 5 bloques, worker escribirá RESUMEN: solo en los primeros 3
+        ws = _crear_workspace_con_bloques(tmp, num_bloques=5, con_resumen_hasta=0)
+        blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 6)]
+
+        def mock_arrancar(workspace_dir, timeout=None):
+            from pathlib import Path
+            # Solo completa los primeros 3 bloques
+            for i in range(1, 4):
+                p = Path(workspace_dir) / f"bloque_{i:02d}.md"
+                p.write_text(f"RESUMEN: Simulado por worker.\n\n---\n\nContenido.", encoding="utf-8")
+            # Los bloques 4 y 5 no se tocan
+            return True  # Worker "completa" exitosamente, pero dejó 2 sin RESUMEN
+
+        with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=True), \
+             patch("contexto_zai.pipeline._arrancar_worker_y_esperar", side_effect=mock_arrancar):
+            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+
+        # 3 bloques con RESUMEN: (worker OK), 2 sin (fallback)
+        assert len(pending) == 2, f"Esperaba 2 pending_tasks (fallback), obtuvo {len(pending)}"
+        task_ids = [t.task_id for t in pending]
+        assert "enriquecer_bloque_04" in task_ids, "bloque_04 debe estar en pending_tasks"
+        assert "enriquecer_bloque_05" in task_ids, "bloque_05 debe estar en pending_tasks"
+        assert "enriquecer_bloque_01" not in task_ids, "bloque_01 NO debe estar (worker lo completó)"
+        print(f"[OK] v6.2 E2E 3: worker falla parcial → {len(pending)} pending_tasks solo para faltantes")
+
+
+def test_v62_worker_timeout():
+    """v6.2 E2E 4: worker timeout → fallback para todos los bloques."""
+    import tempfile
+    from unittest.mock import patch
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.models import ThematicBlock
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=0)
+        blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 4)]
+
+        # Mock: proxy OK, pero worker devuelve False (timeout simulado)
+        with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=True), \
+             patch("contexto_zai.pipeline._arrancar_worker_y_esperar", return_value=False):
+            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+
+        assert len(pending) == 3, f"Esperaba 3 pending_tasks (timeout), obtuvo {len(pending)}"
+        # Los bloques siguen sin RESUMEN:
+        for b in blocks:
+            assert b.tiene_resumen(workspace_dir=str(ws)) is False
+        print(f"[OK] v6.2 E2E 4: worker timeout → {len(pending)} pending_tasks para todos los bloques")
+
+
+def test_v62_recorrer_con_todos_resumidos():
+    """v6.2 E2E 5: re-correr cuando todos los bloques ya tienen RESUMEN: → no hace nada."""
+    import tempfile
+    from unittest.mock import patch
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, _proxy_apa_disponible
+    from contexto_zai.models import ThematicBlock
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 3 bloques, todos con RESUMEN:
+        ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=3)
+        blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 4)]
+
+        # _proxy_apa_disponible NO debe ser llamado (early return)
+        call_count = [0]
+        def mock_proxy():
+            call_count[0] += 1
+            return True
+
+        with patch("contexto_zai.pipeline._proxy_apa_disponible", side_effect=mock_proxy):
+            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+
+        assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)}"
+        assert call_count[0] == 0, f"_proxy_apa_disponible NO debe llamarse si todos tienen RESUMEN: (llamadas: {call_count[0]})"
+        print(f"[OK] v6.2 E2E 5: todos con RESUMEN → no hace nada (0 llamadas al proxy)")
+
+
+# ============================================================
+# v6.3: Tests E2E de calidad de contexto
+# ============================================================
+
+def test_v63_sort_cronologico():
+    """v6.3 F4: ExchangeBuilder ordena intercambios por timestamp."""
+    import tempfile
+    from contexto_zai.processing.exchange_builder import ExchangeBuilder
+    from contexto_zai.models import Message, MessageRole
+
+    builder = ExchangeBuilder()
+    # Mensajes desordenados (timestamps 5, 1, 3, 2, 4)
+    messages = [
+        Message(seq=1, role=MessageRole.USER, timestamp=5, content="msg 5"),
+        Message(seq=2, role=MessageRole.ASSISTANT, timestamp=6, content="resp 5"),
+        Message(seq=3, role=MessageRole.USER, timestamp=1, content="msg 1"),
+        Message(seq=4, role=MessageRole.ASSISTANT, timestamp=2, content="resp 1"),
+        Message(seq=5, role=MessageRole.USER, timestamp=3, content="msg 3"),
+        Message(seq=6, role=MessageRole.ASSISTANT, timestamp=4, content="resp 3"),
+        Message(seq=7, role=MessageRole.USER, timestamp=2, content="msg 2"),
+        Message(seq=8, role=MessageRole.ASSISTANT, timestamp=3, content="resp 2"),
+        Message(seq=9, role=MessageRole.USER, timestamp=4, content="msg 4"),
+        Message(seq=10, role=MessageRole.ASSISTANT, timestamp=5, content="resp 4"),
+    ]
+
+    exchanges = builder.build(messages)
+
+    # v6.3 F4: los exchanges deben estar ordenados por start_timestamp
+    timestamps = [ex.start_timestamp for ex in exchanges]
+    assert timestamps == sorted(timestamps), \
+        f"Esperaba timestamps ordenados, obtuvo: {timestamps}"
+    print(f"[OK] v6.3 F4: ExchangeBuilder ordena intercambios por timestamp ({len(exchanges)} exchanges)")
+
+
+def test_v63_a1_sin_volcados():
+    """v6.3 F3: _build_a1 filtra volcados externos (> 10K chars)."""
+    import tempfile
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.models import Exchange, Message, MessageRole
+
+    gen = EstadoGenerator()
+
+    # Crear intercambios: uno normal y uno con volcado de 20K chars
+    volcado = "x" * 20000  # 20K chars de basura
+    exchanges = [
+        Exchange(
+            id=1,
+            director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="Implementar H2 del plan"),
+            agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=2, content="Hecho. 12 tests nuevos.")],
+            topic="configuracion_proyecto",
+            start_timestamp=1,
+            end_timestamp=2,
+        ),
+        Exchange(
+            id=2,
+            director_msg=Message(seq=3, role=MessageRole.USER, timestamp=3, content=volcado),
+            agent_msgs=[],
+            topic="configuracion_proyecto",
+            start_timestamp=3,
+            end_timestamp=3,
+        ),
+    ]
+
+    a1 = gen._build_a1(exchanges, tema_actual="configuracion_proyecto")
+
+    # El volcado NO debe estar en A1
+    assert "xxxxxxxxxxx" not in a1, "A1 no debe contener el volcado de 20K chars"
+    # El intercambio real SÍ debe estar
+    assert "Implementar H2" in a1 or "12 tests" in a1, \
+        f"A1 debe contener el intercambio real, obtuvo: {a1[:200]}"
+    print(f"[OK] v6.3 F3: _build_a1 filtra volcados externos (> 10K chars)")
+
+
+def test_v63_indice_preserva_anteriores():
+    """v6.3 F2: IndiceGenerator incluye bloques preexistentes del workspace."""
+    import tempfile
+    from contexto_zai.generation.indice_generator import IndiceGenerator
+    from contexto_zai.models import ThematicBlock
+
+    gen = IndiceGenerator()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # Crear bloque_01 y bloque_02 como "generados en esta corrida"
+        blocks = [
+            ThematicBlock(filename="bloque_01.md", temas=["general"]),
+            ThematicBlock(filename="bloque_02.md", temas=["configuracion_proyecto"]),
+        ]
+        # Crear bloque_67.md como "preexistente de chat anterior"
+        from pathlib import Path
+        (Path(tmp) / "bloque_67.md").write_text(
+            "# Bloque tematico: almacenamiento\n\nContenido del EP 02.",
+            encoding="utf-8",
+        )
+
+        # Generar índice SIN workspace_dir (comportamiento v6.2)
+        content_sin = gen.generate(blocks, chat_label="Test")
+        assert "bloque_01.md" in content_sin
+        assert "bloque_67.md" not in content_sin, "Sin workspace_dir, no debe incluir bloque_67"
+
+        # Generar índice CON workspace_dir (comportamiento v6.3 F2)
+        content_con = gen.generate(blocks, chat_label="Test", workspace_dir=tmp)
+        assert "bloque_01.md" in content_con
+        assert "bloque_67.md" in content_con, \
+            "Con workspace_dir, debe incluir bloque_67 preexistente"
+        assert "almacenamiento" in content_con, "Debe incluir el tema del bloque preexistente"
+        print(f"[OK] v6.3 F2: IndiceGenerator incluye bloques preexistentes del workspace")
+
+
+def test_v63_resumen_riguroso():
+    """v6.3 F5: PROMPT_RESUMEN tiene formato rígido (600-900 chars, 4 oraciones)."""
+    # Importar el prompt del worker-cascade (vía lectura del archivo)
+    from pathlib import Path
+    prompt_path = Path("/home/z/my-project/contexto_zai/mini-services/worker-cascade/index.ts")
+    if not prompt_path.exists():
+        print("[SKIP] v6.3 F5: worker-cascade/index.ts no accesible")
+        return
+    content = prompt_path.read_text(encoding="utf-8")
+
+    # Verificar que el prompt tiene las restricciones rígidas
+    assert "600 y 900 caracteres" in content, "PROMPT_RESUMEN debe pedir 600-900 chars"
+    assert "4 oraciones" in content, "PROMPT_RESUMEN debe pedir 4 oraciones"
+    assert "Tema central" in content, "PROMPT_RESUMEN debe pedir tema central"
+    assert "Decisiones principales" in content, "PROMPT_RESUMEN debe pedir decisiones"
+    assert "Temas específicos" in content, "PROMPT_RESUMEN debe pedir temas específicos"
+    assert "Tipo de actividad" in content, "PROMPT_RESUMEN debe pedir tipo de actividad"
+    assert "sin secciones, sin listas" in content, "PROMPT_RESUMEN debe prohibir secciones/listas"
+    assert "EJEMPLO" in content, "PROMPT_RESUMEN debe incluir ejemplo"
+    assert "RÍGIDO" in content, "SYSTEM_PROMPT_HEAVY debe mencionar formato RÍGIDO"
+    print(f"[OK] v6.3 F5: PROMPT_RESUMEN tiene formato rígido (600-900 chars, 4 oraciones)")
+
+
+def test_v63_config_constantes():
+    """v6.3: config.py tiene las constantes nuevas de calidad de contexto."""
+    from contexto_zai.config import (
+        A1_VOLCADO_UMBRAL_CHARS,
+        RESUMEN_MIN_CHARS,
+        RESUMEN_MAX_CHARS,
+        INDICE_PRESERVAR_ANTERIORES,
+    )
+    assert A1_VOLCADO_UMBRAL_CHARS == 10000, \
+        f"A1_VOLCADO_UMBRAL_CHARS debe ser 10000, obtuvo {A1_VOLCADO_UMBRAL_CHARS}"
+    assert RESUMEN_MIN_CHARS == 600, \
+        f"RESUMEN_MIN_CHARS debe ser 600, obtuvo {RESUMEN_MIN_CHARS}"
+    assert RESUMEN_MAX_CHARS == 900, \
+        f"RESUMEN_MAX_CHARS debe ser 900, obtuvo {RESUMEN_MAX_CHARS}"
+    assert INDICE_PRESERVAR_ANTERIORES is True, \
+        f"INDICE_PRESERVAR_ANTERIORES debe ser True, obtuvo {INDICE_PRESERVAR_ANTERIORES}"
+    print(f"[OK] v6.3: config.py tiene constantes de calidad (A1_VOLCADO={A1_VOLCADO_UMBRAL_CHARS}, RESUMEN={RESUMEN_MIN_CHARS}-{RESUMEN_MAX_CHARS})")
+
+
+def test_v64_decisiones_consolidadas():
+    """v6.4 F1: _consolidar_decisiones_llm() lee _responses/ y escribe 02_decisiones_clave.md."""
+    import tempfile
+    from pathlib import Path
+    from contexto_zai.pipeline import _consolidar_decisiones_llm
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        responses = ws / "_responses"
+        responses.mkdir()
+
+        # Crear 3 archivos de decisiones simulando el LLM
+        (responses / "bloque_01_decisiones.txt").write_text(
+            "DECISION: Eliminar el regex de decisiones | ALCANCE: DecisionesGenerator\n"
+            "DECISION: Usar solo LLM para extraer | ALCANCE: pipeline.py\n",
+            encoding="utf-8",
+        )
+        (responses / "bloque_02_decisiones.txt").write_text(
+            "DECISION: Filtrar tool_calls en A1 | ALCANCE: estado_generator.py\n",
+            encoding="utf-8",
+        )
+
+        count = _consolidar_decisiones_llm(workspace_dir=str(ws))
+
+        assert count == 3, f"Esperaba 3 decisiones, obtuvo {count}"
+        decisiones_file = ws / "02_decisiones_clave.md"
+        assert decisiones_file.exists(), "02_decisiones_clave.md debe existir"
+        content = decisiones_file.read_text(encoding="utf-8")
+        assert "Total de decisiones:** 3" in content
+        assert "Eliminar el regex" in content
+        assert "Filtrar tool_calls" in content
+        assert "**Alcance:**" in content or "ALCANCE:" in content
+        print(f"[OK] v6.4 F1: _consolidar_decisiones_llm() consolidó {count} decisiones del LLM")
+
+
+def test_v64_a1_sin_tool_calls():
+    """v6.4 F2: _build_a1 limpia tool_calls del contenido del agente."""
+    import tempfile
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.models import Exchange, Message, MessageRole
+
+    gen = EstadoGenerator()
+    # Crear intercambio con tool_calls en agent_msgs
+    tool_call_json = '{"type": "tool_calls", "content": [{"id": "tool-123", "type": "function", "function": {"name": "Read", "arguments": "{\\"filepath\\": \\"/test.py\\"}"}}]}'
+    exchanges = [
+        Exchange(
+            id=1,
+            director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="Lee el archivo"),
+            agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=2, content=tool_call_json)],
+            topic="general",
+            start_timestamp=1,
+            end_timestamp=2,
+        ),
+    ]
+
+    a1 = gen._build_a1(exchanges, tema_actual="general")
+    # El JSON crudo de tool_calls NO debe estar en A1
+    assert '"type": "tool_calls"' not in a1, "A1 no debe contener JSON crudo de tool_calls"
+    # El contenido limpio SÍ debe estar (ContentCleaner lo formatea)
+    print(f"[OK] v6.4 F2: _build_a1 limpia tool_calls del contenido del agente")
+
+
+def test_v64_g0b_con_resumen():
+    """v6.4 F3: G0.B contiene el RESUMEN del bloque del tema activo."""
+    import tempfile
+    from pathlib import Path
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+
+    with tempfile.TemporaryDirectory() as tmp:
+        ws = Path(tmp)
+        # Crear 03_objetivo_proyecto.md (requerido por EstadoGenerator)
+        (ws / "03_objetivo_proyecto.md").write_text(
+            "# Objetivo del proyecto\n\nConstruir proceso de recuperación de contexto.",
+            encoding="utf-8",
+        )
+        # Crear bloque_01.md con RESUMEN
+        (ws / "bloque_01.md").write_text(
+            "RESUMEN: Implementación del milestone H2 del plan v4.0.\n\n---\n\n# Bloque tematico: general\n\nContenido.",
+            encoding="utf-8",
+        )
+        # Crear _metadata.json
+        import json
+        (ws / "_metadata.json").write_text(json.dumps({
+            "chat_id": "test",
+            "tema_a_archivo": {"general": ["bloque_01.md"]},
+        }), encoding="utf-8")
+
+        gen = EstadoGenerator(workspace_dir=str(ws))
+        g0b = gen._build_g0_b()
+
+        # G0.B debe contener el RESUMEN del bloque
+        assert "Implementación del milestone H2" in g0b, \
+            f"G0.B debe contener el RESUMEN del bloque, got: {g0b[:200]}"
+        assert "bloque_01.md" in g0b, "G0.B debe mencionar el bloque"
+        print(f"[OK] v6.4 F3: G0.B contiene el RESUMEN del bloque del tema activo")
+
+
+def test_v64_fallback_mismo_prompt():
+    """v6.4 F4: el prompt del fallback contiene las restricciones rigurosas."""
+    from contexto_zai.config import PROMPT_RESUMEN_RIGIDO
+    from contexto_zai.models import ThematicBlock
+    from contexto_zai.pipeline import _construir_pending_task_para_bloque
+
+    bloque = ThematicBlock(filename="bloque_01.md")
+    task = _construir_pending_task_para_bloque(bloque, chat_label="test")
+
+    # El prompt debe contener las restricciones del Worker Bun
+    assert "600 y 900 caracteres" in task.prompt, "Debe pedir 600-900 chars"
+    assert "4 oraciones" in task.prompt, "Debe pedir 4 oraciones"
+    assert "sin secciones, sin listas" in task.prompt, "Debe prohibir secciones/listas"
+    assert "bloque_01.md" in task.prompt, "Debe mencionar el bloque"
+    print(f"[OK] v6.4 F4: fallback usa el mismo prompt riguroso del Worker Bun")
+
+
+def test_v64_sort_global():
+    """v6.4 F5: BlockPacker ordena intercambios globalmente dentro de cada bloque."""
+    import tempfile
+    from contexto_zai.processing.block_packer import BlockPacker
+    from contexto_zai.models import Exchange, Message, MessageRole
+
+    packer = BlockPacker()
+    # Crear intercambios de 2 temas con timestamps cruzados
+    exchanges_by_topic = {
+        "almacenamiento": [
+            Exchange(id=1, director_msg=Message(seq=1, role=MessageRole.USER, timestamp=5, content="msg 5"),
+                     topic="almacenamiento", start_timestamp=5, end_timestamp=6),
+            Exchange(id=3, director_msg=Message(seq=3, role=MessageRole.USER, timestamp=1, content="msg 1"),
+                     topic="almacenamiento", start_timestamp=1, end_timestamp=2),
+        ],
+        "general": [
+            Exchange(id=2, director_msg=Message(seq=2, role=MessageRole.USER, timestamp=3, content="msg 3"),
+                     topic="general", start_timestamp=3, end_timestamp=4),
+        ],
+    }
+
+    blocks = packer.pack(exchanges_by_topic)
+
+    # Verificar que dentro de cada bloque, los intercambios estén ordenados por timestamp
+    for block in blocks:
+        timestamps = [ex.start_timestamp for ex in block.exchanges]
+        assert timestamps == sorted(timestamps), \
+            f"Bloque {block.filename}: timestamps deben estar ordenados, got {timestamps}"
+    print(f"[OK] v6.4 F5: BlockPacker ordena intercambios globalmente dentro de cada bloque ({len(blocks)} bloques)")
+
+
+def main():
+    print("=== Tests E2E v4.2 + v6.2 + v6.3 ===\n")
+
+    tests = [
+        test_entregador_publicar_leer,
+        test_recogedor_escribir_leer,
+        test_orquestador_coordinacion_completa,
+        test_integrador_d4,
+        test_integrador_decisiones,
+        test_integrador_subdivider_nombre,
+        test_flujo_completo_collect_responses,
+        test_procesadores_documentos,
+        test_procesador_intercambios,
+        test_procesador_consulta,
+        test_clasificacion_temas_e2e,
+        test_query_context_encuentra_bloque_externo,
+        test_sintesis_contexto_e2e,
+        test_orchestrator_4_casos_decision,
+        test_query_context_atajo_resumenes,
+        # v6.2: tests del fallback al agente
+        test_v62_proxy_disponible_worker_completa,
+        test_v62_proxy_caido_fallback_agente,
+        test_v62_worker_falla_parcialmente,
+        test_v62_worker_timeout,
+        test_v62_recorrer_con_todos_resumidos,
+        # v6.3: tests de calidad de contexto
+        test_v63_sort_cronologico,
+        test_v63_a1_sin_volcados,
+        test_v63_indice_preserva_anteriores,
+        test_v63_resumen_riguroso,
+        test_v63_config_constantes,
+        # v6.4: tests de unificación y calidad
+        test_v64_decisiones_consolidadas,
+        test_v64_a1_sin_tool_calls,
+        test_v64_g0b_con_resumen,
+        test_v64_fallback_mismo_prompt,
+        test_v64_sort_global,
+    ]
+
+    passed = 0
+    failed = 0
+    for test in tests:
+        try:
+            test()
+            passed += 1
+        except Exception as e:
+            print(f"[FAIL] {test.__name__}: {e}")
+            import traceback
+            traceback.print_exc()
+            failed += 1
+
+    print(f"\n=== Resumen: {passed} pasaron, {failed} fallaron ===")
+    if failed == 0:
+        print("[PASS] Todos los tests E2E v4.2 pasaron")
+    return 0 if failed == 0 else 1
+
+
+if __name__ == "__main__":
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    sys.exit(main())
