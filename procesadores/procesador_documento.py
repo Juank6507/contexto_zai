@@ -1,4 +1,4 @@
-# contexto_zai/procesadores/procesador_documento.py -- ProcesadorDocumento: procesa documentos (links, attachments, archivos, URLs).
+# contexto_zai/procesadores/procesador_documento.py -- ProcesadorDocumento (v6.7 F1): prompts piden EXTRAER contenido literal hasta 70K, no generar índice temático.
 """ProcesadorDocumento (v4.2).
 
 Procesa documentos para entregarle contexto al agente. Unifica los
@@ -262,18 +262,26 @@ class ProcesadorDocumento:
         }
 
     def _build_documento_prompt(self, filename: str, content_bytes: bytes, tokens: float) -> str:
-        """Construye el prompt para que un subagente lea y clasifique un documento."""
+        """v6.7 F1: Construye el prompt para que un subagente EXTRAIGA contenido literal.
+
+        Antes de v6.7: el prompt pedía al subagente generar un índice temático
+        (TEMA/DESCRIPCION/SECCIONES/RESUMEN). El resultado era un índice de
+        1-2 KB, no el contenido literal del documento.
+
+        Ahora: el prompt pide al subagente EXTRAER el contenido literal del
+        documento y formatearlo en estructura markdown legible (secciones con
+        título, contenido íntegro). El resultado debe llenar el bloque hasta
+        ~70K tokens. La clasificación por temas se hace después (Worker 4),
+        no durante la extracción.
+        """
         from contexto_zai.config import ATTACHMENTS_TEMP_DIR
         temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{filename.replace(' ', '_')}"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_bytes(content_bytes)
 
-        # v4.3 (Bug 1 fix): formato alineado con DocumentoIndexerSubagent._build_prompt_historico()
-        # para que IntegradorRespuestas._parse_temas_documento() (que exige los 3 campos
-        # TEMA + DESCRIPCION + SECCIONES) pueda parsear la respuesta correctamente.
-        return f"""Eres un subagente indexador de documentos. Tu objetivo es leer
-un documento y generar un índice estructurado que permita al agente principal
-saber de qué trata sin haberlo leído.
+        return f"""Eres un subagente extractor de documentos. Tu objetivo es leer
+un documento y EXTRAER su contenido literal, formateándolo en estructura
+markdown legible para que quede registrado en el contexto del proyecto.
 
 ## Archivo a leer
 
@@ -281,35 +289,51 @@ saber de qué trata sin haberlo leído.
 
 ## Tu tarea
 
-1. Lee el archivo con la herramienta Read.
-2. Identifica los temas principales que se discuten en el documento.
-3. Para cada tema, indica su nombre en snake_case, una descripción corta, y
-   las secciones del documento donde se trata (separadas por comas).
-4. Genera un resumen breve del documento (máximo 500 caracteres).
+1. Lee el archivo con la herramienta Read (archivo completo).
+2. EXTRAE el contenido literal del documento, sin resumir, sin parafrasear.
+3. Formatea el contenido en estructura markdown legible:
+   - Usa "## Sección N — <título>" como encabezado de cada sección del documento.
+   - Conserva el texto íntegro debajo de cada encabezado.
+   - Conserva bloques de código con triple backtick si los hay.
+   - Conserva rutas de archivos, comandos y ejemplos literales.
+   - Si el documento no tiene secciones explícitas, divídelo en secciones
+     temáticas coherentes con títulos descriptivos.
+4. NO generes índice, NO generes resumen, NO clasifiques por temas.
+   Solo extrae y formatea el contenido literal.
 
-## Formato de respuesta EXACTO
+## Formato de respuesta
 
-TEMA: <nombre_snake_case>
-DESCRIPCION: <descripción corta del tema>
-SECCIONES: <sección1, sección2, sección3>
+```
+## Sección 1 — <título de la primera sección>
 
-TEMA: <nombre_snake_case>
-DESCRIPCION: <descripción corta>
-SECCIONES: <sección1, sección2>
+<contenido literal de esa sección, formateado en markdown>
 
-RESUMEN: <resumen breve del documento, máximo 500 caracteres>
+## Sección 2 — <título de la segunda sección>
 
-Reglas:
-- Nombres de tema en snake_case (sin espacios, sin acentos).
-- Máximo 5 temas.
-- Cada tema debe tener al menos 1 sección.
-- El resumen debe ser conciso y revelador (no genérico).
+<contenido literal>
+
+...
+```
+
+## Reglas
+
+- No resumas. El contenido debe ser literal, palabra por palabra.
+- No omitas secciones. Si el documento tiene 10 secciones, extrae las 10.
+- Si una sección es muy larga (>20K chars), divídela en sub-secciones con "###".
+- Conserva el formato original (listas, tablas, código) en la medida de lo posible.
+- El resultado debe llenar el bloque hasta ~70K tokens.
 
 Respuesta:"""
 
     def _build_lote_prompt(self, filename: str, content_bytes: bytes, tokens: float,
                            lote_idx: int, total_lotes: int) -> str:
-        """Construye el prompt para que un subagente procese un lote del documento."""
+        """v6.7 F1: Construye el prompt para que un subagente EXTRAIGA contenido literal de un lote.
+
+        Antes de v6.7: el prompt pedía generar un índice temático del lote.
+        Ahora: el prompt pide EXTRAER el contenido literal del lote y
+        formatearlo en estructura markdown legible. El lote es de ~70K tokens
+        (no ~5K como antes) para llenar el bloque completo.
+        """
         from contexto_zai.config import ATTACHMENTS_TEMP_DIR
         temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{filename.replace(' ', '_')}"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -327,10 +351,9 @@ Respuesta:"""
             start_line = 0
             end_line = 0
 
-        # v4.3 (Bug 1 fix): formato alineado con DocumentoIndexerSubagent._build_prompt_historico()
-        # para que IntegradorRespuestas._parse_temas_documento() pueda parsear la respuesta.
-        return f"""Eres un subagente indexador de documentos. Estás procesando
-una porción de un documento grande.
+        return f"""Eres un subagente extractor de documentos. Estás procesando
+una porción de un documento grande. Tu objetivo es EXTRAER el contenido
+literal de esta porción y formatearlo en estructura markdown legible.
 
 ## Archivo a leer
 
@@ -344,26 +367,35 @@ Lee las líneas {start_line + 1} a {end_line} del archivo (de {total_lines} lín
 ## Tu tarea
 
 1. Lee el archivo con la herramienta Read (solo las líneas indicadas).
-2. Identifica los temas principales de esta porción.
-3. Para cada tema, indica su nombre en snake_case, una descripción corta, y
-   las secciones donde se trata (separadas por comas).
-4. Genera un resumen breve de esta porción (máximo 200 caracteres).
+2. EXTRAE el contenido literal de esa porción, sin resumir, sin parafrasear.
+3. Formatea el contenido en estructura markdown legible:
+   - Usa "## Sección N — <título>" como encabezado de cada sección.
+   - Conserva el texto íntegro debajo de cada encabezado.
+   - Conserva bloques de código con triple backtick si los hay.
+   - Conserva rutas de archivos, comandos y ejemplos literales.
+4. NO generes índice, NO generes resumen, NO clasifiques por temas.
+   Solo extrae y formatea el contenido literal.
 
-## Formato de respuesta EXACTO
+## Formato de respuesta
 
-TEMA: <nombre_snake_case>
-DESCRIPCION: <descripción corta del tema>
-SECCIONES: <sección1, sección2>
+```
+## Sección 1 — <título de la primera sección de esta porción>
 
-TEMA: <nombre_snake_case>
-DESCRIPCION: <descripción corta>
-SECCIONES: <sección1, sección2>
+<contenido literal>
 
-RESUMEN: <resumen breve de la porción>
+## Sección 2 — <título>
 
-Reglas:
-- Nombres de tema en snake_case (sin espacios, sin acentos).
-- Máximo 3 temas por porción.
+<contenido literal>
+
+...
+```
+
+## Reglas
+
+- No resumas. El contenido debe ser literal, palabra por palabra.
+- No omitas secciones. Extrae todo lo que esté en las líneas indicadas.
+- Conserva el formato original (listas, tablas, código).
+- El resultado debe llenar el bloque hasta ~70K tokens.
 
 Respuesta:"""
 
@@ -455,33 +487,30 @@ if __name__ == "__main__":
     assert "ProcesadorDocumento" in repr(proc_repr)
     print(f"[OK] repr: {proc_repr!r}")
 
-    # Test 8 (F0.3 v4.3): _build_documento_prompt pide los 3 campos TEMA+DESCRIPCION+SECCIONES
-    # Bug 1 fix: el prompt debe alinearse con el parser _parse_temas_documento() del IntegradorRespuestas,
-    # que exige los 3 campos. Antes solo pedia TEMA+DESCRIPCION, lo que hacia que el parser fallara.
+    # Test 8 (v6.7 F1): _build_documento_prompt pide EXTRAER contenido literal (no índice)
+    # v6.7 F1: el prompt cambió de "genera índice TEMA/DESCRIPCION/SECCIONES" a
+    # "extrae contenido literal y formatealo en secciones ## Sección N — <título>".
     proc_test = ProcesadorDocumento(workspace_dir="/tmp/test_prompts")
     content = b"contenido de prueba del documento"
     prompt_doc = proc_test._build_documento_prompt("test.txt", content, 100)
-    assert "TEMA:" in prompt_doc
-    assert "DESCRIPCION:" in prompt_doc
-    assert "SECCIONES:" in prompt_doc, "F0.3: el prompt de documento debe pedir SECCIONES"
-    # El orden debe ser TEMA → DESCRIPCION → SECCIONES (igual que DocumentoIndexerSubagent)
-    idx_tema = prompt_doc.find("TEMA:")
-    idx_desc = prompt_doc.find("DESCRIPCION:")
-    idx_secc = prompt_doc.find("SECCIONES:")
-    assert 0 <= idx_tema < idx_desc < idx_secc, \
-        f"F0.3: orden esperado TEMA<DESCRIPCION<SECCIONES, got {idx_tema},{idx_desc},{idx_secc}"
-    print(f"[OK] _build_documento_prompt pide TEMA+DESCRIPCION+SECCIONES (alineado con parser)")
+    assert "EXTRAE" in prompt_doc or "extrae" in prompt_doc, \
+        "v6.7 F1: el prompt debe pedir EXTRAER contenido literal"
+    assert "## Sección" in prompt_doc, \
+        "v6.7 F1: el prompt debe pedir formato con ## Sección N — <título>"
+    assert "NO generes índice" in prompt_doc, \
+        "v6.7 F1: el prompt debe prohibir generar índice"
+    assert "No resumas" in prompt_doc, \
+        "v6.7 F1: el prompt debe prohibir resumir"
+    print(f"[OK] v6.7 F1: _build_documento_prompt pide EXTRAER contenido literal (no índice)")
 
-    # Test 9 (F0.3 v4.3): _build_lote_prompt tambien pide los 3 campos
+    # Test 9 (v6.7 F1): _build_lote_prompt también pide EXTRAER contenido literal
     prompt_lote = proc_test._build_lote_prompt("test.txt", content, 100, 0, 2)
-    assert "TEMA:" in prompt_lote
-    assert "DESCRIPCION:" in prompt_lote
-    assert "SECCIONES:" in prompt_lote, "F0.3: el prompt de lote debe pedir SECCIONES"
-    idx_tema = prompt_lote.find("TEMA:")
-    idx_desc = prompt_lote.find("DESCRIPCION:")
-    idx_secc = prompt_lote.find("SECCIONES:")
-    assert 0 <= idx_tema < idx_desc < idx_secc, \
-        f"F0.3: orden esperado TEMA<DESCRIPCION<SECCIONES, got {idx_tema},{idx_desc},{idx_secc}"
-    print(f"[OK] _build_lote_prompt pide TEMA+DESCRIPCION+SECCIONES (alineado con parser)")
+    assert "EXTRAE" in prompt_lote or "extrae" in prompt_lote, \
+        "v6.7 F1: el prompt de lote debe pedir EXTRAER contenido literal"
+    assert "## Sección" in prompt_lote, \
+        "v6.7 F1: el prompt de lote debe pedir formato con ## Sección N — <título>"
+    assert "NO generes índice" in prompt_lote, \
+        "v6.7 F1: el prompt de lote debe prohibir generar índice"
+    print(f"[OK] v6.7 F1: _build_lote_prompt pide EXTRAER contenido literal (no índice)")
 
     print("\n[PASS] procesador_documento.py: todos los tests pasaron")

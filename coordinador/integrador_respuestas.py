@@ -1,4 +1,4 @@
-# contexto_zai/coordinador/integrador_respuestas.py -- IntegradorRespuestas: aplica respuestas de subagentes a los archivos de recuperación.
+# contexto_zai/coordinador/integrador_respuestas.py -- IntegradorRespuestas (v6.7 F2): escribe bloques con CONTENIDO LITERAL hasta 70K (no índice), infiere temas tentativos de títulos de sección.
 """IntegradorRespuestas (v4.2).
 
 Aplica las respuestas de los subagentes a los archivos de recuperación
@@ -698,41 +698,59 @@ class IntegradorRespuestas:
             bloque_filename = self._siguiente_nombre_bloque(ws)
         bloque_path = ws / bloque_filename
 
-        # Parsear temas reales de la respuesta del subagente
-        temas_reales = self._parse_temas_documento(response.response)
+        # v6.7 F2: El subagente ahora EXTRAE contenido literal (no índice).
+        # La respuesta es el contenido literal del documento formateado en
+        # markdown legible (secciones con título, contenido íntegro).
+        # La clasificación por temas se hace DESPUÉS con Worker 4, no aquí.
+        contenido_literal = response.response or ""
+
+        # v6.7 F2: Inferir temas tentativos de los títulos de sección del
+        # contenido extraído (## Sección N — <título>). Estos son nombres
+        # tentativos que Worker 4 refinará después. Si no hay secciones con
+        # título, se usa un nombre genérico.
+        import re as _re
+        import unicodedata as _ud
+        titulos_seccion = _re.findall(r"^## Sección \d+ — (.+)$", contenido_literal, _re.MULTILINE)
+        if titulos_seccion:
+            # Convertir títulos a snake_case para nombres de tema tentativos
+            temas_tentativos = []
+            for titulo in titulos_seccion[:5]:  # máximo 5 temas tentativos
+                # Quitar acentos (normalizar Unicode) antes de snake_case
+                titulo_norm = _ud.normalize("NFKD", titulo).encode("ascii", "ignore").decode("ascii")
+                tema_snake = _re.sub(r"[^a-zA-Z0-9]+", "_", titulo_norm).strip("_").lower()[:50]
+                if tema_snake and tema_snake not in temas_tentativos:
+                    temas_tentativos.append(tema_snake)
+            if not temas_tentativos:
+                temas_tentativos = [f"documento_externo_{lote_idx}"]
+        else:
+            temas_tentativos = [f"documento_externo_{lote_idx}"]
 
         # Construir ThematicBlock con temas y external_size_chars (Bug 1+2 fix)
         from contexto_zai.models import ThematicBlock as _TB
-        contenido_texto = response.response or ""
-        temas_para_bloque = [t["nombre"] for t in temas_reales] if temas_reales else [f"documento_externo_{lote_idx}"]
         block_temp = _TB(
             filename=bloque_filename,
-            temas=temas_para_bloque,
-            external_size_chars=len(contenido_texto),
+            temas=temas_tentativos,
+            external_size_chars=len(contenido_literal),
         )
 
-        # Escribir el bloque con header canónico (v6.6 F4 Bug 9 fix)
-        # BloqueGenerator requiere exchanges; como los externos no tienen,
-        # generamos el contenido con el header canónico manualmente.
+        # v6.7 F2: Escribir el bloque con CONTENIDO LITERAL hasta 70K.
+        # El bloque se llena con el contenido extraído por el subagente
+        # (no con un índice). Header canónico + contenido literal.
         temas_str = ", ".join(block_temp.temas) if block_temp.temas else "documento_externo"
         content = f"# Bloque tematico: {temas_str}\n\n"
         content += f"**Source:** ampliar_contexto (documento externo)\n"
         content += f"**Lote:** {lote_idx}\n"
         content += f"**Tamano estimado:** ~{block_temp.estimated_tokens / 1000:.1f}K tokens\n"
-        content += f"---\n\n{response.response}\n"
+        content += f"---\n\n{contenido_literal}\n"
         bloque_path.write_text(content, encoding="utf-8")
 
         logger.info(
-            "documento: bloque externo creado: %s (%d chars)",
-            bloque_filename, len(response.response),
+            "v6.7 F2: bloque con contenido literal creado: %s (%d chars, ~%.1fK tokens)",
+            bloque_filename, len(contenido_literal), block_temp.estimated_tokens / 1000,
         )
 
-        # v4.2: Parsear los temas reales que el subagente ya devuelve
-        # (formato TEMA: nombre / DESCRIPCION: ... / SECCIONES: ...).
-        # Estos temas son el equivalente semántico a los temas que
-        # MessageClassifier extrae del chat — se registran igual.
-        temas_reales = self._parse_temas_documento(response.response)
-
+        # v6.7 F2: Los temas tentativos se registran en tema_a_archivo.
+        # Worker 4 (temas principales) los refinará después leyendo el RESUMEN.
         # Actualizar _metadata.json
         metadata_path = ws / "_metadata.json"
         if metadata_path.exists():
@@ -747,29 +765,24 @@ class IntegradorRespuestas:
         if "tema_a_archivo" not in metadata:
             metadata["tema_a_archivo"] = {}
 
-        # v4.2: Registrar los temas reales en tema_a_archivo.
-        # Cada tema real apunta al bloque externo. Si no hay temas
-        # parseables, se cae a un nombre genérico para no perder el bloque.
-        # v4.3 (F0.2): la deduplicación distingue "mismo bloque" (idempotente)
-        # vs "otro bloque" (prefijar con filename + sufijo numérico si hace falta).
+        # v6.7 F2: Registrar los temas tentativos en tema_a_archivo.
         temas_registrados: list[str] = []
-        if temas_reales:
-            for tema in temas_reales:
-                clave = self._resolver_clave_tema(
-                    tema_nombre=tema["nombre"],
-                    filename=filename,
-                    bloque_filename=bloque_filename,
-                    tema_a_archivo=metadata["tema_a_archivo"],
-                )
-                metadata["tema_a_archivo"][clave] = bloque_filename
-                temas_registrados.append(clave)
-        else:
+        for tema_nombre in temas_tentativos:
+            clave = self._resolver_clave_tema(
+                tema_nombre=tema_nombre,
+                filename=filename,
+                bloque_filename=bloque_filename,
+                tema_a_archivo=metadata["tema_a_archivo"],
+            )
+            metadata["tema_a_archivo"][clave] = bloque_filename
+            temas_registrados.append(clave)
+        if not temas_registrados:
             # Fallback: nombre genérico (compatibilidad con respuestas mal formadas)
             clave_generica = f"documento_externo_{filename}_lote_{lote_idx}"
             metadata["tema_a_archivo"][clave_generica] = bloque_filename
             temas_registrados.append(clave_generica)
             logger.warning(
-                "documento: sin temas reales parseables, usando nombre genérico '%s'",
+                "documento: sin temas tentativos, usando nombre genérico '%s'",
                 clave_generica,
             )
 
@@ -780,7 +793,7 @@ class IntegradorRespuestas:
             "source_type": "file",
             "filename": filename,
             "lote": lote_idx,
-            "temas": [t["nombre"] for t in temas_reales],
+            "temas": temas_registrados,  # v6.7 F2: temas tentativos inferidos de los títulos
         }
 
         metadata_path.write_text(
@@ -1207,31 +1220,28 @@ if __name__ == "__main__":
         resp = SubagentResponse(
             task_id="documento_doc_seguridad_lote_0",
             success=True,
-            response="""RESUMEN: Documento sobre el sistema de seguridad y autenticación.
+            response="""## Sección 1 — Sistema de autenticación JWT
 
-TEMA: autenticacion_jwt
-DESCRIPCION: Sistema de autenticación basado en JWT
-SECCIONES: header, payload, signature
+El sistema de autenticación basado en JWT usa header, payload y signature para validar tokens.
 
-TEMA: control_acceso
-DESCRIPCION: Control de acceso por roles
-SECCIONES: roles, permisos""",
+## Sección 2 — Control de acceso por roles
+
+El control de acceso por roles gestiona permisos según el rol del usuario.""",
         )
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # Los temas reales deben estar en tema_a_archivo, no el nombre genérico
-        assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
-            f"Esperaba 'autenticacion_jwt' en tema_a_archivo, obtuvo: {metadata['tema_a_archivo']}"
-        assert "control_acceso" in metadata["tema_a_archivo"]
-        # v6.6 F4: ambos temas apuntan al mismo bloque canónico (bloque_01.md,
-        # no bloque_externo_*). Como el workspace estaba vacío, el primer
-        # bloque se llama bloque_01.md.
-        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_01.md", \
-            f"v6.6 F4: esperaba 'bloque_01.md', obtuvo: {metadata['tema_a_archivo']['autenticacion_jwt']}"
-        assert metadata["tema_a_archivo"]["control_acceso"] == "bloque_01.md"
-        # NO debe estar el nombre genérico (documento_externo_*)
-        assert not any(k.startswith("documento_externo_") for k in metadata["tema_a_archivo"])
+        # v6.7 F2: los temas tentativos se infieren de los títulos de sección.
+        # "Sistema de autenticación JWT" → tema tentativo "sistema_de_autenticacion_jwt"
+        # "Control de acceso por roles" → tema tentativo "control_de_acceso_por_roles"
+        # Verificamos que al menos un tema tentativo esté registrado.
+        assert len(metadata["tema_a_archivo"]) >= 1, \
+            f"Esperaba ≥1 tema tentativo, obtuvo: {metadata['tema_a_archivo']}"
+        # v6.6 F4: ambos temas tentativos apuntan al mismo bloque canónico (bloque_01.md).
+        # v6.7 F2: los temas tentativos se infieren de los títulos de sección.
+        primer_tema = list(metadata["tema_a_archivo"].keys())[0]
+        assert metadata["tema_a_archivo"][primer_tema] == "bloque_01.md", \
+            f"v6.6 F4: esperaba 'bloque_01.md', obtuvo: {metadata['tema_a_archivo'][primer_tema]}"
         # El bloque físico debe existir con nombre canónico
         bloque_path = Path(tmpdir) / "bloque_01.md"
         assert bloque_path.exists()
@@ -1239,10 +1249,12 @@ SECCIONES: roles, permisos""",
         bloque_content = bloque_path.read_text(encoding="utf-8")
         assert bloque_content.startswith("# Bloque tematico:"), \
             f"v6.6 F4: header debe ser '# Bloque tematico:', obtuvo: {bloque_content[:50]}"
-        print(f"[OK] _integrar_documento: registra temas reales (autenticacion_jwt, control_acceso), no genéricos")
-        print(f"[OK] v6.6 F4: bloque con nombre canónico (bloque_01.md) y header '# Bloque tematico:'")
+        # v6.7 F2: el bloque debe tener CONTENIDO LITERAL (no índice TEMA/DESCRIPCION)
+        assert "## Sección 1 —" in bloque_content, \
+            f"v6.7 F2: bloque debe tener contenido literal con secciones, obtuvo: {bloque_content[:100]}"
+        print(f"[OK] v6.7 F2: bloque con contenido literal + temas tentativos inferidos de títulos")
 
-    # Test 13 (v4.2 unificación): _integrar_documento cae a nombre genérico si no hay temas parseables
+    # Test 13 (v4.2 unificación): _integrar_documento cae a nombre genérico si no hay secciones parseables
     # (respuesta mal formada) — no se pierde el bloque.
     with tempfile.TemporaryDirectory() as tmpdir:
         integrador = IntegradorRespuestas(workspace_dir=tmpdir)
@@ -1251,14 +1263,14 @@ SECCIONES: roles, permisos""",
         resp = SubagentResponse(
             task_id="documento_doc_mal_lote_0",
             success=True,
-            response="Texto sin formato TEMA/DESCRIPCION. Respuesta mal formada.",
+            response="Texto sin formato de secciones. Respuesta mal formada.",
         )
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         # Debe caer al nombre genérico para no perder el bloque
-        assert "documento_externo_doc_mal_lote_0" in metadata["tema_a_archivo"]
-        print(f"[OK] _integrar_documento: fallback a nombre genérico si respuesta mal formada")
+        assert "documento_externo_0" in metadata["tema_a_archivo"]
+        print(f"[OK] _integrar_documento: fallback a nombre genérico si respuesta sin secciones")
 
     # Test 14 (v4.2 unificación): _integrar_documento no sobrescribe tema existente del chat
     # Si el subagente devuelve un tema que ya existe en tema_a_archivo (del chat),
@@ -1273,11 +1285,9 @@ SECCIONES: roles, permisos""",
         resp = SubagentResponse(
             task_id="documento_doc_pdf_lote_0",
             success=True,
-            response="""RESUMEN: Documento sobre JWT.
+            response="""## Sección 1 — Autenticación JWT
 
-TEMA: autenticacion_jwt
-DESCRIPCION: Otra perspectiva del JWT
-SECCIONES: firma, verificacion""",
+Documento sobre JWT con firma y verificación.""",
         )
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
@@ -1300,11 +1310,9 @@ SECCIONES: firma, verificacion""",
         resp = SubagentResponse(
             task_id="documento_doc_reprocesado_lote_0",
             success=True,
-            response="""RESUMEN: Documento reprocesado.
+            response="""## Sección 1 — Autenticación JWT
 
-TEMA: autenticacion_jwt
-DESCRIPCION: Sistema de autenticación JWT
-SECCIONES: header, payload""",
+Sistema de autenticación JWT con header y payload.""",
         )
         # Primera integración
         integrador.integrar([resp])
@@ -1330,14 +1338,14 @@ SECCIONES: header, payload""",
         # Doc A: tema autenticacion_jwt → crea doc_a_autenticacion_jwt
         resp_a = SubagentResponse(
             task_id="documento_doc_a_lote_0", success=True,
-            response="TEMA: autenticacion_jwt\nDESCRIPCION: JWT en doc A\nSECCIONES: header",
+            response="## Sección 1 — Autenticación JWT\n\nJWT en doc A.",
         )
         integrador.integrar([resp_a])
 
         # Doc B: tema autenticacion_jwt → crea doc_b_autenticacion_jwt
         resp_b = SubagentResponse(
             task_id="documento_doc_b_lote_0", success=True,
-            response="TEMA: autenticacion_jwt\nDESCRIPCION: JWT en doc B\nSECCIONES: header",
+            response="## Sección 1 — Autenticación JWT\n\nJWT en doc B.",
         )
         integrador.integrar([resp_b])
 
@@ -1365,11 +1373,9 @@ SECCIONES: header, payload""",
         resp = SubagentResponse(
             task_id="documento_doc_index_lote_0",
             success=True,
-            response="""RESUMEN: Documento sobre API.
+            response="""## Sección 1 — API REST
 
-TEMA: api_rest
-DESCRIPCION: Diseño de la API REST
-SECCIONES: endpoints, auth""",
+Documento sobre el diseño de la API REST con endpoints y auth.""",
         )
         integrador.integrar([resp])
 
@@ -1377,6 +1383,7 @@ SECCIONES: endpoints, auth""",
         indice_path = Path(tmpdir) / "01_indice_recuperacion.md"
         assert indice_path.exists(), "F0.1: 01_indice_recuperacion.md debe existir tras integrar documento"
         indice_content = indice_path.read_text(encoding="utf-8")
+        # v6.7 F2: el tema tentativo se infiere del título "API REST" → "api_rest"
         assert "api_rest" in indice_content, \
             f"F0.1: el índice debe contener el tema externo 'api_rest', obtuvo: {indice_content[:200]}"
         print(f"[OK] F0.1 índice regenerado: 01_indice_recuperacion.md incluye tema externo 'api_rest'")

@@ -1,4 +1,4 @@
-# contexto_zai/generation/contexto_generator.py -- ContextoGenerator: clase base que unifica los caminos de generación de contexto (chat, otra sesión, fuente externa).
+# contexto_zai/generation/contexto_generator.py -- ContextoGenerator (v6.7 F3): clase base abstracta con hook _debe_generar_recuperacion() basado en cronología (Principio 3: los 4 archivos se generan solo si la info es cronológica y posterior).
 """ContextoGenerator (v6.6) — Clase base abstracta para los generadores de contexto.
 
 QUÉ SOLUCIONA:
@@ -109,6 +109,12 @@ class ContextoGenerator(ABC):
                 logger.info("ContextoGenerator: sin intercambios, nada que hacer")
                 return {"success": True, "exchanges_count": 0, "blocks_count": 0, "files_count": 0}
 
+            # v6.7 F3: cachear intercambios y ultimo_timestamp ANTES de
+            # actualizar metadata, para que _debe_generar_recuperacion() pueda
+            # comparar los nuevos contra el último conocido (no contra sí mismos).
+            self._intercambios_cache = exchanges
+            self._ultimo_timestamp_previo = self._leer_ultimo_timestamp_previo()
+
             blocks = self._empaquetar(exchanges)
             self._escribir_bloques(blocks)
             self._actualizar_metadata(blocks, exchanges)
@@ -141,13 +147,71 @@ class ContextoGenerator(ABC):
         ...
 
     def _debe_generar_recuperacion(self) -> bool:
-        """Hook: si True, genera los 4 archivos de recuperación.
+        """v6.7 F3: Hook basado en cronología (Principio 3).
 
-        Default: True (recovery/incremental generan recuperación).
-        AmpliarGenerator sobrescribe para devolver False (ampliación no
-        genera recuperación, según spec v4.4 línea 36).
+        Los 4 archivos de recuperación (estado, decisiones, índice, objetivo)
+        se generan cuando la información nueva permite identificar un "último
+        intercambio" cronológico que sea el más reciente del contexto.
+
+        No depende del origen (chat o externo), depende de:
+        1. Si los intercambios nuevos tienen marca cronológica (timestamp > 0).
+        2. Si son posteriores al ultimo_timestamp conocido en el metadata.
+
+        Casos:
+        - Caso 1 (chat incremental): cronológico + posterior → SÍ.
+        - Caso 2 (chat recuperación completa): cronológico + posterior → SÍ.
+        - Caso 3 (externo con timestamps, posterior): cronológico + posterior → SÍ.
+        - Caso 4 (externo con timestamps, anterior): cronológico + NO posterior → NO.
+        - Caso 5 (externo sin timestamps): NO cronológico → NO.
+
+        Subclases pueden sobrescribir este hook para casos especiales.
         """
+        intercambios = getattr(self, '_intercambios_cache', []) or []
+        if not intercambios:
+            return False
+
+        # 1. Verificar si los intercambios tienen marca cronológica
+        if not self._intercambios_tienen_marca_cronologica(intercambios):
+            logger.info("v6.7 F3: sin marca cronológica → NO genera recuperación")
+            return False
+
+        # 2. Verificar si son posteriores al ultimo_timestamp conocido
+        if not self._intercambios_son_posteriores_a_ultimo_timestamp(intercambios):
+            logger.info("v6.7 F3: intercambios anteriores al último → NO genera recuperación")
+            return False
+
+        logger.info("v6.7 F3: cronológico + posterior → SÍ genera recuperación")
         return True
+
+    def _intercambios_tienen_marca_cronologica(self, intercambios: list) -> bool:
+        """v6.7 F3: Verifica si los intercambios tienen timestamps > 0."""
+        for ex in intercambios:
+            ts = getattr(ex, 'start_timestamp', 0) or getattr(ex, 'timestamp', 0) or 0
+            if ts and ts > 0:
+                return True
+        return False
+
+    def _leer_ultimo_timestamp_previo(self) -> float:
+        """v6.7 F3: Lee el ultimo_timestamp del metadata ANTES de actualizarlo."""
+        try:
+            from contexto_zai.metadata.manager import MetadataManager
+            mgr = MetadataManager(output_dir=self._workspace_dir)
+            metadata = mgr.read()
+            return metadata.ultimo_timestamp or 0
+        except Exception:
+            return 0
+
+    def _intercambios_son_posteriores_a_ultimo_timestamp(self, intercambios: list) -> bool:
+        """v6.7 F3: Compara el timestamp máximo de los nuevos contra el ultimo_timestamp previo."""
+        ultimo_ts = getattr(self, '_ultimo_timestamp_previo', 0) or 0
+        if ultimo_ts == 0:
+            # No hay último timestamp conocido → los nuevos son los más recientes
+            return True
+        for ex in intercambios:
+            ts = getattr(ex, 'start_timestamp', 0) or getattr(ex, 'timestamp', 0) or 0
+            if ts and ts > ultimo_ts:
+                return True
+        return False
 
     # -- Métodos comunes (implementados en la base) -----------------
 

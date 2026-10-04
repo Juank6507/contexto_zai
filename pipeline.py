@@ -696,6 +696,8 @@ def collect_responses(
     # es aquí, después de aplicar las respuestas (los bloques ya están en disco).
     # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
     # bloques del chat que hayan quedado sin RESUMEN.
+    # Si el Worker Bun falla o hace timeout, el fallback genera pending_tasks
+    # para que el agente las ejecute con subagentes (diseño v6.2).
     try:
         bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
         if bloques_sin_resumen:

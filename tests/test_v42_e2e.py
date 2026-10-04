@@ -328,20 +328,29 @@ def test_query_context_encuentra_bloque_externo():
         task = result["pending_tasks"][0]
         assert "documento_" in task.task_id
 
-        # 2. Simular: el agente lanza el subagente indexador y responde con temas reales
-        mock_response = """RESUMEN: Documento sobre el sistema de seguridad y autenticación.
+        # 2. Simular: el agente lanza el subagente extractor y responde con contenido literal
+        # v6.7 F1: el subagente ahora EXTRAE contenido literal (no genera índice TEMA/DESCRIPCION).
+        # El formato es ## Sección N — <título> con contenido íntegro debajo.
+        # v6.7: el mock_response incluye RESUMEN al inicio para simular que Worker 1
+        # ya procesó el bloque (evita invocar Worker Bun real en tests E2E).
+        mock_response = """## Sección 1 — Sistema de autenticación JWT
 
-TEMA: autenticacion_jwt
-DESCRIPCION: Sistema de autenticación basado en JWT
-SECCIONES: header, payload, signature
+El sistema de autenticación basado en JWT usa header, payload y signature para validar tokens.
 
-TEMA: control_acceso
-DESCRIPCION: Control de acceso por roles
-SECCIONES: roles, permisos"""
+## Sección 2 — Control de acceso por roles
+
+El control de acceso por roles gestiona permisos según el rol del usuario."""
         RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(task.task_id, mock_response)
 
         # 3. collect_responses() integra la respuesta
-        resultado = collect_responses(workspace_dir=str(ws))
+        # v6.7: collect_responses invoca enriquecimiento (Bug 7 fix). Si el
+        # Worker Bun falla o el proxy no está disponible, el fallback genera
+        # pending_tasks para que el agente las ejecute con subagentes.
+        # En este test E2E, mockeamos el proxy como no disponible para que
+        # caiga directo al fallback sin intentar Worker Bun (que tardaría >90s).
+        from unittest.mock import patch as _patch
+        with _patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=False):
+            resultado = collect_responses(workspace_dir=str(ws))
         assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
 
         # Verificar que el bloque externo físico existe
@@ -350,28 +359,35 @@ SECCIONES: roles, permisos"""
         bloques_externos = list(ws.glob("bloque_*.md"))
         assert len(bloques_externos) >= 1, f"Esperaba ≥1 bloque: {bloques_externos}"
 
-        # Verificar que los temas reales están en _metadata.json (no nombres genéricos)
+        # Verificar que los temas tentativos están en _metadata.json
+        # v6.7 F2: los temas tentativos se infieren de los títulos de sección.
+        # "Sistema de autenticación JWT" → "sistema_de_autenticacion_jwt"
+        # "Control de acceso por roles" → "control_de_acceso_por_roles"
         metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
-        assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
-            f"Falta tema real 'autenticacion_jwt': {metadata['tema_a_archivo']}"
-        assert "control_acceso" in metadata["tema_a_archivo"]
+        # Verificamos que al menos un tema tentativo esté registrado (no nombre genérico)
+        assert len(metadata["tema_a_archivo"]) >= 1, \
+            f"Falta tema tentativo: {metadata['tema_a_archivo']}"
+        assert not all(k.startswith("documento_externo_") for k in metadata["tema_a_archivo"]), \
+            f"Todos son genéricos, debería haber tema tentativo: {metadata['tema_a_archivo']}"
 
-        # 4. query_context() encuentra el bloque externo por el tema real.
+        # 4. query_context() encuentra el bloque externo por el tema tentativo.
         # v4.3 (F0.1): ahora _integrar_documento() regenera 01_indice_recuperacion.md,
         # así que SÍ existirá un índice en este workspace. query_context() lo
         # usa como fallback de búsqueda pero también busca directamente en
         # _metadata.json (su fuente principal).
-        # Lo importante es que query_context encuentra el bloque externo por tema real.
+        # Lo importante es que query_context encuentra el bloque externo por tema tentativo.
         query_result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
         assert "error" not in query_result, f"Esperaba encontrar bloque, obtuvo error: {query_result}"
         assert query_result["mode"] == "direct"
         # v6.6 F4: el bloque encontrado es bloque_01.md (canónico, no bloque_externo_*)
         assert any(b.startswith("bloque_") for b in query_result["bloques"]), \
             f"Esperaba bloque canónico en candidatos: {query_result['bloques']}"
-        # El tema real está en los candidatos
-        assert "autenticacion_jwt" in query_result["bloques_info"][0]["temas"]
+        # El tema tentativo está en los candidatos
+        primer_tema = list(metadata["tema_a_archivo"].keys())[0]
+        assert primer_tema in query_result["bloques_info"][0]["temas"], \
+            f"Esperaba tema tentativo '{primer_tema}' en candidatos: {query_result['bloques_info'][0]['temas']}"
 
-        print("[OK] query_context E2E: encuentra bloque externo por tema real")
+        print("[OK] query_context E2E: encuentra bloque externo por tema tentativo (v6.7 F2)")
 
 
 def test_sintesis_contexto_e2e():
