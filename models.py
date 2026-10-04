@@ -1,4 +1,4 @@
-# contexto_zai/models.py -- Modelos de datos Pydantic con ThematicBlock.external_size_chars (v6.6 F6 Bug 1+2 fix: bloques externos sin exchanges tienen estimated_tokens correcto).
+# contexto_zai/models.py -- Modelos de datos Pydantic (Message, Exchange, ThematicBlock, RecoveryFile, etc.).
 """Modelos de datos del sistema Contexto Z.ai.
 
 Usa Pydantic v2 para validación estricta y serialización.

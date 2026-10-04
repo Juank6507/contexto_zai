@@ -371,7 +371,7 @@ SECCIONES: roles, permisos"""
         # El tema real está en los candidatos
         assert "autenticacion_jwt" in query_result["bloques_info"][0]["temas"]
 
-        print("[OK] query_context E2E: encuentra bloque externo por tema real (v6.6 F4: bloque canónico)")
+        print("[OK] query_context E2E: encuentra bloque externo por tema real")
 
 
 def test_sintesis_contexto_e2e():

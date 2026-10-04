@@ -1,4 +1,4 @@
-# contexto_zai/process/incremental_cycle.py -- IncrementalCycle con _escribir_bloques_fisicos + _generar_archivos_recuperacion (v6.6 F5 Bug 11 fix: estado y bloques ya no quedan congelados tras incremental) + ThematicBlock con temas y external_size_chars en _regenerar_indice (Bug 1+2 fix).
+# contexto_zai/process/incremental_cycle.py -- Ciclo incremental: orquesta paso 10 (actualizacion con mensajes nuevos desde ultimo_timestamp).
 """Ciclo de actualización incremental (v3.2).
 
 Coordina el paso 10 del flujo:

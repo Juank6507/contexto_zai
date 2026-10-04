@@ -835,25 +835,28 @@ class EstadoGenerator:
             return f"_(error leyendo objetivo: {e})_"
 
     def _asegurar_objetivo_proyecto(self) -> None:
-        """v4.3 (F5) + v6.5 F3: Crea o sobrescribe ``03_objetivo_proyecto.md`` si está incompleto.
+        """v4.3 (F5): Crea ``03_objetivo_proyecto.md`` si no existe.
 
-        v6.5 F3: si el archivo existe pero tiene menos de 500 bytes o no contiene
-        "## Quién eres", se considera incompleto y se sobrescribe con el contenido
-        canónico generado por la cascada de fuentes.
+        Aplica una cascada de dos fuentes para derivar el contenido inicial:
+
+        - **Caso A (documentación):** lee los archivos de documentación
+          del proyecto (``estrategia/agent-context/*.md``, ``upload/worklog_*.md``)
+          relativos al workspace raíz. Extrae el primer párrafo que mencione
+          "proyecto" o "objetivo" y lo escribe como objetivo declarado.
+        - **Caso B (bloques):** si la documentación no aporta suficiente,
+          lee ``_metadata.json["tema_a_archivo"]`` y construye un objetivo
+          tentativo con los temas más representativos.
+        - **Caso C (sin fuentes):** si no hay ni documentación ni bloques,
+          escribe un contenido mínimo pidiendo al Director que lo declare.
+
+        Si el archivo ya existe, NO se sobrescribe (la cascada solo se
+        ejecuta la primera vez).
         """
         if not self._workspace_dir:
             return
         objetivo_path = self._workspace_dir / "03_objetivo_proyecto.md"
-
-        # v6.5 F3: verificar si el archivo existe Y está completo
         if objetivo_path.exists():
-            try:
-                existing = objetivo_path.read_text(encoding="utf-8")
-                if len(existing) >= 500 and "## Quién eres" in existing:
-                    return  # Completo, no sobrescribir
-                logger.info("v6.5 F3: 03_objetivo_proyecto.md incompleto (%d chars, sin '## Quién eres'), sobrescribiendo", len(existing))
-            except Exception:
-                pass  # Si no se puede leer, sobrescribir
+            return  # No sobrescribir si ya existe
 
         # Localizar el workspace raíz del proyecto (donde están estrategia/ y upload/)
         from contexto_zai.config import WORKSPACE_ROOT as _PROJECT_ROOT
@@ -1544,19 +1547,19 @@ if __name__ == "__main__":
             ws_f5d = Path(tmpdir, "ws")
             ws_f5d.mkdir(parents=True)
             objetivo_path = Path(ws_f5d, "03_objetivo_proyecto.md")
-            contenido_original = "# Recuperación de contexto del proyecto\n\n## Quién eres\n\nSos un agente Z.ai que construye un proceso de recuperación de contexto. " + "x" * 500
+            contenido_original = "Objetivo escrito por el Director manualmente."
             objetivo_path.write_text(contenido_original, encoding="utf-8")
-            # v6.5 F3: archivo completo (>=500 chars + "## Quién eres") no se sobrescribe
+            # Llamar a _asegurar_objetivo_proyecto() — no debe sobrescribir
             gen_f5_d = EstadoGenerator(workspace_dir=ws_f5d)
             gen_f5_d._asegurar_objetivo_proyecto()
             contenido_final = objetivo_path.read_text(encoding="utf-8")
             assert contenido_final == contenido_original, \
-                "F5: archivo completo no debe sobrescribirse"
-            print(f"[OK] F5: archivo completo no se sobrescribe")
+                "F5: el archivo existente no debe sobrescribirse"
+            print(f"[OK] F5: archivo existente no se sobrescribe")
 
             # Verificar que _build_g0_a() devuelve el contenido original
             g0_a = gen_f5_d._build_g0_a()
-            assert "Recuperación de contexto del proyecto" in g0_a
+            assert "Objetivo escrito por el Director manualmente." in g0_a
             print(f"[OK] F5: _build_g0_a() devuelve contenido del archivo existente")
         finally:
             _cfg_d.WORKSPACE_ROOT = original_root_d

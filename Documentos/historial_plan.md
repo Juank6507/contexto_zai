@@ -2,7 +2,7 @@
 
 **Proyecto:** Contexto Zai (CZAI)
 **Fecha de consolidación:** 2025-01-09
-**Total de versiones:** 18 planes
+**Total de versiones:** 17 planes
 **Propósito:** Documento único que preserva todas las versiones históricas del
 plan de implementación del sistema CZAI, para permitir eliminar los archivos
 individuales del repositorio sin perder información.
@@ -30,7 +30,6 @@ individuales del repositorio sin perder información.
 | 15 | 6.2 | 2026-09-27 | plan_refactorizacion_v6.2.md | 412 |
 | 16 | 6.3 | 2026-09-27 | plan_refactorizacion_v6.3.md | 488 |
 | 17 | 6.4 | 2026-09-28 | plan_refactorizacion_v6.4.md | 280 |
-| 18 | 6.5 | 2026-09-30 | plan_refactorizacion_v6.5.md | 40 |
 
 ---
 
@@ -2517,6 +2516,6 @@ Añadir 5 tests E2E en `tests/test_v42_e2e.py`:
   del directorio `Documentos/`).
 - La versión v6.1 sí se añade al cuerpo (sección siguiente) por ser la versión
   vigente.
-- La versión actual y vigente es la **v6.5**.
+- La versión actual y vigente es la **v6.4**.
 - Para futuras versiones, se recomienda mantener un único archivo de plan (sin
   versión en el nombre), usando git history para el versionado.

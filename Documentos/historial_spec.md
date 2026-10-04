@@ -2,7 +2,7 @@
 
 **Proyecto:** Contexto Zai (CZAI)
 **Fecha de consolidación:** 2025-01-09
-**Total de versiones:** 22 specs
+**Total de versiones:** 21 specs
 **Propósito:** Documento único que preserva todas las versiones históricas de la
 spec del sistema CZAI, para permitir eliminar los archivos individuales del
 repositorio sin perder información.
@@ -34,7 +34,6 @@ repositorio sin perder información.
 | 19 | 6.2 | 2026-09-27 | spec_recuperacion_contexto_v6.2.md | 498 |
 | 20 | 6.3 | 2026-09-27 | spec_recuperacion_contexto_v6.3.md | 315 |
 | 21 | 6.4 | 2026-09-28 | spec_recuperacion_contexto_v6.4.md | 280 |
-| 22 | 6.5 | 2026-09-30 | spec_recuperacion_contexto_v6.5.md | 60 |
 
 > **Nota:** Las versiones 2.3 aparecen dos veces (archivos "(1)" y "(2)") porque
 > son duplicados con ligeras variaciones de formato. Se conservan ambas para
@@ -6178,6 +6177,6 @@ INDICE_PRESERVAR_ANTERIORES = True
   del directorio `Documentos/`).
 - La versión v6.1 sí se añade al cuerpo (sección siguiente) por ser la versión
   vigente.
-- La versión actual y vigente es la **v6.5**.
+- La versión actual y vigente es la **v6.4**.
 - Para futuras versiones, se recomienda mantener un único archivo de spec (sin
   versión en el nombre), usando git history para el versionado.

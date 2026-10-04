@@ -1,4 +1,4 @@
-# contexto_zai/pipeline.py -- Entry point del proceso: run() (recuperación), ampliar_contexto() con post-procesamiento común (v6.6 F3+F7: bloques externos enriquecidos, normalizados, sin doble prefijo ampliar_ampliar_).
+# contexto_zai/pipeline.py -- Entry point del proceso: funcion run() que activa la recuperacion de contexto.
 """Entry point del proceso Contexto Z.ai (v3.4).
 
 Reemplaza la CLI de v1.0. Expone funciones para activar la
@@ -114,8 +114,6 @@ def run(
     )
     # v6.4 F1: consolidar decisiones del LLM (de _responses/) en 02_decisiones_clave.md
     _consolidar_decisiones_llm(workspace_dir=workspace_dir)
-    # v6.5 F2: normalizar nombres de bloques externos a bloque_NN.md
-    _normalizar_bloques_externos(workspace_dir=workspace_dir)
     return result
 
 def status(
@@ -689,7 +687,34 @@ def collect_responses(
     orch = Orquestador(workspace_dir=workspace_dir)
     integrador = IntegradorRespuestas(workspace_dir=workspace_dir)
 
-    return orch.aplicar_respuestas(integrador=integrador)
+    resultado = orch.aplicar_respuestas(integrador=integrador)
+
+    # v6.6 F3 fix (Bug 7): enriquecer bloques nuevos después de que
+    # collect_responses() los haya escrito al disco. Antes, el enriquecimiento
+    # se invocaba desde ampliar_contexto() PERO antes de que los subagentes
+    # corrieran — los bloques físicos no existían todavía. El momento correcto
+    # es aquí, después de aplicar las respuestas (los bloques ya están en disco).
+    # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
+    # bloques del chat que hayan quedado sin RESUMEN.
+    try:
+        bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+        if bloques_sin_resumen:
+            _enriquecer_bloques_con_fallback(
+                blocks=bloques_sin_resumen,
+                workspace_dir=workspace_dir,
+                chat_label="collect_responses",
+            )
+            # Si el enriquecimiento generó pending_tasks (fallback a subagentes),
+            # añadirlas al resultado para que el agente las ejecute.
+            from contexto_zai.coordinador import Orquestador as _Orq
+            orch2 = _Orq(workspace_dir=workspace_dir)
+            nuevas_tasks = orch2.leer_tareas_pendientes()
+            if nuevas_tasks:
+                resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
+    except Exception as e:
+        logger.warning("v6.6 F3 Bug 7 fix: error en enriquecimiento tras collect_responses: %s", e)
+
+    return resultado
 
 
 # -- v4.0: Ampliación de contexto desde fuentes externas (M9) ----------------
@@ -1001,14 +1026,7 @@ def ampliar_contexto(
     # Guardar en temp primero
     ATTACHMENTS_TEMP_DIR.mkdir(parents=True, exist_ok=True)
     safe_filename = filename.replace(" ", "_").replace("/", "_")
-    # v6.6 F7 (Bug 10 fix): eliminar el doble prefijo "ampliar_ampliar_".
-    # Si el filename ya viene con prefijo "ampliar_", no agregar otro.
-    if safe_filename.startswith("ampliar_"):
-        # Ya tiene el prefijo, usarlo tal cual
-        temp_name = safe_filename
-    else:
-        temp_name = f"ampliar_{safe_filename}"
-    temp_path = ATTACHMENTS_TEMP_DIR / temp_name
+    temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{safe_filename}"
     temp_path.write_bytes(content_bytes)
 
     # F4 v4.2: crear Orquestador + ProcesadorDocumento y procesar
@@ -1066,34 +1084,6 @@ def ampliar_contexto(
         int(estimated_tokens),
         len(proc_result.get("pending_tasks", [])),
     )
-
-    # v6.6 F3: post-procesamiento común (igual que pipeline.run()).
-    # Antes de v6.6, ampliar_contexto() no invocaba estos post-procesamientos,
-    # dejando los bloques externos sin RESUMEN, sin normalizar, y sin
-    # consolidar decisiones. Ahora se invocan para que el contexto generado
-    # desde fuentes externas tenga la misma estructura que el del chat.
-    # Principio 3 (spec v4.4 línea 36): NO se generan los 4 archivos de
-    # recuperación (estado, decisiones) — solo se enriquecen los bloques
-    # y se regenera el índice.
-    try:
-        # 1. Normalizar nombres de bloques externos a bloque_NN.md
-        _normalizar_bloques_externos(workspace_dir=workspace)
-
-        # 2. Consolidar decisiones del LLM en 02_decisiones_clave.md
-        # (esto actualiza el archivo existente, no lo crea desde cero)
-        _consolidar_decisiones_llm(workspace_dir=workspace)
-
-        # 3. Enriquecer bloques (Worker Bun o fallback a subagentes)
-        # Solo los bloques nuevos (los que no tienen RESUMEN: al inicio)
-        bloques_para_enriquecer = _descubrir_bloques_sin_resumen(workspace)
-        if bloques_para_enriquecer:
-            _enriquecer_bloques_con_fallback(
-                blocks=bloques_para_enriquecer,
-                workspace_dir=workspace,
-                chat_label=filename,
-            )
-    except Exception as e:
-        logger.warning("v6.6 F3: error en post-procesamiento de ampliar_contexto: %s", e)
 
     return {
         "needs_agent_read": False,
@@ -1246,6 +1236,62 @@ INSTRUCCIONES DE ESCRITURA (después de generar el resumen):
         prompt=prompt,
         context={"filename": filename, "chat_label": chat_label},
     )
+
+
+def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
+    """v6.6 F3 (Bug 7 fix): Descubre los bloques del workspace que NO tienen RESUMEN al inicio.
+
+    Usado por collect_responses() para saber qué bloques enriquecer.
+    Lee cada bloque_*.md del workspace y verifica si la primera línea
+    empieza con "RESUMEN:". Los que no lo tengan se devuelven como
+    ThematicBlock (con temas y external_size_chars poblados).
+
+    Args:
+        workspace_dir: Directorio del workspace.
+
+    Returns:
+        Lista de ThematicBlock sin RESUMEN, listos para enriquecer.
+    """
+    from contexto_zai.models import ThematicBlock as _TB
+    ws = Path(workspace_dir)
+    if not ws.exists():
+        return []
+
+    bloques_sin_resumen: list = []
+    for p in sorted(ws.glob("bloque_*.md")):
+        try:
+            content = p.read_text(encoding="utf-8")
+            if len(content) < 100:
+                continue  # bloque vacío
+            # Verificar si ya tiene RESUMEN al inicio
+            first_line = content.split("\n", 1)[0].strip()
+            if first_line.startswith("RESUMEN:"):
+                continue  # ya tiene resumen, no necesita enriquecer
+            # Extraer temas del header
+            temas: list[str] = []
+            for line in content.split("\n"):
+                if line.startswith("# Bloque tematico:") or line.startswith("# Bloque temático:"):
+                    temas_str = line.split(":", 1)[1].strip()
+                    temas = [t.strip() for t in temas_str.split(",") if t.strip()]
+                    break
+                elif line.startswith("# Bloque externo:"):
+                    # Compatibilidad con bloques pre-v6.6
+                    nombre = line.split(":", 1)[1].strip()
+                    temas = [nombre.lower().replace(" ", "_")[:50]]
+                    break
+            if not temas:
+                temas = ["contexto_externo"]
+            block = _TB(
+                filename=p.name,
+                temas=temas,
+                external_size_chars=len(content),
+            )
+            bloques_sin_resumen.append(block)
+        except Exception as e:
+            logger.warning("v6.6 F3: no se pudo leer bloque %s: %s", p.name, e)
+
+    logger.info("v6.6 F3: %d bloques sin RESUMEN descubiertos", len(bloques_sin_resumen))
+    return bloques_sin_resumen
 
 
 def _enriquecer_bloques_con_fallback(
@@ -1523,147 +1569,6 @@ def _consolidar_decisiones_llm(workspace_dir: Path | str) -> int:
     decisiones_path.write_text(content, encoding="utf-8")
     logger.info("v6.4 F1: %d decisiones del LLM consolidadas en 02_decisiones_clave.md", len(all_decisions))
     return len(all_decisions)
-
-
-def _normalizar_bloques_externos(workspace_dir: Path | str) -> int:
-    """v6.5 F2: Normaliza nombres de bloques externos a bloque_NN.md.
-
-    QUÉ SOLUCIONA: los bloques externos creados por ampliar_contexto() tienen
-    nombres como 'bloque_externo_grande_ampliar_APA_01.txt_lote_0.md' que no
-    siguen la convención bloque_NN.md. Esta función los renombre al primer
-    número disponible y actualiza _metadata.json.
-
-    Args:
-        workspace_dir: Directorio del workspace.
-
-    Returns:
-        Número de bloques renombrados.
-    """
-    from pathlib import Path as _Path
-    import json as _json
-    ws = _Path(workspace_dir)
-    if not ws.exists():
-        return 0
-
-    # Encontrar el número más alto de bloque_NN.md existente
-    max_num = 0
-    for p in ws.glob("bloque_*.md"):
-        name = p.stem  # bloque_01
-        if name.startswith("bloque_") and not name.startswith("bloque_externo"):
-            try:
-                num = int(name.split("_")[1])
-                if num > max_num:
-                    max_num = num
-            except (ValueError, IndexError):
-                pass
-
-    # Buscar bloques externos y renombrarlos
-    renamed = 0
-    renames: dict[str, str] = {}  # viejo → nuevo
-    for p in sorted(ws.glob("bloque_externo_*.md")):
-        max_num += 1
-        new_name = f"bloque_{max_num:02d}.md"
-        new_path = ws / new_name
-        try:
-            p.rename(new_path)
-            renames[p.name] = new_name
-            renamed += 1
-            logger.info("v6.5 F2: renombrado %s → %s", p.name, new_name)
-        except Exception as e:
-            logger.warning("v6.5 F2: no se pudo renombrar %s: %s", p.name, e)
-
-    if renamed == 0:
-        return 0
-
-    # Actualizar _metadata.json
-    meta_path = ws / "_metadata.json"
-    if meta_path.exists():
-        try:
-            meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-            tema_a_archivo = meta.get("tema_a_archivo", {})
-            for tema, archivos in tema_a_archivo.items():
-                if isinstance(archivos, list):
-                    new_list = [renames.get(a, a) for a in archivos]
-                    tema_a_archivo[tema] = new_list
-                elif isinstance(archivos, str):
-                    tema_a_archivo[tema] = renames.get(archivos, archivos)
-            meta["tema_a_archivo"] = tema_a_archivo
-            meta_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
-            logger.info("v6.5 F2: _metadata.json actualizado con %d renombres", renamed)
-        except Exception as e:
-            logger.warning("v6.5 F2: no se pudo actualizar _metadata.json: %s", e)
-
-    # Actualizar _pending_blocks.json si existe
-    pending_path = ws / "_pending_blocks.json"
-    if pending_path.exists():
-        try:
-            pending = _json.loads(pending_path.read_text(encoding="utf-8"))
-            for block in pending.get("blocks", []):
-                old_name = block.get("filename", "")
-                if old_name in renames:
-                    block["filename"] = renames[old_name]
-                    block["block_id"] = renames[old_name].replace(".md", "")
-                    block["path"] = str(ws / renames[old_name])
-            pending_path.write_text(_json.dumps(pending, indent=2, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:
-            logger.warning("v6.5 F2: no se pudo actualizar _pending_blocks.json: %s", e)
-
-    return renamed
-
-
-def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
-    """v6.6 F3: Descubre los bloques del workspace que NO tienen RESUMEN al inicio.
-
-    Usado por ampliar_contexto() para saber qué bloques enriquecer.
-    Lee cada bloque_*.md del workspace y verifica si la primera línea
-    empieza con "RESUMEN:". Los que no lo tengan se devuelven como
-    ThematicBlock (con temas y external_size_chars poblados).
-
-    Args:
-        workspace_dir: Directorio del workspace.
-
-    Returns:
-        Lista de ThematicBlock sin RESUMEN, listos para enriquecer.
-    """
-    from contexto_zai.models import ThematicBlock as _TB
-    ws = Path(workspace_dir)
-    if not ws.exists():
-        return []
-
-    bloques_sin_resumen: list = []
-    for p in sorted(ws.glob("bloque_*.md")):
-        try:
-            content = p.read_text(encoding="utf-8")
-            if len(content) < 100:
-                continue  # bloque vacío
-            # Verificar si ya tiene RESUMEN al inicio
-            first_line = content.split("\n", 1)[0].strip()
-            if first_line.startswith("RESUMEN:"):
-                continue  # ya tiene resumen, no necesita enriquecer
-            # Extraer temas del header
-            temas: list[str] = []
-            for line in content.split("\n"):
-                if line.startswith("# Bloque tematico:") or line.startswith("# Bloque temático:"):
-                    temas_str = line.split(":", 1)[1].strip()
-                    temas = [t.strip() for t in temas_str.split(",") if t.strip()]
-                    break
-                elif line.startswith("# Bloque externo:"):
-                    nombre = line.split(":", 1)[1].strip()
-                    temas = [nombre.lower().replace(" ", "_")[:50]]
-                    break
-            if not temas:
-                temas = ["contexto_externo"]
-            block = _TB(
-                filename=p.name,
-                temas=temas,
-                external_size_chars=len(content),
-            )
-            bloques_sin_resumen.append(block)
-        except Exception as e:
-            logger.warning("v6.6 F3: no se pudo leer bloque %s: %s", p.name, e)
-
-    logger.info("v6.6 F3: %d bloques sin RESUMEN descubiertos", len(bloques_sin_resumen))
-    return bloques_sin_resumen
 
 
 if __name__ == "__main__":

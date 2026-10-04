@@ -1,4 +1,4 @@
-# contexto_zai/coordinador/integrador_respuestas.py -- IntegradorRespuestas con _integrar_documento usando BloqueGenerator y nombres canónicos bloque_NN.md (v6.6 F4: estructura uniforme de bloques externos) + ThematicBlock con external_size_chars en _regenerar_indice_recuperacion (Bug 1+2 fix).
+# contexto_zai/coordinador/integrador_respuestas.py -- IntegradorRespuestas: aplica respuestas de subagentes a los archivos de recuperación.
 """IntegradorRespuestas (v4.2).
 
 Aplica las respuestas de los subagentes a los archivos de recuperación
@@ -615,14 +615,9 @@ class IntegradorRespuestas:
 
         Escanea el workspace en busca de bloque_NN.md existentes y devuelve
         el siguiente número disponible. También revisa _metadata.json para
-        considerar bloques que están registrados pero aún no escritos físicamente
-        (caso de tests donde el metadata se inicializa a mano).
-
-        Esto asegura que los bloques externos se nombren de forma canónica,
-        igual que los del chat, y que no colisionen con bloques existentes.
+        considerar bloques que están registrados pero aún no escritos físicamente.
         """
         max_num = 0
-        # 1. Escaneo físico
         if ws.exists():
             for p in ws.glob("bloque_*.md"):
                 name = p.stem  # bloque_01
@@ -633,7 +628,6 @@ class IntegradorRespuestas:
                             max_num = num
                     except (ValueError, IndexError):
                         pass
-        # 2. Escaneo de metadata (para bloques registrados pero no físicos)
         meta_path = ws / "_metadata.json" if ws.exists() else None
         if meta_path and meta_path.exists():
             try:
@@ -694,35 +688,32 @@ class IntegradorRespuestas:
         # Los bloques externos ahora se nombran bloque_NN.md (siguiente número
         # disponible) y se guardan en la RAÍZ del workspace (no en subcarpeta
         # bloques_externos/). El header pasa a ser "# Bloque tematico: <temas>"
-        # generado por BloqueGenerator, no "# Bloque externo:" escrito a mano.
+        # (no "# Bloque externo:") para que la estructura sea uniforme con los
+        # bloques del chat.
         # v6.6 F4: idempotencia — si ya existe un bloque registrado para este
         # filename+lote en archivo_a_source, reutilizar su nombre en vez de
-        # crear uno nuevo. Esto preserva la idempotencia al reprocesar el mismo
-        # documento (Test 15).
+        # crear uno nuevo. Esto preserva la idempotencia al reprocesar.
         bloque_filename = self._buscar_bloque_existente(ws, filename, lote_idx)
         if not bloque_filename:
             bloque_filename = self._siguiente_nombre_bloque(ws)
         bloque_path = ws / bloque_filename
 
-        # Construir el ThematicBlock con los temas parseados de la respuesta
+        # Parsear temas reales de la respuesta del subagente
         temas_reales = self._parse_temas_documento(response.response)
+
+        # Construir ThematicBlock con temas y external_size_chars (Bug 1+2 fix)
         from contexto_zai.models import ThematicBlock as _TB
         contenido_texto = response.response or ""
+        temas_para_bloque = [t["nombre"] for t in temas_reales] if temas_reales else [f"documento_externo_{lote_idx}"]
         block_temp = _TB(
             filename=bloque_filename,
-            temas=[t["nombre"] for t in temas_reales] if temas_reales else [f"documento_externo_{lote_idx}"],
+            temas=temas_para_bloque,
             external_size_chars=len(contenido_texto),
         )
 
-        # Escribir el bloque usando BloqueGenerator (formato canónico)
-        from contexto_zai.generation.bloque_generator import BloqueGenerator
-        from contexto_zai.processing.content_cleaner import ContentCleaner
-        bloque_gen = BloqueGenerator()
-        cleaner = ContentCleaner()
-
-        # BloqueGenerator.generate() requiere exchanges; como los externos
-        # no tienen, generamos el contenido manualmente con el header canónico
-        # y añadimos el contenido del documento externo.
+        # Escribir el bloque con header canónico (v6.6 F4 Bug 9 fix)
+        # BloqueGenerator requiere exchanges; como los externos no tienen,
+        # generamos el contenido con el header canónico manualmente.
         temas_str = ", ".join(block_temp.temas) if block_temp.temas else "documento_externo"
         content = f"# Bloque tematico: {temas_str}\n\n"
         content += f"**Source:** ampliar_contexto (documento externo)\n"
@@ -1233,8 +1224,9 @@ SECCIONES: roles, permisos""",
         assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
             f"Esperaba 'autenticacion_jwt' en tema_a_archivo, obtuvo: {metadata['tema_a_archivo']}"
         assert "control_acceso" in metadata["tema_a_archivo"]
-        # Ambos temas apuntan al mismo bloque (v6.6 F4: ahora bloque_01.md, no bloque_externo_*)
-        # Como el workspace estaba vacío, el primer bloque se llama bloque_01.md
+        # v6.6 F4: ambos temas apuntan al mismo bloque canónico (bloque_01.md,
+        # no bloque_externo_*). Como el workspace estaba vacío, el primer
+        # bloque se llama bloque_01.md.
         assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_01.md", \
             f"v6.6 F4: esperaba 'bloque_01.md', obtuvo: {metadata['tema_a_archivo']['autenticacion_jwt']}"
         assert metadata["tema_a_archivo"]["control_acceso"] == "bloque_01.md"
@@ -1294,7 +1286,7 @@ SECCIONES: firma, verificacion""",
         assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_01.md"
         # El tema del documento externo se prefija con el filename
         assert "doc_pdf_autenticacion_jwt" in metadata["tema_a_archivo"]
-        # v6.6 F4: ahora el bloque se llama bloque_02.md (el 01 ya estaba ocupado por el tema del chat)
+        # v6.6 F4: el bloque externo se llama bloque_02.md (el 01 ya estaba ocupado)
         assert metadata["tema_a_archivo"]["doc_pdf_autenticacion_jwt"] == "bloque_02.md", \
             f"v6.6 F4: esperaba 'bloque_02.md', obtuvo: {metadata['tema_a_archivo']['doc_pdf_autenticacion_jwt']}"
         print(f"[OK] _integrar_documento: no sobrescribe tema existente (prefija con filename)")
@@ -1365,9 +1357,10 @@ SECCIONES: header, payload""",
         metadata_path.write_text(json.dumps({"tema_a_archivo": {}}), encoding="utf-8")
 
         # Crear el bloque externo físico (lo haría _integrar_documento en su flujo)
-        # v6.6 F4: el bloque ya se crea con nombre canónico bloque_NN.md por _integrar_documento
-        # El test previo creaba bloque_externo_* a mano, pero ahora _integrar_documento
-        # lo crea solo. Por eso eliminamos la creación manual y dejamos que el integrador lo haga.
+        # v6.6 F4: el bloque ya se crea con nombre canónico bloque_NN.md por
+        # _integrar_documento. El test previo creaba bloque_externo_* a mano,
+        # pero ahora _integrar_documento lo crea solo. Por eso eliminamos la
+        # creación manual y dejamos que el integrador lo haga.
 
         resp = SubagentResponse(
             task_id="documento_doc_index_lote_0",

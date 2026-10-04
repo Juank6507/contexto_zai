@@ -1,4 +1,4 @@
-# contexto_zai/generation/indice_generator.py -- IndiceGenerator con _find_tokens_for_tema arreglado (v6.6 F6 Bug 2 fix), sin _grafos_cambios.json (Bug 5), detector de scripts ampliado (Bug 6).
+# contexto_zai/generation/indice_generator.py -- Generador del archivo 01_indice_recuperacion.md con tabla mapeo tema->archivo.
 """Generador del archivo 01_indice_recuperacion.md (v3.2).
 
 Produce el índice con el mapeo explícito `tema -> archivo`, no
@@ -95,8 +95,6 @@ class IndiceGenerator:
         Returns:
             Contenido markdown del índice.
         """
-        # v6.5 F4: guardar workspace_dir para _find_tokens_for_tema
-        self._workspace_dir_cache = workspace_dir
         # v6.3 F2: incluir bloques de chats anteriores preexistentes
         if workspace_dir:
             blocks = self._incluir_bloques_anteriores(blocks, workspace_dir)
@@ -283,51 +281,32 @@ class IndiceGenerator:
     ) -> list[str]:
         """v6.6 F6 (Bug 6 fix): Detecta temas que son scripts versionados.
 
-        Un tema se considera \"script versionado\" si:
+        Un tema se considera script versionado si:
         1. Su nombre contiene un sufijo de script (patrón v3.3 antiguo):
-           ``_server``, ``_router``, ``_config``, ``_auth``, ``_pipeline``,
-           ``_client``, ``_bloque``, ``_seccion``.
+           _server, _router, _config, _auth, _pipeline, _client, _bloque, _seccion.
         2. O el bloque físico correspondiente contiene bloques de código con
-           extensiones de archivo (```.py```, ```.ts```, etc.).
-
-        Args:
-            tema_a_archivo: Mapeo tema -> lista de archivos.
-            blocks: Lista de ThematicBlock (para buscar contenido de bloques).
-
-        Returns:
-            Lista de temas que son scripts versionados.
+           extensiones de archivo (.py, .ts, .tsx, .js, .json, .sh, .bat, .ps1).
         """
         _SUFIJOS_SCRIPT = [
             "_server", "_router", "_config", "_auth", "_pipeline",
             "_client", "_bloque", "_seccion",
         ]
-        # Patrones de bloques de código con extensión de archivo
         import re as _re
         _CODE_BLOCK_PATTERN = _re.compile(
             r"^```(?:python|py|typescript|ts|tsx|javascript|js|json|bash|sh|bat|powershell|ps1|yaml|yml)",
             _re.MULTILINE,
         )
-
-        # Construir mapa filename -> bloque para búsqueda rápida
-        bloque_por_filename = {b.filename: b for b in blocks}
-
-        # Set de archivos a inspeccionar (todos los del mapeo)
         archivos_a_inspeccionar: set = set()
         for archivos in tema_a_archivo.values():
             if isinstance(archivos, list):
                 archivos_a_inspeccionar.update(archivos)
             elif isinstance(archivos, str):
                 archivos_a_inspeccionar.add(archivos)
-
-        # Para cada archivo, leer el bloque físico y detectar si tiene código
         archivos_con_codigo: set = set()
         ws = getattr(self, '_workspace_dir_cache', None)
         for filename in archivos_a_inspeccionar:
-            # 1. Intentar del bloque en memoria (sin exchanges no hay contenido)
-            bloque = bloque_por_filename.get(filename)
             contenido = None
-            # 2. Si no, leer del workspace (si está disponible)
-            if not contenido and ws:
+            if ws:
                 from pathlib import Path as _Path
                 ruta = _Path(ws) / filename
                 if ruta.exists():
@@ -335,22 +314,16 @@ class IndiceGenerator:
                         contenido = ruta.read_text(encoding="utf-8")
                     except Exception:
                         contenido = None
-            # 3. Verificar si tiene bloques de código con extensión
             if contenido and _CODE_BLOCK_PATTERN.search(contenido):
                 archivos_con_codigo.add(filename)
-
-        # Construir la lista de temas que son scripts versionados
         script_temas: list[str] = []
         for tema, archivos in tema_a_archivo.items():
-            # Criterio 1: sufijo en el nombre del tema
             if any(suf in tema for suf in _SUFIJOS_SCRIPT):
                 script_temas.append(tema)
                 continue
-            # Criterio 2: el archivo correspondiente tiene bloques de código
             archivos_lista = archivos if isinstance(archivos, list) else [archivos]
             if any(a in archivos_con_codigo for a in archivos_lista):
                 script_temas.append(tema)
-
         return script_temas
 
     def _find_tokens_for_tema(
@@ -360,29 +333,23 @@ class IndiceGenerator:
     ) -> str:
         """Encuentra los tokens aproximados del archivo que contiene el tema.
 
-        v6.5 F4: si no encuentra el bloque en la lista de blocks, busca en
-        el workspace (para bloques externos que no están en la lista).
-        v6.6 F6 (Bug 2 fix): el glob se cambió de ``bloque_externo_*`` a
-        ``bloque_*.md`` porque tras la normalización (v6.5 F2) los externos
-        se llaman ``bloque_NN.md``, no ``bloque_externo_*``. El glob anterior
-        no matcheaba nada.
+        v6.6 F6 (Bug 2 fix): si no encuentra el bloque en la lista de blocks,
+        busca en el workspace con glob bloque_*.md (no bloque_externo_* que
+        ya no se usa tras la normalización).
         """
         for b in blocks:
             if tema in b.temas:
                 return f"{b.estimated_tokens / 1000:.1f}K"
-        # v6.5 F4 + v6.6 F6: buscar en workspace si el bloque es externo
-        # (normalizado a bloque_NN.md por v6.5 F2 o v6.6 F4)
+        # v6.6 F6: buscar en workspace si el bloque no está en la lista
         if hasattr(self, '_workspace_dir_cache') and self._workspace_dir_cache:
             from pathlib import Path as _Path
             ws = _Path(self._workspace_dir_cache)
             if ws.exists():
-                # v6.6 F6: cambiar glob de bloque_externo_* a bloque_*.md
-                # (los externos ya están normalizados a bloque_NN.md)
                 for p in ws.glob("bloque_*.md"):
                     try:
                         content = p.read_text(encoding="utf-8")
                         if len(content) < 100:
-                            continue  # bloque vacío
+                            continue
                         if tema in content:
                             return f"{len(content) / 3500:.1f}K"
                     except Exception:

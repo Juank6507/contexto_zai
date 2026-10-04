@@ -563,32 +563,11 @@ class RecoveryCycle:
         files: list[RecoveryFile],
         output_dir: Path,
     ) -> None:
-        """Escribe los archivos de recuperación en el directorio.
-
-        v6.5 F1: NO sobrescribe archivos bloque_externo_* preexistentes que no
-        estén en la lista de files. Esto preserva los bloques externos creados
-        por ampliar_contexto() en sesiones anteriores.
-        """
+        """Escribe los archivos de recuperación en el directorio."""
         output_dir.mkdir(parents=True, exist_ok=True)
-        # v6.5 F1: identificar bloques externos preexistentes que no se van a reescribir
-        existing_externos = set()
-        if output_dir.exists():
-            for p in output_dir.glob("bloque_externo_*"):
-                existing_externos.add(p.name)
-        # Files que se van a escribir (no tocar estos)
-        files_to_write = {f.filename for f in files}
-        # Preservar externos que no están en la lista de files
-        preserved = 0
-        for ext_name in existing_externos:
-            if ext_name not in files_to_write:
-                preserved += 1
-                logger.info("v6.5 F1: preservando bloque externo preexistente: %s", ext_name)
-        # Escribir archivos
         for f in files:
             file_path = output_dir / f.filename
             file_path.write_text(f.content, encoding="utf-8")
-        if preserved > 0:
-            logger.info("v6.5 F1: %d bloque(s) externo(s) preservado(s) en %s", preserved, output_dir)
         logger.info("Escritos %d archivos en %s", len(files), output_dir)
 
     def __repr__(self) -> str:
