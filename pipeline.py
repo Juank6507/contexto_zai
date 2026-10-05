@@ -694,25 +694,23 @@ def collect_responses(
     # VISIBLE (no oculto). Si el Worker Bun no está disponible, se generan
     # pending_tasks para subagentes de fallback (diseño v6.2).
     # No hay try/except que enmascare errores.
+    # v6.8.1 fix: capturar el valor de retorno de _enriquecer_bloques_con_fallback
+    # que contiene las pending_tasks para subagentes de fallback.
+    # Antes se ignoraba el valor de retorno y se buscaba en el Orquestador
+    # (que no tenía las tareas). Ahora se capturan directamente.
     bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
     if bloques_sin_resumen:
-        # _enriquecer_bloques_con_fallback maneja internamente el caso de
-        # Worker Bun no disponible: genera pending_tasks para subagentes.
-        # Si hay otro error (no de Worker Bun), se propaga.
-        _enriquecer_bloques_con_fallback(
+        fallback_tasks = _enriquecer_bloques_con_fallback(
             blocks=bloques_sin_resumen,
             workspace_dir=workspace_dir,
             chat_label="collect_responses",
         )
-        # Si el enriquecimiento generó pending_tasks (fallback a subagentes),
-        # añadirlas al resultado para que el agente las ejecute.
-        from contexto_zai.coordinador import Orquestador as _Orq
-        orch2 = _Orq(workspace_dir=workspace_dir)
-        nuevas_tasks = orch2.leer_tareas_pendientes()
-        if nuevas_tasks:
-            resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
-            logger.info("v6.8 F2: %d pending_task(s) de enriquecimiento para subagentes",
-                       len(nuevas_tasks))
+        # v6.8.1 fix: las pending_tasks vienen en el valor de retorno de la función,
+        # no en el Orquestador. Capturarlas directamente del retorno.
+        if fallback_tasks:
+            resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
+            logger.info("v6.8.1: %d pending_task(s) de enriquecimiento para subagentes",
+                       len(fallback_tasks))
 
     return resultado
 
