@@ -1,4 +1,4 @@
-// contexto_zai/mini-services/worker-cascade/index.ts (v6.8 F4): Worker 2 lee temas existentes del metadata para clasificación jerárquica tipo biblioteca (tema.subtema), no prefijos largos.
+// contexto_zai/mini-services/worker-cascade/index.ts
 // Worker Bun persistente (v6.1) — Cascada W1 (resumen) → W2 fusionado (extracción JSON).
 //
 // QUÉ SOLUCIONA: en v6.0, cada bloque consumía 4 llamadas LLM (W1 + W2 + W3 + W4) y saturaba el
@@ -231,27 +231,18 @@ ${bloqueContent}
 Resumen:`;
 
 // #1 — Prompt fusionado: W2+W3+W4 en una sola llamada JSON
-const PROMPT_EXTRACT_ALL = (resumen: string, temasExistentes: string = "") => `Basándote en este resumen de un bloque, extrae TRES piezas de información. Devuelve EXCLUSIVAMENTE un JSON válido con esta forma exacta:
+const PROMPT_EXTRACT_ALL = (resumen: string) => `Basándote en este resumen de un bloque de chat, extrae TRES piezas de información. Devuelve EXCLUSIVAMENTE un JSON válido con esta forma exacta:
 
 {
   "nombre": "<snake_case, máximo 5 palabras, captura el tema central>",
   "decisiones": ["DECISION: ... | ALCANCE: ...", "DECISION: ... | ALCANCE: ..."],
-  "temas": ["tema_uno", "tema_dos.subtema_a", "tema_dos.subtema_b"]
+  "temas": ["tema_uno", "tema_dos", "tema_tres"]
 }
 
 Reglas:
 - "nombre": snake_case, máximo 5 palabras.
 - "decisiones": lista (puede ser vacía si no hay decisiones explícitas). Cada item con formato "DECISION: ... | ALCANCE: ...".
 - "temas": lista de máximo 5 temas en snake_case.
-  v6.8 F4 — CLASIFICACIÓN JERÁRQUICA TIPO BIBLIOTECA:
-  - Antes de crear temas nuevos, revisa los temas existentes (si se proveen abajo).
-  - Si un tema existente ya cubre el contenido del bloque → úsalo (no crees uno nuevo).
-  - Si el contenido abarca ideas distintas bajo un mismo tema → genera subtemas con
-    notación jerárquica: "tema.subtema" (ej: "autenticacion.jwt_firma", "autenticacion.roles").
-  - Los nombres deben ser cortos y significativos. No uses prefijos largos.
-  - La subdivisión la determina el contenido, no el tamaño del bloque.
-
-${temasExistentes ? `Temas existentes en el contexto (revisa antes de crear nuevos):\n${temasExistentes}\n` : ""}
 
 Resumen:
 ${resumen}
@@ -302,27 +293,9 @@ async function worker1_resumen(block: PendingBlock): Promise<string> {
 }
 
 // #1 — Worker 2 fusionado: nombre + decisiones + temas en una sola llamada
-// v6.8 F4: lee temas existentes del metadata para clasificación jerárquica
 async function worker2_extract_all(block: PendingBlock, resumen: string): Promise<void> {
-  // v6.8 F4: leer temas existentes del _metadata.json para que el LLM los revise
-  let temasExistentes = "";
-  try {
-    const wsDir = process.env.CZAI_WORKSPACE_DIR || WORKSPACE_DIR;
-    const metaPath = join(wsDir, "_metadata.json");
-    if (existsSync(metaPath)) {
-      const meta = JSON.parse(readFileSync(metaPath, "utf-8"));
-      const tema_a_archivo = meta.tema_a_archivo || {};
-      const temas = Object.keys(tema_a_archivo).filter(t => !t.startsWith("documento_externo_"));
-      if (temas.length > 0) {
-        temasExistentes = temas.join(", ");
-      }
-    }
-  } catch (e) {
-    log(`  [W2] ${block.block_id}: no se pudo leer metadata para temas existentes (continuando)`);
-  }
-
   // #5 — Modelo liviano para W2-fusionado
-  const raw = await callLLM(MODEL_LIGHT, SYSTEM_PROMPT_LIGHT, PROMPT_EXTRACT_ALL(resumen, temasExistentes), {
+  const raw = await callLLM(MODEL_LIGHT, SYSTEM_PROMPT_LIGHT, PROMPT_EXTRACT_ALL(resumen), {
     cacheable: true,
     tag: `W2 ${block.block_id}`,
   });

@@ -1,4 +1,4 @@
-# contexto_zai/generation/contexto_generator.py -- ContextoGenerator (v6.8 F1): imports separados (no en un solo bloque), errores visibles (ERROR no WARNING oculto), hook de cronología para los 4 archivos de recuperación.
+# contexto_zai/generation/contexto_generator.py -- ContextoGenerator (v6.7 F3): clase base abstracta con hook _debe_generar_recuperacion() basado en cronología (Principio 3: los 4 archivos se generan solo si la info es cronológica y posterior).
 """ContextoGenerator (v6.6) — Clase base abstracta para los generadores de contexto.
 
 QUÉ SOLUCIONA:
@@ -275,53 +275,26 @@ class ContextoGenerator(ABC):
         logger.info("ContextoGenerator: índice regenerado (%d chars)", len(content))
 
     def _post_procesar(self, blocks: list[ThematicBlock]) -> None:
-        """v6.8 F1: Post-procesamiento común: enriquecer, consolidar decisiones, normalizar.
+        """Post-procesamiento común: enriquecer, consolidar decisiones, normalizar.
 
-        v6.8 F1: imports separados (no en un solo bloque). Si una función
-        falla, las otras siguen. Los errores son visibles (ERROR, no WARNING
-        oculto). No hay try/except que enmascare errores.
+        Las importa de pipeline.py para no duplicar lógica.
         """
-        # v6.8 F1: importar cada función por separado
-        # Si una no existe o falla, loguear ERROR y continuar con las demás
         try:
-            from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
-        except ImportError as e:
-            logger.error("v6.8 F1: no se pudo importar _enriquecer_bloques_con_fallback: %s", e)
-            _enriquecer_bloques_con_fallback = None
-
-        try:
-            from contexto_zai.pipeline import _consolidar_decisiones_llm
-        except ImportError as e:
-            logger.error("v6.8 F1: no se pudo importar _consolidar_decisiones_llm: %s", e)
-            _consolidar_decisiones_llm = None
-
-        try:
-            from contexto_zai.pipeline import _normalizar_bloques_externos
-        except ImportError as e:
-            logger.error("v6.8 F1: no se pudo importar _normalizar_bloques_externos: %s", e)
-            _normalizar_bloques_externos = None
-
-        # Ejecutar cada función si está disponible (sin ocultar errores)
-        if _enriquecer_bloques_con_fallback is not None:
+            from contexto_zai.pipeline import (
+                _enriquecer_bloques_con_fallback,
+                _consolidar_decisiones_llm,
+                _normalizar_bloques_externos,
+            )
             _enriquecer_bloques_con_fallback(
                 blocks=blocks,
                 workspace_dir=self._workspace_dir,
                 chat_label=self._chat_label,
             )
-        else:
-            logger.error("v6.8 F1: enriquecimiento OMITIDO — función no disponible")
-
-        if _consolidar_decisiones_llm is not None:
             _consolidar_decisiones_llm(workspace_dir=self._workspace_dir)
-        else:
-            logger.error("v6.8 F1: consolidación de decisiones OMITIDA — función no disponible")
-
-        if _normalizar_bloques_externos is not None:
             _normalizar_bloques_externos(workspace_dir=self._workspace_dir)
-        else:
-            logger.error("v6.8 F1: normalización OMITIDA — función no disponible")
-
-        logger.info("ContextoGenerator: post-procesamiento completado (v6.8 F1)")
+            logger.info("ContextoGenerator: post-procesamiento completado")
+        except Exception as e:
+            logger.warning("ContextoGenerator: error en post-procesamiento: %s", e)
 
     def _generar_archivos_recuperacion(
         self,

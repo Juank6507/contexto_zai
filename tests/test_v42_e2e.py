@@ -362,15 +362,17 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
         # Verificar que los temas provisionales están en _metadata.json
         # v6.8 F3: el bloque se crea con tema PROVISIONAL GENÉRICO.
         # Los temas definitivos los genera el enriquecimiento (Worker 4 o subagente).
+        # v6.8.2 F1: el tema se escribe como lista.
         metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
         assert len(metadata["tema_a_archivo"]) >= 1, \
             f"Falta tema provisional: {metadata['tema_a_archivo']}"
         # v6.8 F3: el tema debe ser genérico (no inferido de título de sección)
         assert "documento_externo_0" in metadata["tema_a_archivo"], \
             f"v6.8 F3: esperaba tema genérico, obtuvo: {metadata['tema_a_archivo']}"
-        # NO deben aparecer temas inferidos de títulos de sección
-        assert "sistema_de_autenticacion_jwt" not in metadata["tema_a_archivo"], \
-            f"v6.8 F3: no debe inferir temas de títulos, obtuvo: {metadata['tema_a_archivo']}"
+        # v6.8.2 F1: el valor debe ser lista, no string
+        valor = metadata["tema_a_archivo"]["documento_externo_0"]
+        assert isinstance(valor, list), f"v6.8.2 F1: esperaba lista, obtuvo {type(valor).__name__}"
+        assert "bloque_01.md" in valor, f"v6.8.2 F1: esperaba bloque_01.md en lista"
 
         # 4. query_context() encuentra el bloque externo por el tema provisional.
         # v6.8 F3: query_context encuentra el bloque por tema genérico.
@@ -378,11 +380,15 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
         query_result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
         assert "error" not in query_result, f"Esperaba encontrar bloque, obtuvo error: {query_result}"
         assert query_result["mode"] == "direct"
-        # v6.6 F4: el bloque encontrado es bloque_01.md (canónico)
+        # v6.6 F4: el bloque encontrado es bloque_01.md (canónico, no bloque_externo_*)
         assert any(b.startswith("bloque_") for b in query_result["bloques"]), \
             f"Esperaba bloque canónico en candidatos: {query_result['bloques']}"
+        # El tema tentativo está en los candidatos
+        primer_tema = list(metadata["tema_a_archivo"].keys())[0]
+        assert primer_tema in query_result["bloques_info"][0]["temas"], \
+            f"Esperaba tema tentativo '{primer_tema}' en candidatos: {query_result['bloques_info'][0]['temas']}"
 
-        print("[OK] query_context E2E: encuentra bloque con tema provisional genérico (v6.8 F3)")
+        print("[OK] query_context E2E: encuentra bloque externo por tema tentativo (v6.7 F2)")
 
 
 def test_sintesis_contexto_e2e():

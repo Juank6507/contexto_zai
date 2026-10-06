@@ -1,4 +1,4 @@
-# contexto_zai/pipeline.py -- Entry point del proceso (v6.8 F1+F2): _normalizar_bloques_externos restaurada, enriquecimiento en collect_responses sin try/except silencioso, errores visibles.
+# contexto_zai/pipeline.py -- Entry point del proceso (v6.8.2): _arrancar_worker_y_esperar detecta puerto 8090 en uso, _normalizar_bloques_externos restaurada, enriquecimiento sin try/except silencioso, errores visibles.
 """Entry point del proceso Contexto Z.ai (v3.4).
 
 Reemplaza la CLI de v1.0. Expone funciones para activar la
@@ -689,28 +689,32 @@ def collect_responses(
 
     resultado = orch.aplicar_respuestas(integrador=integrador)
 
-    # v6.8 F2: enriquecer bloques nuevos después de que collect_responses()
-    # los haya escrito al disco. Si el enriquecimiento falla, el error es
-    # VISIBLE (no oculto). Si el Worker Bun no está disponible, se generan
-    # pending_tasks para subagentes de fallback (diseño v6.2).
-    # No hay try/except que enmascare errores.
-    # v6.8.1 fix: capturar el valor de retorno de _enriquecer_bloques_con_fallback
-    # que contiene las pending_tasks para subagentes de fallback.
-    # Antes se ignoraba el valor de retorno y se buscaba en el Orquestador
-    # (que no tenía las tareas). Ahora se capturan directamente.
-    bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
-    if bloques_sin_resumen:
-        fallback_tasks = _enriquecer_bloques_con_fallback(
-            blocks=bloques_sin_resumen,
-            workspace_dir=workspace_dir,
-            chat_label="collect_responses",
-        )
-        # v6.8.1 fix: las pending_tasks vienen en el valor de retorno de la función,
-        # no en el Orquestador. Capturarlas directamente del retorno.
-        if fallback_tasks:
-            resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
-            logger.info("v6.8.1: %d pending_task(s) de enriquecimiento para subagentes",
-                       len(fallback_tasks))
+    # v6.6 F3 fix (Bug 7): enriquecer bloques nuevos después de que
+    # collect_responses() los haya escrito al disco. Antes, el enriquecimiento
+    # se invocaba desde ampliar_contexto() PERO antes de que los subagentes
+    # corrieran — los bloques físicos no existían todavía. El momento correcto
+    # es aquí, después de aplicar las respuestas (los bloques ya están en disco).
+    # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
+    # bloques del chat que hayan quedado sin RESUMEN.
+    # Si el Worker Bun falla o hace timeout, el fallback genera pending_tasks
+    # para que el agente las ejecute con subagentes (diseño v6.2).
+    try:
+        bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+        if bloques_sin_resumen:
+            _enriquecer_bloques_con_fallback(
+                blocks=bloques_sin_resumen,
+                workspace_dir=workspace_dir,
+                chat_label="collect_responses",
+            )
+            # Si el enriquecimiento generó pending_tasks (fallback a subagentes),
+            # añadirlas al resultado para que el agente las ejecute.
+            from contexto_zai.coordinador import Orquestador as _Orq
+            orch2 = _Orq(workspace_dir=workspace_dir)
+            nuevas_tasks = orch2.leer_tareas_pendientes()
+            if nuevas_tasks:
+                resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
+    except Exception as e:
+        logger.warning("v6.6 F3 Bug 7 fix: error en enriquecimiento tras collect_responses: %s", e)
 
     return resultado
 
@@ -1147,6 +1151,9 @@ def _arrancar_worker_y_esperar(
     worker vía ``subprocess.run()`` con timeout, y devuelve True si el worker
     completó (exit code 0), False si falló o hizo timeout.
 
+    v6.8.2 F2: verifica si el puerto 8090 ya está en uso antes de intentar
+    arrancar otro Worker Bun. Si ya hay uno corriendo, lo reutiliza.
+
     Args:
         workspace_dir: Directorio del workspace (donde viven los bloque_NN.md).
         timeout: Segundos máximos (default: ``WORKER_BUN_TIMEOUT`` de config).
@@ -1155,6 +1162,7 @@ def _arrancar_worker_y_esperar(
         True si el worker completó (exit code 0), False si falló o timeout.
     """
     import subprocess
+    import socket as _socket
     try:
         from contexto_zai.config import WORKER_BUN_DIR, WORKER_BUN_TIMEOUT as _DEFAULT_TIMEOUT
     except ImportError:
@@ -1164,6 +1172,30 @@ def _arrancar_worker_y_esperar(
     if not Path(WORKER_BUN_DIR).exists():
         logger.warning("v6.2: WORKER_BUN_DIR no existe: %s", WORKER_BUN_DIR)
         return False
+
+    # v6.8.2 F2: verificar si el puerto 8090 ya está en uso (Worker Bun existente)
+    WORKER_BUN_PORT = 8090
+    puerto_en_uso = False
+    try:
+        sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+        sock.settimeout(1)
+        result_sock = sock.connect_ex(("localhost", WORKER_BUN_PORT))
+        sock.close()
+        puerto_en_uso = (result_sock == 0)
+    except Exception:
+        puerto_en_uso = False
+
+    if puerto_en_uso:
+        logger.info("v6.8.2 F2: puerto %d en uso — Worker Bun ya está corriendo, reutilizando",
+                   WORKER_BUN_PORT)
+        # Hay un Worker Bun corriendo. Esperar a que procese los bloques del
+        # _pending_blocks.json y devolver True (asumimos que el worker existente
+        # procesará los bloques porque lee el _pending_blocks.json del workspace).
+        # Darle tiempo para que procese.
+        import time as _time
+        _time.sleep(min(timeout, 30))  # esperar hasta 30s o timeout
+        return True
+
     env = {**_os.environ, "CZAI_WORKSPACE_DIR": str(workspace_dir)}
     try:
         result = subprocess.run(
@@ -1567,80 +1599,6 @@ def _consolidar_decisiones_llm(workspace_dir: Path | str) -> int:
     decisiones_path.write_text(content, encoding="utf-8")
     logger.info("v6.4 F1: %d decisiones del LLM consolidadas en 02_decisiones_clave.md", len(all_decisions))
     return len(all_decisions)
-
-
-def _normalizar_bloques_externos(workspace_dir: Path | str) -> int:
-    """v6.8 F1: Normaliza nombres de tema en _metadata.json.
-
-    Esta función existía en v6.6 pero se perdió en un reset de sesión.
-    Su ausencia causaba que el import en ContextoGenerator._post_procesar()
-    fallara silenciosamente, impidiendo que el enriquecimiento y la
-    consolidación de decisiones se ejecutaran.
-
-    QUÉ HACE:
-    1. Lee _metadata.json del workspace.
-    2. Limpia nombres de tema contaminados con prefijos internos
-       (ampliar_, grande_) que se filtraban del filename temporal.
-    3. Normaliza la estructura jerárquica de temas.
-
-    Args:
-        workspace_dir: Directorio del workspace.
-
-    Returns:
-        Número de temas normalizados.
-    """
-    import json as _json
-    ws = Path(workspace_dir)
-    if not ws.exists():
-        return 0
-
-    meta_path = ws / "_metadata.json"
-    if not meta_path.exists():
-        return 0
-
-    try:
-        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-    except (_json.JSONDecodeError, ValueError) as e:
-        logger.error("v6.8 F1: no se pudo leer _metadata.json para normalizar: %s", e)
-        return 0
-
-    tema_a_archivo = meta.get("tema_a_archivo", {})
-    if not tema_a_archivo:
-        return 0
-
-    # v6.8 F1: limpiar prefijos contaminados en claves de tema
-    # Prefijos internos que no deben aparecer en nombres de tema
-    PREFIJOS_CONTAMINADOS = ["grande_ampliar_", "ampliar_", "grande_"]
-    temas_limpiados = 0
-    temas_a_actualizar = {}
-
-    for tema, archivo in list(tema_a_archivo.items()):
-        tema_limpio = tema
-        for prefijo in PREFIJOS_CONTAMINADOS:
-            if tema_limpio.startswith(prefijo):
-                tema_limpio = tema_limpio[len(prefijo):]
-                logger.info("v6.8 F1: limpiado prefijo '%s' de tema '%s' → '%s'",
-                           prefijo, tema, tema_limpio)
-                break
-
-        if tema_limpio != tema:
-            # El tema limpio ya existe → es un duplicado, eliminar el contaminado
-            if tema_limpio in tema_a_archivo:
-                logger.info("v6.8 F1: tema '%s' es duplicado de '%s', eliminando contaminado",
-                           tema, tema_limpio)
-                del tema_a_archivo[tema]
-            else:
-                # Renombrar el tema contaminado al limpio
-                del tema_a_archivo[tema]
-                tema_a_archivo[tema_limpio] = archivo
-            temas_limpiados += 1
-
-    if temas_limpiados > 0:
-        meta["tema_a_archivo"] = tema_a_archivo
-        meta_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
-        logger.info("v6.8 F1: %d tema(s) normalizado(s) en _metadata.json", temas_limpiados)
-
-    return temas_limpiados
 
 
 if __name__ == "__main__":

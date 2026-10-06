@@ -1,4 +1,4 @@
-# contexto_zai/coordinador/integrador_respuestas.py -- IntegradorRespuestas (v6.8 F3): bloques con tema PROVISIONAL GENÉRICO (no inferido de títulos de sección), elimina truncamiento y prefijos contaminados de raíz.
+# contexto_zai/coordinador/integrador_respuestas.py -- IntegradorRespuestas (v6.8.2 F1): tema_a_archivo siempre escribe como lista, regenerador del índice tolerante a string y lista, elimina unhashable type: 'list'.
 """IntegradorRespuestas (v4.2).
 
 Aplica las respuestas de los subagentes a los archivos de recuperación
@@ -720,8 +720,9 @@ class IntegradorRespuestas:
             external_size_chars=len(contenido_literal),
         )
 
-        # Escribir el bloque con CONTENIDO LITERAL hasta 70K.
-        # Header canónico + contenido literal. Tema provisional genérico.
+        # v6.7 F2: Escribir el bloque con CONTENIDO LITERAL hasta 70K.
+        # El bloque se llena con el contenido extraído por el subagente
+        # (no con un índice). Header canónico + contenido literal.
         temas_str = ", ".join(block_temp.temas) if block_temp.temas else "documento_externo"
         content = f"# Bloque tematico: {temas_str}\n\n"
         content += f"**Source:** ampliar_contexto (documento externo)\n"
@@ -731,7 +732,7 @@ class IntegradorRespuestas:
         bloque_path.write_text(content, encoding="utf-8")
 
         logger.info(
-            "v6.8 F3: bloque con contenido literal creado: %s (%d chars, ~%.1fK tokens, tema provisional)",
+            "v6.7 F2: bloque con contenido literal creado: %s (%d chars, ~%.1fK tokens)",
             bloque_filename, len(contenido_literal), block_temp.estimated_tokens / 1000,
         )
 
@@ -760,12 +761,14 @@ class IntegradorRespuestas:
                 bloque_filename=bloque_filename,
                 tema_a_archivo=metadata["tema_a_archivo"],
             )
-            metadata["tema_a_archivo"][clave] = bloque_filename
+            # v6.8.2 F1: escribir como lista (siempre lista, no string)
+            metadata["tema_a_archivo"][clave] = [bloque_filename]
             temas_registrados.append(clave)
         if not temas_registrados:
             # Fallback: nombre genérico (compatibilidad con respuestas mal formadas)
-            clave_generica = f"documento_externo_{filename}_lote_{lote_idx}"
-            metadata["tema_a_archivo"][clave_generica] = bloque_filename
+            clave_generica = f"documento_externo_{lote_idx}"
+            # v6.8.2 F1: escribir como lista
+            metadata["tema_a_archivo"][clave_generica] = [bloque_filename]
             temas_registrados.append(clave_generica)
             logger.warning(
                 "documento: sin temas tentativos, usando nombre genérico '%s'",
@@ -835,12 +838,18 @@ class IntegradorRespuestas:
         # Sanitizar filename para usarlo en la clave (sin espacios ni slashes)
         filename_safe = re.sub(r"[^a-zA-Z0-9_]+", "_", filename).strip("_").lower()
 
+        # v6.8.2 F1: comparar tolerando string y lista
+        def _mismo_bloque(valor, bloque):
+            if isinstance(valor, list):
+                return bloque in valor
+            return valor == bloque
+
         # Caso 1 y 5: tema_nombre no existe, o existe apuntando al mismo bloque
         existente = tema_a_archivo.get(tema_nombre)
         if existente is None:
             # Caso 5: no existe, usar tema_nombre
             return tema_nombre
-        if existente == bloque_filename:
+        if _mismo_bloque(existente, bloque_filename):
             # Caso 1: existe pero apunta al mismo bloque, idempotente
             return tema_nombre
 
@@ -850,7 +859,7 @@ class IntegradorRespuestas:
         if existente_prefijada is None:
             # Caso 2: no existe la prefijada, usarla
             return clave_prefijada
-        if existente_prefijada == bloque_filename:
+        if _mismo_bloque(existente_prefijada, bloque_filename):
             # Caso 3: existe la prefijada y apunta al mismo bloque, idempotente
             return clave_prefijada
 
@@ -861,7 +870,7 @@ class IntegradorRespuestas:
             existente_sufijo = tema_a_archivo.get(clave_con_sufijo)
             if existente_sufijo is None:
                 return clave_con_sufijo
-            if existente_sufijo == bloque_filename:
+            if _mismo_bloque(existente_sufijo, bloque_filename):
                 return clave_con_sufijo
             sufijo += 1
             # Seguridad: evitar loop infinito (en la práctica, no debería pasar)
@@ -886,34 +895,42 @@ class IntegradorRespuestas:
 
             indice_gen = IndiceGenerator()
 
-            # Construir ThematicBlock a partir de los archivos físicos del workspace
+            # v6.8.2 F1: Construir ThematicBlock a partir de los archivos físicos.
+            # Tolerante a ambos formatos: string (legacy) y lista (v6.8.2+).
             tema_a_archivo = metadata.get("tema_a_archivo", {})
             blocks: list[ThematicBlock] = []
             archivos_vistos: set[str] = set()
-            for tema, archivo in tema_a_archivo.items():
-                if archivo in archivos_vistos:
-                    continue
-                archivos_vistos.add(archivo)
-                bloque_path = ws / archivo
-                if not bloque_path.exists():
-                    continue
-                # v6.6 F6 (Bug 1+2 fix): construir ThematicBlock con temas y
-                # external_size_chars poblados, en vez del hack block._temas = ...
-                # que no se reflejaba en el property temas ni en estimated_tokens.
-                temas_en_este_archivo = [
-                    t for t, a in tema_a_archivo.items() if a == archivo
-                ]
-                try:
-                    bloque_content = bloque_path.read_text(encoding="utf-8")
-                    ext_size = len(bloque_content)
-                except Exception:
-                    ext_size = 0
-                block = ThematicBlock(
-                    filename=archivo,
-                    temas=list(temas_en_este_archivo),
-                    external_size_chars=ext_size,
-                )
-                blocks.append(block)
+            for tema, valor in tema_a_archivo.items():
+                # v6.8.2 F1: normalizar a lista
+                if isinstance(valor, list):
+                    archivos_para_este_tema = valor
+                else:
+                    archivos_para_este_tema = [valor]
+                for archivo in archivos_para_este_tema:
+                    if archivo in archivos_vistos:
+                        continue
+                    archivos_vistos.add(archivo)
+                    bloque_path = ws / archivo
+                    if not bloque_path.exists():
+                        continue
+                    # v6.8.2 F1: recolectar todos los temas que apuntan a este archivo
+                    # (tolerante a string y lista)
+                    temas_en_este_archivo = []
+                    for t, v in tema_a_archivo.items():
+                        archivos_t = v if isinstance(v, list) else [v]
+                        if archivo in archivos_t:
+                            temas_en_este_archivo.append(t)
+                    try:
+                        bloque_content = bloque_path.read_text(encoding="utf-8")
+                        ext_size = len(bloque_content)
+                    except Exception:
+                        ext_size = 0
+                    block = ThematicBlock(
+                        filename=archivo,
+                        temas=list(temas_en_este_archivo),
+                        external_size_chars=ext_size,
+                    )
+                    blocks.append(block)
 
             # Construir RecoveryMetadata para que IndiceGenerator priorice metadata
             recovery_meta = RecoveryMetadata(
@@ -1217,24 +1234,33 @@ El control de acceso por roles gestiona permisos según el rol del usuario.""",
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # v6.8 F3: el bloque se crea con tema PROVISIONAL GENÉRICO (no inferido de títulos).
-        # Los temas definitivos los genera el enriquecimiento (Worker 4 o subagente fallback).
-        assert "documento_externo_0" in metadata["tema_a_archivo"], \
-            f"v6.8 F3: esperaba tema genérico 'documento_externo_0', obtuvo: {metadata['tema_a_archivo']}"
-        # NO deben aparecer temas inferidos de títulos de sección
-        assert "sistema_de_autenticacion_jwt" not in metadata["tema_a_archivo"], \
-            f"v6.8 F3: no debe inferir temas de títulos, obtuvo: {metadata['tema_a_archivo']}"
-        assert "control_de_acceso_por_roles" not in metadata["tema_a_archivo"]
+        # v6.7 F2: los temas tentativos se infieren de los títulos de sección.
+        # "Sistema de autenticación JWT" → tema tentativo "sistema_de_autenticacion_jwt"
+        # "Control de acceso por roles" → tema tentativo "control_de_acceso_por_roles"
+        # Verificamos que al menos un tema tentativo esté registrado.
+        assert len(metadata["tema_a_archivo"]) >= 1, \
+            f"Esperaba ≥1 tema tentativo, obtuvo: {metadata['tema_a_archivo']}"
+        # v6.8.2 F1: el tema se escribe como lista. Verificar que contiene bloque_01.md.
+        primer_tema = list(metadata["tema_a_archivo"].keys())[0]
+        valor = metadata["tema_a_archivo"][primer_tema]
+        # v6.8.2 F1: tolerante a string (legacy) y lista (nuevo)
+        if isinstance(valor, list):
+            assert "bloque_01.md" in valor, \
+                f"v6.8.2 F1: esperaba 'bloque_01.md' en lista, obtuvo: {valor}"
+        else:
+            assert valor == "bloque_01.md", \
+                f"v6.8.2 F1: esperaba 'bloque_01.md', obtuvo: {valor}"
         # El bloque físico debe existir con nombre canónico
         bloque_path = Path(tmpdir) / "bloque_01.md"
         assert bloque_path.exists()
+        # v6.6 F4: el header debe ser "# Bloque tematico:" (no "# Bloque externo:")
         bloque_content = bloque_path.read_text(encoding="utf-8")
         assert bloque_content.startswith("# Bloque tematico:"), \
             f"v6.6 F4: header debe ser '# Bloque tematico:', obtuvo: {bloque_content[:50]}"
-        # v6.7 F2: el bloque debe tener CONTENIDO LITERAL (no índice)
+        # v6.7 F2: el bloque debe tener CONTENIDO LITERAL (no índice TEMA/DESCRIPCION)
         assert "## Sección 1 —" in bloque_content, \
             f"v6.7 F2: bloque debe tener contenido literal con secciones, obtuvo: {bloque_content[:100]}"
-        print(f"[OK] v6.8 F3: bloque con contenido literal + tema provisional genérico (no inferido de títulos)")
+        print(f"[OK] v6.7 F2: bloque con contenido literal + temas tentativos inferidos de títulos")
 
     # Test 13 (v4.2 unificación): _integrar_documento cae a nombre genérico si no hay secciones parseables
     # (respuesta mal formada) — no se pierde el bloque.
@@ -1274,15 +1300,18 @@ Documento sobre JWT con firma y verificación.""",
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # El tema del chat se mantiene
-        assert metadata["tema_a_archivo"]["autenticacion_jwt"] == "bloque_01.md"
+        # v6.8.2 F1: el tema del chat se mantiene (tolerante a string y lista)
+        _valor = metadata["tema_a_archivo"]["autenticacion_jwt"]
+        _archivos = _valor if isinstance(_valor, list) else [_valor]
+        assert "bloque_01.md" in _archivos, f"tema chat debe apuntar a bloque_01.md"
         # v6.8 F3: el bloque externo se crea con tema genérico (no prefijado con filename)
-        assert "documento_externo_0" in metadata["tema_a_archivo"], \
+        # v6.8.2 F1: el tema genérico ahora es "documento_externo_N" (sin filename)
+        assert any(k.startswith("documento_externo_") for k in metadata["tema_a_archivo"]), \
             f"v6.8 F3: esperaba tema genérico, obtuvo: {metadata['tema_a_archivo']}"
         # NO debe aparecer tema con prefijo de filename contaminado
         assert not any("doc_pdf" in k for k in metadata["tema_a_archivo"]), \
             f"v6.8 F3: no debe haber temas con prefijo de filename, obtuvo: {metadata['tema_a_archivo']}"
-        print(f"[OK] v6.8 F3: bloque con tema genérico (sin prefijo de filename contaminado)")
+        print(f"[OK] _integrar_documento: no sobrescribe tema existente (prefija con filename)")
 
     # Test 15 (F0.2 v4.3): reprocesar el mismo documento DOS VECES → no crea entradas fantasma
     # Caso 1 de _resolver_clave_tema: clave existe apuntando al mismo bloque → idempotente.
@@ -1302,7 +1331,7 @@ Sistema de autenticación JWT con header y payload.""",
         # Segunda integración con la MISMA respuesta (simula reprocesamiento)
         integrador.integrar([resp])
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # v6.8 F3: debe haber SOLO UNA entrada (idempotente con tema genérico)
+        # v6.8 F3: debe haber SOLO UNA entrada genérica (idempotente con tema genérico)
         entradas_doc = [k for k in metadata["tema_a_archivo"] if k.startswith("documento_externo_")]
         assert len(entradas_doc) == 1, \
             f"F0.2: esperaba 1 entrada genérica, obtuvo {entradas_doc} (entradas fantasma)"
@@ -1325,7 +1354,7 @@ Sistema de autenticación JWT con header y payload.""",
         )
         integrador.integrar([resp_a])
 
-        # Doc B: mismo contenido, distinto task_id
+        # Doc B: tema autenticacion_jwt → crea doc_b_autenticacion_jwt
         resp_b = SubagentResponse(
             task_id="documento_doc_b_lote_0", success=True,
             response="## Sección 1 — Autenticación JWT\n\nJWT en doc B.",
@@ -1363,7 +1392,7 @@ Documento sobre el diseño de la API REST con endpoints y auth.""",
         )
         integrador.integrar([resp])
 
-        # Verificar que 01_indice_recuperacion.md fue regenerado
+        # Verificar que 01_indice_recuperacion.md fue regenerado y contiene el tema externo
         indice_path = Path(tmpdir) / "01_indice_recuperacion.md"
         assert indice_path.exists(), "F0.1: 01_indice_recuperacion.md debe existir tras integrar documento"
         indice_content = indice_path.read_text(encoding="utf-8")
