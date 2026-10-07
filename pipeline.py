@@ -697,24 +697,22 @@ def collect_responses(
     # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
     # bloques del chat que hayan quedado sin RESUMEN.
     # Si el Worker Bun falla o hace timeout, el fallback genera pending_tasks
-    # para que el agente las ejecute con subagentes (diseño v6.2).
-    try:
-        bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
-        if bloques_sin_resumen:
-            _enriquecer_bloques_con_fallback(
-                blocks=bloques_sin_resumen,
-                workspace_dir=workspace_dir,
-                chat_label="collect_responses",
-            )
-            # Si el enriquecimiento generó pending_tasks (fallback a subagentes),
-            # añadirlas al resultado para que el agente las ejecute.
-            from contexto_zai.coordinador import Orquestador as _Orq
-            orch2 = _Orq(workspace_dir=workspace_dir)
-            nuevas_tasks = orch2.leer_tareas_pendientes()
-            if nuevas_tasks:
-                resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
-    except Exception as e:
-        logger.warning("v6.6 F3 Bug 7 fix: error en enriquecimiento tras collect_responses: %s", e)
+    # v6.8.3 fix: capturar el valor de retorno de _enriquecer_bloques_con_fallback
+    # que contiene las pending_tasks para subagentes de fallback.
+    # v6.8.2 perdió este fix de v6.8.1. Ahora se restaura.
+    bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+    if bloques_sin_resumen:
+        fallback_tasks = _enriquecer_bloques_con_fallback(
+            blocks=bloques_sin_resumen,
+            workspace_dir=workspace_dir,
+            chat_label="collect_responses",
+        )
+        # v6.8.3 fix: las pending_tasks vienen en el valor de retorno de la función,
+        # no en el Orquestador. Capturarlas directamente del retorno.
+        if fallback_tasks:
+            resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
+            logger.info("v6.8.3: %d pending_task(s) de enriquecimiento para subagentes",
+                       len(fallback_tasks))
 
     return resultado
 
@@ -1186,15 +1184,37 @@ def _arrancar_worker_y_esperar(
         puerto_en_uso = False
 
     if puerto_en_uso:
-        logger.info("v6.8.2 F2: puerto %d en uso — Worker Bun ya está corriendo, reutilizando",
+        logger.info("v6.8.3: puerto %d en uso — Worker Bun ya está corriendo",
                    WORKER_BUN_PORT)
-        # Hay un Worker Bun corriendo. Esperar a que procese los bloques del
-        # _pending_blocks.json y devolver True (asumimos que el worker existente
-        # procesará los bloques porque lee el _pending_blocks.json del workspace).
-        # Darle tiempo para que procese.
+        # Hay un Worker Bun corriendo. Esperar a que procese los bloques.
+        # v6.8.3 fix: NO asumir éxito. Esperar y luego VERIFICAR si los bloques
+        # realmente tienen RESUMEN. Si no lo tienen, devolver False para que
+        # el fallback genere pending_tasks.
         import time as _time
-        _time.sleep(min(timeout, 30))  # esperar hasta 30s o timeout
-        return True
+        _time.sleep(min(timeout, 30))
+        ws_path = Path(workspace_dir)
+        if ws_path.exists():
+            bloques_con_resumen = 0
+            bloques_verificados = 0
+            for p in ws_path.glob("bloque_*.md"):
+                try:
+                    content = p.read_text(encoding="utf-8")
+                    if len(content) > 100:
+                        bloques_verificados += 1
+                        if content.startswith("RESUMEN:"):
+                            bloques_con_resumen += 1
+                except Exception:
+                    pass
+            if bloques_con_resumen > 0:
+                logger.info("v6.8.3: Worker Bun procesó %d/%d bloque(s).",
+                           bloques_con_resumen, bloques_verificados)
+                return True
+            else:
+                logger.warning("v6.8.3: Worker Bun en puerto %d NO procesó ningún bloque. Activando fallback.",
+                              WORKER_BUN_PORT)
+                return False
+        logger.warning("v6.8.3: no se pudo verificar workspace. Activando fallback.")
+        return False
 
     env = {**_os.environ, "CZAI_WORKSPACE_DIR": str(workspace_dir)}
     try:
