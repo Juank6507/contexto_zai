@@ -1,4 +1,4 @@
-# contexto_zai/pipeline.py -- Entry point del proceso (v6.8.2): _arrancar_worker_y_esperar detecta puerto 8090 en uso, _normalizar_bloques_externos restaurada, enriquecimiento sin try/except silencioso, errores visibles.
+# contexto_zai/pipeline.py -- Entry point del proceso (v6.8.4): sin temas provisionales, índice regenerado tras enriquecimiento, _normalizar_bloques_externos elimina provisionales residuales, Worker Bun verificado, fallback_tasks capturadas.
 """Entry point del proceso Contexto Z.ai (v3.4).
 
 Reemplaza la CLI de v1.0. Expone funciones para activar la
@@ -714,6 +714,14 @@ def collect_responses(
             logger.info("v6.8.3: %d pending_task(s) de enriquecimiento para subagentes",
                        len(fallback_tasks))
 
+        # v6.8.4 F2: regenerar el índice después del enriquecimiento.
+        # El enriquecimiento pudo haber generado temas reales en el metadata
+        # (si el Worker Bun procesó los bloques). El índice debe reflejarlos.
+        # Si el enriquecimiento generó pending_tasks (fallback), el agente
+        # ejecutará los subagentes después y el índice se regenerará en la
+        # próxima llamada a collect_responses().
+        _regenerar_indice_tras_enriquecimiento(workspace_dir)
+
     return resultado
 
 
@@ -1288,6 +1296,35 @@ INSTRUCCIONES DE ESCRITURA (después de generar el resumen):
     )
 
 
+def _regenerar_indice_tras_enriquecimiento(workspace_dir: Path | str) -> None:
+    """v6.8.4 F2: Regenera el índice después del enriquecimiento.
+
+    Lee el metadata actualizado (que ahora puede tener temas reales generados
+    por el enriquecimiento) y regenera 01_indice_recuperacion.md.
+    También invoca _normalizar_bloques_externos para limpiar provisionales
+    residuales.
+    """
+    ws = Path(workspace_dir)
+    if not ws.exists():
+        return
+    meta_path = ws / "_metadata.json"
+    if not meta_path.exists():
+        return
+    try:
+        import json as _json
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+        # v6.8.4 F3: limpiar provisionales residuales antes de regenerar
+        _normalizar_bloques_externos(workspace_dir=workspace_dir)
+        # Releer metadata después de normalizar
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+        # Regenerar el índice con el integrador
+        from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas
+        IntegradorRespuestas._regenerar_indice_recuperacion(ws, meta)
+        logger.info("v6.8.4 F2: índice regenerado tras enriquecimiento")
+    except Exception as e:
+        logger.warning("v6.8.4 F2: no se pudo regenerar índice tras enriquecimiento: %s", e)
+
+
 def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
     """v6.6 F3 (Bug 7 fix): Descubre los bloques del workspace que NO tienen RESUMEN al inicio.
 
@@ -1619,6 +1656,75 @@ def _consolidar_decisiones_llm(workspace_dir: Path | str) -> int:
     decisiones_path.write_text(content, encoding="utf-8")
     logger.info("v6.4 F1: %d decisiones del LLM consolidadas en 02_decisiones_clave.md", len(all_decisions))
     return len(all_decisions)
+
+
+def _normalizar_bloques_externos(workspace_dir: Path | str) -> int:
+    """v6.8.4 F3: Normaliza tema_a_archivo eliminando provisionales residuales.
+
+    Busca temas que empiecen con 'documento_externo_' o 'grande_ampliar_'
+    y los elimina si el bloque al que apuntan ya tiene otros temas
+    enriquecidos en tema_a_archivo.
+
+    Args:
+        workspace_dir: Directorio del workspace.
+
+    Returns:
+        Número de temas provisionales eliminados.
+    """
+    import json as _json
+    ws = Path(workspace_dir)
+    if not ws.exists():
+        return 0
+
+    meta_path = ws / "_metadata.json"
+    if not meta_path.exists():
+        return 0
+
+    try:
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+    except (_json.JSONDecodeError, ValueError) as e:
+        logger.error("v6.8.4 F3: no se pudo leer _metadata.json: %s", e)
+        return 0
+
+    tema_a_archivo = meta.get("tema_a_archivo", {})
+    if not tema_a_archivo:
+        return 0
+
+    # v6.8.4 F3: identificar bloques que ya tienen temas enriquecidos
+    bloques_con_enriquecidos: set = set()
+    for tema, valor in tema_a_archivo.items():
+        if tema.startswith("documento_externo_") or tema.startswith("grande_ampliar_"):
+            continue  # es provisional
+        archivos = valor if isinstance(valor, list) else [valor]
+        for a in archivos:
+            bloques_con_enriquecidos.add(a)
+
+    # Elimar provisionales cuyo bloque ya tiene temas enriquecidos
+    eliminados = 0
+    for tema in list(tema_a_archivo.keys()):
+        es_provisional = (
+            tema.startswith("documento_externo_") or
+            tema.startswith("grande_ampliar_") or
+            tema.startswith("ampliar_") or
+            tema.startswith("grande_")
+        )
+        if not es_provisional:
+            continue
+        valor = tema_a_archivo[tema]
+        archivos = valor if isinstance(valor, list) else [valor]
+        for a in archivos:
+            if a in bloques_con_enriquecidos:
+                del tema_a_archivo[tema]
+                eliminados += 1
+                logger.info("v6.8.4 F3: eliminado tema provisional '%s' (bloque %s ya tiene temas reales)", tema, a)
+                break
+
+    if eliminados > 0:
+        meta["tema_a_archivo"] = tema_a_archivo
+        meta_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        logger.info("v6.8.4 F3: %d tema(s) provisional(es) eliminado(s)", eliminados)
+
+    return eliminados
 
 
 if __name__ == "__main__":
