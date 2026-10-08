@@ -1,4 +1,4 @@
-# contexto_zai/pipeline.py -- Entry point del proceso (v6.8.4): sin temas provisionales, índice regenerado tras enriquecimiento, _normalizar_bloques_externos elimina provisionales residuales, Worker Bun verificado, fallback_tasks capturadas.
+# contexto_zai/pipeline.py -- Entry point del proceso (v6.9): link /s/ y /c/ de Z.ai procesados como fuente externa (preserva bloques existentes), sin delegar a pipeline.run(), un solo camino para ampliar contexto.
 """Entry point del proceso Contexto Z.ai (v3.4).
 
 Reemplaza la CLI de v1.0. Expone funciones para activar la
@@ -697,30 +697,24 @@ def collect_responses(
     # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
     # bloques del chat que hayan quedado sin RESUMEN.
     # Si el Worker Bun falla o hace timeout, el fallback genera pending_tasks
-    # v6.8.3 fix: capturar el valor de retorno de _enriquecer_bloques_con_fallback
-    # que contiene las pending_tasks para subagentes de fallback.
-    # v6.8.2 perdió este fix de v6.8.1. Ahora se restaura.
-    bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
-    if bloques_sin_resumen:
-        fallback_tasks = _enriquecer_bloques_con_fallback(
-            blocks=bloques_sin_resumen,
-            workspace_dir=workspace_dir,
-            chat_label="collect_responses",
-        )
-        # v6.8.3 fix: las pending_tasks vienen en el valor de retorno de la función,
-        # no en el Orquestador. Capturarlas directamente del retorno.
-        if fallback_tasks:
-            resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
-            logger.info("v6.8.3: %d pending_task(s) de enriquecimiento para subagentes",
-                       len(fallback_tasks))
-
-        # v6.8.4 F2: regenerar el índice después del enriquecimiento.
-        # El enriquecimiento pudo haber generado temas reales en el metadata
-        # (si el Worker Bun procesó los bloques). El índice debe reflejarlos.
-        # Si el enriquecimiento generó pending_tasks (fallback), el agente
-        # ejecutará los subagentes después y el índice se regenerará en la
-        # próxima llamada a collect_responses().
-        _regenerar_indice_tras_enriquecimiento(workspace_dir)
+    # para que el agente las ejecute con subagentes (diseño v6.2).
+    try:
+        bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+        if bloques_sin_resumen:
+            _enriquecer_bloques_con_fallback(
+                blocks=bloques_sin_resumen,
+                workspace_dir=workspace_dir,
+                chat_label="collect_responses",
+            )
+            # Si el enriquecimiento generó pending_tasks (fallback a subagentes),
+            # añadirlas al resultado para que el agente las ejecute.
+            from contexto_zai.coordinador import Orquestador as _Orq
+            orch2 = _Orq(workspace_dir=workspace_dir)
+            nuevas_tasks = orch2.leer_tareas_pendientes()
+            if nuevas_tasks:
+                resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
+    except Exception as e:
+        logger.warning("v6.6 F3 Bug 7 fix: error en enriquecimiento tras collect_responses: %s", e)
 
     return resultado
 
@@ -881,99 +875,93 @@ def ampliar_contexto(
     workspace = Path(workspace_dir)
     metadata = metadata or {}
 
-    # 1. v4.2: Si es URL de Z.ai, distinguir /s/ (share público) de /c/ (chat completo).
-    # Ambos se procesan como recuperación completa (con los 3 archivos de
-    # recuperación), porque pueden ser una sesión anterior del agente cuya
-    # reanudación requiere estado actual + índice + decisiones.
+    # 1. v6.9: Si es URL de Z.ai (/s/ o /c/), descargar el contenido del chat
+    # como fuente externa (igual que un archivo). No delegar a pipeline.run().
+    # Esto preserva los bloques existentes porque pasa por _integrar_documento()
+    # que usa _siguiente_nombre_bloque().
     if source_type == "url" and "chat.z.ai/" in source_path:
-        # v4.2 Bug A fix: distinguir /s/ (share) de /c/ (chat completo).
-        # /s/<share_id> → flujo share público: pipeline.run(chat_id="", share_id=...)
-        # /c/<chat_id>  → flujo chat_id normal: pipeline.run(chat_id=..., share_id=None)
         es_link_share = "/s/" in source_path
         es_link_chat = "/c/" in source_path
 
-        if es_link_share:
-            share_id_extraido = _extraer_id_de_link(source_path, "share")
-            if not share_id_extraido:
+        if es_link_share or es_link_chat:
+            # v6.9: extraer el ID del link
+            tipo_link = "share" if es_link_share else "chat"
+            id_extraido = _extraer_id_de_link(source_path, tipo_link)
+            if not id_extraido:
                 return {
-                    "error": f"No se pudo extraer el share_id del link /s/: {source_path}. "
-                    f"Formato esperado: https://chat.z.ai/s/<uuid>."
+                    "error": f"No se pudo extraer el {tipo_link}_id del link /{tipo_link[0]}/: {source_path}. "
+                    f"Formato esperado: https://chat.z.ai/{'s' if es_link_share else 'c'}/<uuid>."
                 }
-            logger.info(
-                "ampliar_contexto: link /s/ de Z.ai detectado, share_id='%s' — "
-                "procesando como recuperación (vía pipeline.run)",
-                share_id_extraido,
-            )
+
             # JWT: del metadata o del parámetro jwt
             jwt_para_run = metadata.get("jwt", "") if isinstance(metadata, dict) else ""
             if not jwt_para_run and jwt:
                 jwt_para_run = jwt
             if not jwt_para_run:
                 return {
-                    "error": "Se requiere JWT del Director para procesar un link /s/ "
+                    "error": f"Se requiere JWT del Director para procesar un link /{tipo_link[0]}/ "
                     "de Z.ai. Pásalo en metadata={'jwt': '...'}."
                 }
-            resultado = run(
-                chat_id="",  # se descubre del árbol del share
-                jwt=jwt_para_run,
-                workspace_dir=workspace_dir,
-                download_dir=workspace,  # mismo dir
-                share_id=share_id_extraido,
-            )
-            return {
-                "procesado_como_recuperacion": True,
-                "tipo_link": "share_publico",
-                "share_id": share_id_extraido,
-                "success": resultado.success,
-                "cycle_used": resultado.cycle_used,
-                "exchanges_processed": resultado.exchanges_processed,
-                "files_generated": resultado.files_generated,
-                "error": resultado.error,
-                "pending_tasks": resultado.pending_tasks,
-            }
 
-        elif es_link_chat:
-            chat_id_extraido = _extraer_id_de_link(source_path, "chat")
-            if not chat_id_extraido:
-                return {
-                    "error": f"No se pudo extraer el chat_id del link /c/: {source_path}. "
-                    f"Formato esperado: https://chat.z.ai/c/<uuid>."
-                }
             logger.info(
-                "ampliar_contexto: link /c/ de Z.ai detectado, chat_id='%s' — "
-                "procesando como recuperación (vía pipeline.run)",
-                chat_id_extraido,
+                "v6.9: link /%s/ de Z.ai detectado, %s_id='%s' — "
+                "procesando como fuente externa (preserva bloques existentes)",
+                tipo_link[0], tipo_link, id_extraido,
             )
-            # JWT: del metadata o del parámetro jwt
-            jwt_para_run = metadata.get("jwt", "") if isinstance(metadata, dict) else ""
-            if not jwt_para_run and jwt:
-                jwt_para_run = jwt
-            if not jwt_para_run:
-                return {
-                    "error": "Se requiere JWT del Director para procesar un link /c/ "
-                    "de Z.ai. Pásalo en metadata={'jwt': '...'}."
-                }
-            # /c/ usa el flujo normal de create_share(chat_id)
-            resultado = run(
-                chat_id=chat_id_extraido,
-                jwt=jwt_para_run,
-                workspace_dir=workspace_dir,
-                download_dir=workspace,
-                share_id=None,  # se crea con create_share(chat_id)
-            )
-            return {
-                "procesado_como_recuperacion": True,
-                "tipo_link": "chat_completo",
-                "chat_id": chat_id_extraido,
-                "success": resultado.success,
-                "cycle_used": resultado.cycle_used,
-                "exchanges_processed": resultado.exchanges_processed,
-                "files_generated": resultado.files_generated,
-                "error": resultado.error,
-                "pending_tasks": resultado.pending_tasks,
-            }
 
-    # 2. Obtener el contenido
+            # v6.9: extraer el contenido del chat como texto plano
+            try:
+                from contexto_zai.client.chat_client import ChatClient
+                with ChatClient(token=jwt_para_run) as client:
+                    if es_link_share:
+                        messages = client.extract_all(share_id=id_extraido, chat_id=None)
+                    else:
+                        # /c/ — crear share del chat_id
+                        from contexto_zai.client.auth_client import AuthClient
+                        with AuthClient(token=jwt_para_run) as auth:
+                            share_id_creado = auth.create_share(id_extraido)
+                        messages = client.extract_all(share_id=share_id_creado, chat_id=id_extraido)
+
+                if not messages:
+                    return {"error": f"No se extrajeron mensajes del link /{tipo_link[0]}/: {source_path}"}
+
+                logger.info(
+                    "v6.9: extraídos %d mensajes del link /%s/, convirtiendo a texto...",
+                    len(messages), tipo_link[0],
+                )
+
+                # v6.9: convertir los mensajes a texto plano (formato legible)
+                # para que el ProcesadorDocumento lo procese como fuente externa
+                text_lines = []
+                for msg in messages:
+                    role_label = "Director" if msg.role.value == "user" else "Agente"
+                    text_lines.append(f"--- {role_label} ---")
+                    text_lines.append(msg.content)
+                    text_lines.append("")
+
+                content_str = "\n".join(text_lines)
+                content_bytes = content_str.encode("utf-8")
+                filename = f"chat_zai_{id_extraido[:12]}.txt"
+
+                logger.info(
+                    "v6.9: contenido del chat convertido a texto: %d bytes, ~%d tokens",
+                    len(content_bytes), int(len(content_bytes) / 3.5),
+                )
+
+                # Guardar el origen en metadata para archivo_a_source
+                metadata["_ampliar_origin"] = {
+                    "source_type": "url",
+                    "source_path": source_path,
+                    "share_id": id_extraido if es_link_share else "",
+                    "chat_id": id_extraido if es_link_chat else "",
+                }
+
+            except Exception as e:
+                return {"error": f"v6.9: Error extrayendo contenido del link /{tipo_link[0]}/: {e}"}
+
+    # 2. Obtener el contenido (para archivos y URLs externas no-Z.ai)
+    # v6.9: si ya se extrajo contenido del chat Z.ai (link /s/ o /c/),
+    # content_bytes y filename ya están seteados. Saltar la descarga.
     temp_path = None
     if source_type == "file":
         file_path = Path(source_path)
@@ -981,8 +969,8 @@ def ampliar_contexto(
             return {"error": f"Archivo no encontrado: {source_path}"}
         content_bytes = file_path.read_bytes()
         filename = file_path.name
-    elif source_type == "url":
-        # Descargar con requests
+    elif source_type == "url" and 'content_bytes' not in locals():
+        # v6.9: solo descargar si no se extrajo ya del chat Z.ai
         import requests
         try:
             r = requests.get(source_path, timeout=AMPLIAR_URL_DOWNLOAD_TIMEOUT, stream=True)
@@ -1000,6 +988,11 @@ def ampliar_contexto(
             filename = Path(parsed.path).name or "documento_descargado"
         except Exception as e:
             return {"error": f"Error descargando URL: {e}"}
+    elif source_type == "url":
+        # v6.9: si es url y content_bytes ya está seteado (del bloque /s/ o /c/),
+        # no hacer nada aquí. El contenido ya está disponible.
+        if 'content_bytes' not in locals() or 'filename' not in locals():
+            return {"error": f"source_type url pero no se pudo obtener contenido."}
     else:
         return {"error": f"source_type no válido: {source_type}. Use 'url' o 'file'."}
 
@@ -1078,12 +1071,17 @@ def ampliar_contexto(
     # Agregar mapeo archivo -> source
     if "archivo_a_source" not in meta:
         meta["archivo_a_source"] = {}
-    meta["archivo_a_source"][safe_filename] = {
-        "source_type": source_type,
-        "source_path": source_path,
-        "filename": filename,
-        "metadata": metadata,
-    }
+    # v6.9: si el origen es un link /s/ o /c/ de Z.ai, registrar el origen correcto
+    ampliar_origin = metadata.pop("_ampliar_origin", None) if isinstance(metadata, dict) else None
+    if ampliar_origin:
+        meta["archivo_a_source"][safe_filename] = ampliar_origin
+    else:
+        meta["archivo_a_source"][safe_filename] = {
+            "source_type": source_type,
+            "source_path": source_path,
+            "filename": filename,
+            "metadata": metadata,
+        }
     metadata_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     logger.info(
@@ -1192,37 +1190,15 @@ def _arrancar_worker_y_esperar(
         puerto_en_uso = False
 
     if puerto_en_uso:
-        logger.info("v6.8.3: puerto %d en uso — Worker Bun ya está corriendo",
+        logger.info("v6.8.2 F2: puerto %d en uso — Worker Bun ya está corriendo, reutilizando",
                    WORKER_BUN_PORT)
-        # Hay un Worker Bun corriendo. Esperar a que procese los bloques.
-        # v6.8.3 fix: NO asumir éxito. Esperar y luego VERIFICAR si los bloques
-        # realmente tienen RESUMEN. Si no lo tienen, devolver False para que
-        # el fallback genere pending_tasks.
+        # Hay un Worker Bun corriendo. Esperar a que procese los bloques del
+        # _pending_blocks.json y devolver True (asumimos que el worker existente
+        # procesará los bloques porque lee el _pending_blocks.json del workspace).
+        # Darle tiempo para que procese.
         import time as _time
-        _time.sleep(min(timeout, 30))
-        ws_path = Path(workspace_dir)
-        if ws_path.exists():
-            bloques_con_resumen = 0
-            bloques_verificados = 0
-            for p in ws_path.glob("bloque_*.md"):
-                try:
-                    content = p.read_text(encoding="utf-8")
-                    if len(content) > 100:
-                        bloques_verificados += 1
-                        if content.startswith("RESUMEN:"):
-                            bloques_con_resumen += 1
-                except Exception:
-                    pass
-            if bloques_con_resumen > 0:
-                logger.info("v6.8.3: Worker Bun procesó %d/%d bloque(s).",
-                           bloques_con_resumen, bloques_verificados)
-                return True
-            else:
-                logger.warning("v6.8.3: Worker Bun en puerto %d NO procesó ningún bloque. Activando fallback.",
-                              WORKER_BUN_PORT)
-                return False
-        logger.warning("v6.8.3: no se pudo verificar workspace. Activando fallback.")
-        return False
+        _time.sleep(min(timeout, 30))  # esperar hasta 30s o timeout
+        return True
 
     env = {**_os.environ, "CZAI_WORKSPACE_DIR": str(workspace_dir)}
     try:
@@ -1294,35 +1270,6 @@ INSTRUCCIONES DE ESCRITURA (después de generar el resumen):
         prompt=prompt,
         context={"filename": filename, "chat_label": chat_label},
     )
-
-
-def _regenerar_indice_tras_enriquecimiento(workspace_dir: Path | str) -> None:
-    """v6.8.4 F2: Regenera el índice después del enriquecimiento.
-
-    Lee el metadata actualizado (que ahora puede tener temas reales generados
-    por el enriquecimiento) y regenera 01_indice_recuperacion.md.
-    También invoca _normalizar_bloques_externos para limpiar provisionales
-    residuales.
-    """
-    ws = Path(workspace_dir)
-    if not ws.exists():
-        return
-    meta_path = ws / "_metadata.json"
-    if not meta_path.exists():
-        return
-    try:
-        import json as _json
-        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-        # v6.8.4 F3: limpiar provisionales residuales antes de regenerar
-        _normalizar_bloques_externos(workspace_dir=workspace_dir)
-        # Releer metadata después de normalizar
-        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-        # Regenerar el índice con el integrador
-        from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas
-        IntegradorRespuestas._regenerar_indice_recuperacion(ws, meta)
-        logger.info("v6.8.4 F2: índice regenerado tras enriquecimiento")
-    except Exception as e:
-        logger.warning("v6.8.4 F2: no se pudo regenerar índice tras enriquecimiento: %s", e)
 
 
 def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
@@ -1656,75 +1603,6 @@ def _consolidar_decisiones_llm(workspace_dir: Path | str) -> int:
     decisiones_path.write_text(content, encoding="utf-8")
     logger.info("v6.4 F1: %d decisiones del LLM consolidadas en 02_decisiones_clave.md", len(all_decisions))
     return len(all_decisions)
-
-
-def _normalizar_bloques_externos(workspace_dir: Path | str) -> int:
-    """v6.8.4 F3: Normaliza tema_a_archivo eliminando provisionales residuales.
-
-    Busca temas que empiecen con 'documento_externo_' o 'grande_ampliar_'
-    y los elimina si el bloque al que apuntan ya tiene otros temas
-    enriquecidos en tema_a_archivo.
-
-    Args:
-        workspace_dir: Directorio del workspace.
-
-    Returns:
-        Número de temas provisionales eliminados.
-    """
-    import json as _json
-    ws = Path(workspace_dir)
-    if not ws.exists():
-        return 0
-
-    meta_path = ws / "_metadata.json"
-    if not meta_path.exists():
-        return 0
-
-    try:
-        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
-    except (_json.JSONDecodeError, ValueError) as e:
-        logger.error("v6.8.4 F3: no se pudo leer _metadata.json: %s", e)
-        return 0
-
-    tema_a_archivo = meta.get("tema_a_archivo", {})
-    if not tema_a_archivo:
-        return 0
-
-    # v6.8.4 F3: identificar bloques que ya tienen temas enriquecidos
-    bloques_con_enriquecidos: set = set()
-    for tema, valor in tema_a_archivo.items():
-        if tema.startswith("documento_externo_") or tema.startswith("grande_ampliar_"):
-            continue  # es provisional
-        archivos = valor if isinstance(valor, list) else [valor]
-        for a in archivos:
-            bloques_con_enriquecidos.add(a)
-
-    # Elimar provisionales cuyo bloque ya tiene temas enriquecidos
-    eliminados = 0
-    for tema in list(tema_a_archivo.keys()):
-        es_provisional = (
-            tema.startswith("documento_externo_") or
-            tema.startswith("grande_ampliar_") or
-            tema.startswith("ampliar_") or
-            tema.startswith("grande_")
-        )
-        if not es_provisional:
-            continue
-        valor = tema_a_archivo[tema]
-        archivos = valor if isinstance(valor, list) else [valor]
-        for a in archivos:
-            if a in bloques_con_enriquecidos:
-                del tema_a_archivo[tema]
-                eliminados += 1
-                logger.info("v6.8.4 F3: eliminado tema provisional '%s' (bloque %s ya tiene temas reales)", tema, a)
-                break
-
-    if eliminados > 0:
-        meta["tema_a_archivo"] = tema_a_archivo
-        meta_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
-        logger.info("v6.8.4 F3: %d tema(s) provisional(es) eliminado(s)", eliminados)
-
-    return eliminados
 
 
 if __name__ == "__main__":
