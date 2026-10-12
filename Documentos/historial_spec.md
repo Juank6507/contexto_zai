@@ -6161,22 +6161,1927 @@ INDICE_PRESERVAR_ANTERIORES = True
 
 --- fin de SPEC v6.3 ---
 
+
 <!-- ============================================================ -->
-<!-- Fin del documento de historial de specs -->
+<!-- Secciones añadidas en actualización v6.9 (2026-10-10)        -->
+<!-- Reconstruidas desde commits del repo + archivos individuales  -->
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.5 — Preservar bloques externos + estructura canónica + objetivo robusto
+
+**Versión:** 6.5
+**Fecha:** 2026-09-30
+**Estado:** Implementado.
+**Especifica continuación de:** spec v6.4.
+
+## 1. Propósito
+
+La v6.4 corrigió la calidad del contexto. Pero al probar el contexto del agente APA surgieron 4 problemas nuevos.
+
+## 2. Los 4 problemas
+
+| # | Problema | Causa |
+|---|---|---|
+| 1 | 9 bloques externos vaciados (35 bytes) | RecoveryCycle sobrescribe todos los archivos del workspace |
+| 2 | Bloques no homogéneos (formato y nombres distintos) | No hay estructura canónica ni normalización de nombres |
+| 3 | 03_objetivo_proyecto.md incompleto + typo | El proceso no sobrescribe si ya existe (aunque esté mal) |
+| 4 | Índice muestra ~? en tokens de bloques externos | IndiceGenerator no encuentra bloques externos |
+
+## 3. Soluciones
+
+### F1 — Preservar bloques externos en RecoveryCycle
+- `process/recovery_cycle.py`: `_write_files()` NO sobrescribe archivos `bloque_externo_*` preexistentes que no estén en la lista de `recovery_files`.
+
+### F2 — Estructura canónica de bloques
+- `pipeline.py`: `_normalizar_bloques_externos()` renombra `bloque_externo_grande_*` a `bloque_NN.md` con el siguiente número disponible, y actualiza `_metadata.json` y `_pending_blocks.json`.
+- `generation/bloque_generator.py`: ya genera formato canónico `# Bloque tematico: <tema>` (verificado).
+
+### F3 — 03_objetivo_proyecto.md se sobrescribe si incompleto
+- `generation/estado_generator.py`: `_asegurar_objetivo_proyecto()` sobrescribe si < 500 bytes o no contiene "## Quién eres".
+
+### F4 — IndiceGenerator incluye bloques externos en tokens
+- `generation/indice_generator.py`: `_find_tokens_for_tema()` busca en workspace si no encuentra en blocks.
+
+---
+
+**Fin de la spec v6.5.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.6 — Unificación OOP de los caminos de generación de contexto
+
+**Versión:** 6.6
+**Fecha:** 2026-10-01
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.5.
+
+## 1. Propósito
+
+La v6.5 preservó bloques externos y normalizó nombres, pero dejó sin resolver
+el problema de fondo: los dos caminos de generación de contexto (recuperar
+del chat y ampliar desde fuente externa) van por rutas paralelas que duplican
+lógica, divergen en estructura, y producen 9 bugs visibles. Esta spec los
+unifica bajo OOP respetando 4 principios del Director.
+
+## 2. Los 4 principios del Director
+
+1. **OOP para lo común.** Los procesos que recorren el mismo camino (recuperar
+   del chat, recuperar de otra sesión, ampliar desde fuente externa) deben
+   construirse con clases que compartan estructura común. Lo común se hereda,
+   lo divergente se especializa.
+
+2. **Estructura uniforme del contexto.** Sea cual sea el origen (chat actual,
+   otra sesión, fuente externa), el contexto resultante tiene la misma forma:
+   mismos archivos, mismos nombres, mismos headers, misma organización. Un
+   bloque se llama `bloque_NN.md` y empieza con `# Bloque tematico:` venga
+   de donde venga.
+
+3. **El estado siempre se genera desde el último intercambio — pero solo
+   cuando hay pérdida de contexto.** Cuando el agente pierde contexto
+   (recuperación del chat o de otra sesión), los 4 archivos de recuperación
+   se generan y el estado refleja el último intercambio. Cuando el agente
+   está trabajando bien y solo amplía contexto (fuente externa), **no se
+   generan los archivos de recuperación** — solo se añaden bloques + índice
+   (spec v4.4, línea 36). Esto es así porque la ampliación no es pérdida de
+   contexto, sino incorporación de información nueva.
+
+4. **Bloques secuenciales, índices abarcadores.** Los bloques se llenan en
+   orden cronológico en el momento en que se procesan (no se agrupan por
+   tema). Cuando entra un intercambio de un tema que ya existe en otro
+   bloque, **no se regeneran todos los bloques** — se hace reempaquetado
+   selectivo (solo temas afectados). El índice debe ser abarcador: cubrir
+   cada intercambio procesado sin huecos.
+
+## 3. Los 9 bugs heredados de v6.5
+
+Estos son los bugs conciliados con el Director en la conversación previa:
+
+| # | Bug | Detectado por APA | Confirmado |
+|---|---|---|---|
+| 1 | Resumen de bloques vacío para externos (`temas=[]` y `estimated_tokens=0`) | Sí | Correcto |
+| 2 | Tokens `~?` en tabla de mapeo para bloques externos | Sí | Correcto (glob busca en directorio equivocado) |
+| 3 | `00_estado_actual.md` no se genera tras `ampliar_contexto()` | Sí | **No es bug** — la spec v4.4 dice que ampliar NO genera archivos de recuperación |
+| 4 | `02_decisiones_clave.md` no se genera tras `ampliar_contexto()` | Sí | **No es bug** — mismo motivo que #3 |
+| 5 | `_grafos_cambios.json` referenciado en índice pero no existe | Sí | Correcto (enlace muerto) |
+| 6 | Sub-detección de scripts versionados | Sí | Parcial (solo busca sufijos) |
+| 7 | Bloques externos sin `RESUMEN:` al inicio | No detectado por APA | Confirmado |
+| 8 | Nombres de bloques externos no normalizados a `bloque_NN.md` | No detectado por APA | Confirmado (`_normalizar_bloques_externos()` solo se llama desde `pipeline.run()`) |
+| 9 | Header de bloques externos no canónico (`# Bloque externo:` vs `# Bloque tematico:`) | No detectado por APA | Confirmado |
+| 10 | Doble prefijo `ampliar_ampliar_` en archivos temporales | Nota menor | Correcto (cosmético) |
+| 11 | `IncrementalCycle` no invoca `EstadoGenerator` — el estado queda congelado tras la última recuperación completa | No detectado por APA | Confirmado (este SÍ es bug — el incremental es recuperación por pérdida de contexto) |
+
+**Nota sobre los bugs 3 y 4**: el agente APA los diagnosticó como bugs, pero
+la spec v4.4 línea 36 establece explícitamente que `ampliar_contexto()` NO
+genera los 4 archivos de recuperación. El agente APA no conocía esa spec.
+Por lo tanto, los bugs 3 y 4 se **descartan** del plan v6.6.
+
+## 4. Divergencias contra los principios (corregidas)
+
+Tras contrastar el código con el historial de versiones:
+
+### Principio 1 — OOP para lo común
+
+| # | Divergencia |
+|---|---|
+| 1.1 | No existe clase base común. `RecoveryCycle` e `IncrementalCycle` son clases separadas sin herencia ni interfaz común. |
+| 1.2 | `ampliar_contexto()` es una función suelta de ~270 líneas, no una clase. No comparte interfaz con los ciclos. |
+| 1.3 | Los post-procesamientos (`_enriquecer_bloques_post_run`, `_ejecutar_pending_tasks_obligatorias`, `_consolidar_decisiones_llm`, `_normalizar_bloques_externos`) son funciones privadas en `pipeline.py` que solo llama `pipeline.run()`. |
+| 1.4 | Hay dos integradores de índice duplicados: `IncrementalCycle._regenerar_indice()` e `IntegradorRespuestas._regenerar_indice_recuperacion()` hacen casi lo mismo. |
+| 1.5 | `ProcesadorDocumento` y `RecoveryCycle` son conceptualmente simétricos (toman fuente y producen bloques+archivos) pero no comparten interfaz. |
+
+### Principio 2 — Estructura uniforme del contexto
+
+| # | Divergencia |
+|---|---|
+| 2.1 | Los bloques externos usan nombres distintos (`bloque_externo_grande_ampliar_*.txt_lote_*.md`) vs `bloque_NN.md`. |
+| 2.2 | Los bloques externos usan header distinto (`# Bloque externo:` vs `# Bloque tematico:`). |
+| 2.3 | Los bloques externos se guardan en subcarpeta `bloques_externos/` vs raíz del workspace. |
+| 2.4 | Los bloques externos no pasan por `BloqueGenerator` (escritos a mano en `IntegradorRespuestas._integrar_documento()`). |
+| 2.5 | Los bloques externos no se enriquecen (sin `RESUMEN:` al inicio) porque `ampliar_contexto()` no invoca `_enriquecer_bloques_con_fallback()`. |
+| 2.6 | Dos caminos para generar contenido de bloque: `BloqueGenerator` (chat) vs escritura manual (externos). |
+
+### Principio 3 — Estado desde último intercambio (solo en pérdida de contexto)
+
+| # | Divergencia |
+|---|---|
+| 3.1 | `IncrementalCycle` no invoca `EstadoGenerator` — el estado queda congelado en el último `RecoveryCycle`. **Este SÍ es bug** porque el incremental es recuperación por pérdida de contexto. |
+| 3.2 | `ampliar_contexto()` no genera estado — **NO es bug**, está bien según spec v4.4. |
+
+### Principio 4 — Bloques secuenciales, índices abarcadores
+
+| # | Divergencia |
+|---|---|
+| 4.1 | ~~`BlockPacker` empaqueta por tema, no secuencialmente~~ **Descartado**: el `BlockPacker` SÍ es secuencial (con reempaquetado selectivo en incremental). Confirmado por spec v4.4 línea 242. |
+| 4.2 | `_find_tokens_for_tema()` roto: devuelve `~?` o `~0.0K` porque los `ThematicBlock` del índice llegan sin `estimated_tokens` y el fallback busca `bloque_externo_*` en la raíz cuando están en subcarpeta o normalizados a `bloque_NN.md`. |
+| 4.3 | El índice tiene secciones que no aplican a fuentes externas ("Scripts versionados" referencia `_grafos_cambios.json` inexistente; "Documentos indexados" es para adjuntos del chat). |
+| 4.4 | El índice prioriza metadata sobre bloques físicos, pero los bloques físicos pueden estar desactualizados (modo incremental no los escribe). |
+
+## 5. Soluciones
+
+### F1 — Clase base `ContextoGenerator` (Principio 1)
+
+**Archivos:** `generation/contexto_generator.py` (nuevo), `process/recovery_cycle.py`, `process/incremental_cycle.py`, `pipeline.py`.
+
+**Qué se hace:**
+
+1. Crear `generation/contexto_generator.py` con la clase base abstracta
+   `ContextoGenerator` que define el flujo común:
+
+   ```
+   class ContextoGenerator(ABC):
+       def generar(self) -> Resultado:
+           intercambios = self._extraer_intercambios()    # abstracto
+           bloques = self._empaquetar(intercambios)        # común
+           self._escribir_bloques(bloques)                # común
+           self._actualizar_metadata(bloques)              # común
+           self._actualizar_indice(bloques)                # común
+           self._post_procesar(bloques)                    # común (enriquecer, etc.)
+           if self._debe_generar_recuperacion():           # hook
+               self._generar_estado(bloques)               # solo recovery
+               self._generar_decisiones(bloques)           # solo recovery
+
+       @abstractmethod
+       def _extraer_intercambios(self) -> list[Exchange]: ...
+
+       def _debe_generar_recuperacion(self) -> bool:
+           return True  # default: sí genera (recovery)
+   ```
+
+2. `RecoveryCycle` y `IncrementalCycle` se refactorizan para usar
+   `ContextoGenerator` como base. Ambos sobrescriben `_extraer_intercambios()`
+   (el recovery extrae todo, el incremental solo los nuevos).
+
+3. `ampliar_contexto()` se refactoriza a una clase `AmpliarGenerator` que
+   hereda de `ContextoGenerator` y sobrescribe `_debe_generar_recuperacion()`
+   para devolver `False` (no genera estado ni decisiones).
+
+4. Los post-procesamientos (`_enriquecer_bloques_post_run`, etc.) se mueven
+   a métodos de `ContextoGenerator` para que ambos caminos los ejecuten.
+
+### F2 — Estructura uniforme de bloques (Principio 2)
+
+**Archivos:** `coordinador/integrador_respuestas.py`, `generation/bloque_generator.py`, `pipeline.py`.
+
+**Qué se hace:**
+
+1. `IntegradorRespuestas._integrar_documento()` deja de escribir bloques a
+   mano. Pasa por `BloqueGenerator.generate()` como los del chat.
+
+2. Los bloques externos se nombran `bloque_NN.md` desde el principio (no
+   `bloque_externo_grande_ampliar_*.txt_lote_*.md`). El número se asigna
+   al momento de escribir, no en un post-procesamiento.
+
+3. Los bloques externos se guardan en la raíz del workspace, no en
+   subcarpeta `bloques_externos/`.
+
+4. El header de los bloques externos pasa a ser `# Bloque tematico: <temas>`
+   (canónico), generado por `BloqueGenerator`.
+
+5. Los bloques externos pasan por `_enriquecer_bloques_con_fallback()` para
+   tener `RESUMEN:` al inicio.
+
+### F3 — Estado correcto en modo incremental (Principio 3, divergencia 3.1)
+
+**Archivos:** `process/incremental_cycle.py`.
+
+**Qué se hace:**
+
+1. `IncrementalCycle.run()` invoca `EstadoGenerator.generate(all_exchanges)`
+   tras el reempaquetado, y escribe `00_estado_actual.md` al disco.
+
+2. `IncrementalCycle.run()` invoca `DecisionesGenerator.generate(all_exchanges)`
+   y escribe `02_decisiones_clave.md`.
+
+3. `IncrementalCycle.run()` escribe los bloques físicos al disco (hoy los
+   genera en memoria y no los persiste).
+
+### F4 — Índice abarcador y correcto (Principio 4)
+
+**Archivos:** `generation/indice_generator.py`, `coordinador/integrador_respuestas.py`, `process/incremental_cycle.py`.
+
+**Qué se hace:**
+
+1. `_find_tokens_for_tema()` se arregla: el fallback busca `bloque_*.md` en
+   la raíz del workspace (no `bloque_externo_*` en subcarpeta), y estima
+   tokens del tamaño del archivo físico.
+
+2. Los `ThematicBlock` que se pasan al `IndiceGenerator` se construyen con
+   `temas` y `external_size_chars` (o equivalente) poblados, no con el hack
+   `block._temas = ...` que no funciona.
+
+3. Se elimina la sección "Scripts versionados (v3.3)" que referencia
+   `_grafos_cambios.json` (archivo que nunca se crea) — Bug 5.
+
+4. El detector de scripts versionados se amplía para detectar temas cuyos
+   bloques contienen código con extensión de archivo, no solo por sufijo
+   del nombre — Bug 6.
+
+5. Se elimina la sección "Documentos indexados (v3.5)" para fuentes externas
+   (no aplica).
+
+### F5 — Bugs residuales
+
+**Archivos:** `pipeline.py`, `coordinador/integrador_respuestas.py`.
+
+**Qué se hace:**
+
+1. **Bug 1**: Los `ThematicBlock` externos se construyen con `temas` y
+   `external_size_chars` poblados (o equivalente) para que `estimated_tokens`
+   no sea 0.
+
+2. **Bug 2**: Resuelto por F4.1.
+
+3. **Bug 7**: Resuelto por F2.5 (enriquecimiento de bloques externos).
+
+4. **Bug 8**: Resuelto por F2.2 (nombres canónicos desde el principio).
+
+5. **Bug 9**: Resuelto por F2.4 (header canónico vía `BloqueGenerator`).
+
+6. **Bug 10** (doble prefijo `ampliar_ampliar_`): se elimina el prefijo
+   duplicado en `ampliar_contexto()`.
+
+### F6 — Bug 11 (estado congelado en incremental)
+
+**Archivos:** `process/incremental_cycle.py`.
+
+**Qué se hace:**
+
+1. Tras el reempaquetado selectivo, `IncrementalCycle.run()` invoca
+   `EstadoGenerator` con los intercambios completos (no solo los nuevos)
+   para regenerar `00_estado_actual.md`.
+
+2. Esto es consistente con el Principio 3: cuando hay pérdida de contexto
+   (que es lo que dispara el incremental), el estado se genera desde el
+   último intercambio.
+
+## 6. Archivos intervenidos
+
+| Archivo | Cambios |
+|---|---|
+| `generation/contexto_generator.py` | NUEVO: clase base `ContextoGenerator`. |
+| `process/recovery_cycle.py` | Refactor: hereda de `ContextoGenerator`. |
+| `process/incremental_cycle.py` | Refactor: hereda de `ContextoGenerator` + invoca `EstadoGenerator` + escribe bloques físicos (F3, F6). |
+| `pipeline.py` | `ampliar_contexto()` refactoriza a `AmpliarGenerator` (clase, no función suelta) + elimina doble prefijo (F5.6). |
+| `coordinador/integrador_respuestas.py` | `_integrar_documento()` usa `BloqueGenerator` + nombra `bloque_NN.md` + guarda en raíz (F2). |
+| `generation/bloque_generator.py` | Sin cambios (ya genera formato canónico). |
+| `generation/indice_generator.py` | `_find_tokens_for_tema()` arreglado + elimina `_grafos_cambios.json` + detector de scripts ampliado + elimina "Documentos indexados" para externos (F4). |
+| `generation/estado_generator.py` | Sin cambios (ya existe y funciona). |
+| `generation/decisiones_generator.py` | Sin cambios. |
+| `models.py` | Posible: `ThematicBlock.external_size_chars` para bloques sin exchanges (Bug 1 fix). |
+
+## 7. Flujo unificado (diagrama)
+
+```
+ContextoGenerator.generar()
+│
+├─ _extraer_intercambios()        ← abstracto (cada subclase lo implementa)
+├─ _empaquetar(intercambios)      ← común (BlockPacker, secuencial + selectivo)
+├─ _escribir_bloques(bloques)     ← común (BloqueGenerator + disco)
+├─ _actualizar_metadata(bloques)  ← común
+├─ _actualizar_indice(bloques)   ← común (IndiceGenerator)
+├─ _post_procesar(bloques)       ← común (enriquecer, consolidar decisiones, normalizar)
+│
+└─ if _debe_generar_recuperacion():
+     ├─ _generar_estado(bloques)     ← solo RecoveryCycle / IncrementalCycle
+     └─ _generar_decisiones(bloques) ← solo RecoveryCycle / IncrementalCycle
+
+Subclases:
+- RecoveryCycleGenerator: _extraer = chat completo, _debe_generar = True
+- IncrementalCycleGenerator: _extraer = solo nuevos, _debe_generar = True
+- AmpliarGenerator: _extraer = fuente externa, _debe_generar = False
+```
+
+**Diferencia clave entre subclases:**
+- `RecoveryCycle` e `IncrementalCycle` generan los 4 archivos (pérdida de contexto).
+- `AmpliarGenerator` no genera estado ni decisiones (ampliación sin pérdida).
+
+---
+
+**Fin de la spec v6.6.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.7 — Bloques con contenido literal + clasificación y enriquecimiento correctos
+
+**Versión:** 6.7
+**Fecha:** 2026-10-04
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.6.
+
+## 1. Propósito
+
+La v6.6 unificó los caminos de generación de contexto y resolvió 8 de 9 bugs,
+pero dejó sin resolver un defecto de diseño más profundo que viene desde v3.5:
+los bloques generados desde fuentes externas contienen solo un índice temático
+(1-2 KB) en vez del contenido literal formateado hasta 70K tokens como prevé
+el diseño original. Esta spec corrige ese defecto y formaliza 4 principios
+conciliados con el Director.
+
+## 2. Los 4 principios del Director (conciliados en sesión 21)
+
+### Principio 1 — OOP para lo común
+Crear contexto, ampliar contexto y actualizar contexto usan el mismo código vía
+OOP. La clase base `ContextoGenerator` (creada en v6.6 F1) define el flujo
+común: extraer intercambios → empaquetar en bloques → escribir bloques →
+actualizar metadata → actualizar índice → enriquecer (RESUMEN + Workers 2-4).
+Las subclases solo especializan la extracción.
+
+### Principio 2 — Estructura uniforme del contexto
+Un bloque es un bloque, sin importar el origen (chat, otra sesión, fuente
+externa). Mismo nombre (`bloque_NN.md`), mismo header (`# Bloque tematico:`),
+misma estructura interna (intercambios con fecha y contenido literal), mismo
+enriquecimiento (RESUMEN al inicio + Workers 2-4 en `_responses/`).
+
+### Principio 3 — Los 4 archivos dependen de la cronología, no del origen
+Los archivos `00_estado_actual.md`, `01_indice_recuperacion.md`,
+`02_decisiones_clave.md` y `03_objetivo_proyecto.md` se generan cuando la
+información nueva permite identificar un "último intercambio" cronológico que
+sea el más reciente del contexto. No depende del origen (chat o externo),
+depende de si la información es cronológica y posterior al último timestamp
+conocido.
+
+| Caso | Origen | Cronológico | Más reciente | ¿Genera 4 archivos? |
+|---|---|---|---|---|
+| 1 | Chat (incremental) | Sí | Sí | SÍ |
+| 2 | Chat (recuperación completa) | Sí | Sí | SÍ |
+| 3 | Externo con timestamps, posterior | Sí | Sí | SÍ |
+| 4 | Externo con timestamps, anterior | Sí | No | NO |
+| 5 | Externo sin timestamps | No | No determinable | NO |
+
+### Principio 4 — Bloques secuenciales hasta 70K, índices abarcadores
+Los bloques se llenan hasta 70K tokens en orden cronológico. El `BlockPacker`
+ya hace reempaquetado selectivo correctamente (no se toca). El índice debe
+cubre cada intercambio procesado sin huecos.
+
+## 3. El defecto de diseño que viene desde v3.5
+
+### Lo que dice el diseño original (v3.2 + v6.0 cascada)
+
+El bloque se llena hasta 70K tokens con contenido **LITERAL** formateado en
+estructura legible. Después Worker 1 lee el bloque completo y genera un
+RESUMEN de 600-900 caracteres que se escribe al inicio del bloque como
+prefijo `RESUMEN:`. Workers 2-4 leen solo el RESUMEN y extraen nombre
+legible, decisiones y temas.
+
+### Lo que hace el código actual
+
+El `DocumentoIndexerSubagent` (desde v3.5) y el `ProcesadorDocumento` (desde
+v4.2) le piden al subagente que genere un **índice temático** (TEMA /
+DESCRIPCION / SECCIONES / RESUMEN breve), no que extraiga el contenido
+literal. El integrador escribe ese índice como si fuera el bloque.
+
+**Consecuencia visible:** los bloques del APA miden 1-2 KB (índice) en vez
+de 70K (contenido literal). El contenido completo del documento externo se
+pierde — solo queda el índice.
+
+### Causa raíz en el prompt del subagente
+
+El prompt actual (`ProcesadorDocumento._build_documento_prompt` y
+`_build_lote_prompt`) le pide al subagente:
+> "Identifica los temas principales... Para cada tema, indica nombre,
+> descripción, secciones... Genera un resumen breve (máximo 500 caracteres)."
+
+El prompt correcto debería pedirle:
+> "Lee las líneas X a Y del documento. Extrae el contenido literal y
+> formatealo en estructura markdown legible. No resumas. No generes índice."
+
+## 4. Estructura canónica del bloque (Principio 2)
+
+Todos los bloques, sin importar el origen, tienen esta estructura:
+
+```markdown
+RESUMEN: <resumen de 600-900 chars generado por Worker 1, 4 oraciones: tema
+central, decisiones, temas específicos, tipo de actividad>
+
+# Bloque tematico: <tema1>, <tema2>, <tema3>
+
+**Periodo:** YYYY-MM-DD → YYYY-MM-DD
+**Intercambios:** N (M del Director, K del agente)
+**Temas en este archivo:** 3 (<tema1>, <tema2>, <tema3>)
+**Tamano estimado:** ~XK tokens
+
+---
+
+## Exchange 1 — [YYYY-MM-DD HH:MM]
+
+### Director:
+{contenido del mensaje del Director, literal, sin editar}
+
+### Agente:
+{respuesta visible del agente, sin reasoning, código conservado íntegro}
+
+---
+
+## Exchange 2 — [YYYY-MM-DD HH:MM]
+
+### Director:
+...
+```
+
+Para fuentes externas sin timestamps, los "intercambios" son secciones del
+documento formateadas con el mismo patrón:
+
+```markdown
+## Sección 1 — <título de la sección del documento>
+
+{contenido literal de esa sección, formateado en markdown legible}
+
+---
+
+## Sección 2 — <título>
+
+...
+```
+
+## 5. El flujo correcto (Principio 1 — OOP)
+
+```
+ContextoGenerator.ejecutar()  [clase base]
+│
+├─ 1. _extraer_intercambios()       [abstracto — cada subclase lo implementa]
+│    ├─ RecoveryCycleGenerator: extrae todo el chat de Z.ai
+│    ├─ IncrementalCycleGenerator: extrae solo los nuevos desde ultimo_timestamp
+│    └─ AmpliarGenerator: extrae de fuente externa (URL o archivo)
+│
+├─ 2. _empaquetar(intercambios)     [común]
+│    └─ BlockPacker.pack_from_exchanges() — bloques secuenciales hasta 70K
+│
+├─ 3. _escribir_bloques(bloques)   [común]
+│    └─ BloqueGenerator.generate() — formato canónico # Bloque tematico:
+│
+├─ 4. _actualizar_metadata(bloques)  [común]
+│    └─ MetadataManager — tema_a_archivo, ultimo_timestamp, total_exchanges
+│
+├─ 5. _actualizar_indice(bloques)   [común]
+│    └─ IndiceGenerator.generate() — tabla tema → archivo con tokens reales
+│
+├─ 6. _post_procesar(bloques)       [común — cascada de workers]
+│    ├─ Worker 1 (RESUMEN): lee bloque completo (70K) → genera RESUMEN (600-900 chars)
+│    │   → escribe al inicio del bloque con prefijo "RESUMEN: "
+│    ├─ Worker 2 (nombre legible): lee RESUMEN → nombre legible → _responses/
+│    ├─ Worker 3 (decisiones): lee RESUMEN → decisiones con alcance → _responses/
+│    └─ Worker 4 (temas): lee RESUMEN → temas principales → _responses/
+│
+└─ 7. if _debe_generar_recuperacion():    [hook — Principio 3]
+     ├─ _generar_estado(bloques)         — solo si la info es cronológica y posterior
+     ├─ _generar_decisiones(bloques)     — solo si la info es cronológica y posterior
+     └─ _actualizar_indice_recuperacion()
+```
+
+### Hook `_debe_generar_recuperacion()` (Principio 3)
+
+```python
+def _debe_generar_recuperacion(self) -> bool:
+    """Los 4 archivos se generan si la info nueva es cronológica y la más reciente."""
+    if not self._intercambios_tienen_marca_cronologica():
+        return False  # caso 5 (fuente externa sin timestamps)
+    if not self._intercambios_son_posteriores_a_ultimo_timestamp():
+        return False  # caso 4 (info anterior al último conocido)
+    return True       # casos 1, 2, 3
+```
+
+## 6. Soluciones
+
+### F1 — Subagente extractor de contenido literal (reemplaza al indexador)
+
+**Archivos:** `subagents/documento_indexer_subagent.py` (refactor),
+`procesadores/procesador_documento.py` (refactor prompts).
+
+**Qué se hace:**
+1. Cambiar el rol del subagente: de "indexador que genera TEMA/DESCRIPCION/
+   RESUMEN" a "extractor que devuelve contenido literal formateado".
+2. El prompt del subagente (`_build_documento_prompt` y `_build_lote_prompt`)
+   pasa a pedir: "Lee las líneas X a Y del documento. Extrae el contenido
+   literal y formatealo en estructura markdown legible (secciones con título,
+   contenido íntegro). No resumas. No generes índice."
+3. El subagente devuelve el contenido formateado, no un índice temático.
+4. El `ProcesadorDocumento` cambia el tamaño de lote: de ~5K tokens (para
+   generar índice) a ~70K tokens (para llenar el bloque completo).
+
+### F2 — Integrador escribe bloque con contenido literal hasta 70K
+
+**Archivos:** `coordinador/integrador_respuestas.py`.
+
+**Qué se hace:**
+1. `_integrar_documento()` deja de escribir el índice como bloque. Pasa el
+   contenido literal extraído por el subagente al `BloqueGenerator` para que
+   lo formatee con el header canónico `# Bloque tematico:`.
+2. El bloque se llena hasta 70K tokens con el contenido literal, no con 1-2
+   KB de índice.
+3. La clasificación por temas se hace después (Worker 4), no durante la
+   extracción.
+
+### F3 — Hook `_debe_generar_recuperacion()` basado en cronología
+
+**Archivos:** `generation/contexto_generator.py`, `pipeline.py`.
+
+**Qué se hace:**
+1. Implementar el hook `_debe_generar_recuperacion()` en `ContextoGenerator`
+   con la lógica de los 5 casos del Principio 3.
+2. `_intercambios_tienen_marca_cronologica()`: verifica si los intercambios
+   nuevos tienen timestamps > 0.
+3. `_intercambios_son_posteriores_a_ultimo_timestamp()`: compara el timestamp
+   máximo de los nuevos contra `metadata.ultimo_timestamp`.
+4. `ampliar_contexto()` pasa a usar `AmpliarGenerator` que hereda de
+   `ContextoGenerator` y respeta este hook.
+5. Cuando el hook devuelve False, no se generan `00_estado_actual.md` ni
+   `02_decisiones_clave.md` — el estado y las decisiones siguen reflejando
+   el último intercambio cronológico verificado.
+
+### F4 — Worker 1 (RESUMEN) sobre el contenido literal
+
+**Archivos:** `pipeline.py`, `mini-services/worker-cascade/index.ts`.
+
+**Qué se hace:**
+1. Confirmar que Worker 1 (Worker Bun o fallback) lee el bloque físico
+   completo (70K con contenido literal) y genera el RESUMEN de 600-900 chars.
+2. El RESUMEN se escribe al inicio del bloque con prefijo `RESUMEN: `.
+3. El `PROMPT_RESUMEN_RIGIDO` ya existe en `config.py` y funciona — no se
+   cambia el prompt, solo se asegura que el bloque tenga contenido literal
+   para que el RESUMEN sea significativo.
+
+### F5 — Workers 2-4 sobre el RESUMEN
+
+**Archivos:** `mini-services/worker-cascade/index.ts`, `pipeline.py`.
+
+**Qué se hace:**
+1. Workers 2-4 (nombre legible, decisiones, temas) leen solo el RESUMEN
+   al inicio del bloque, no el bloque completo.
+2. El Integrador aplica sus respuestas en `_responses/` y actualiza
+   `02_decisiones_clave.md` e índice.
+3. La cascada ya está diseñada así en v6.0 — solo necesita que el bloque
+   tenga contenido literal para que el RESUMEN sea rico.
+
+### F6 — EstadoGenerator respeta cronología
+
+**Archivos:** `generation/estado_generator.py`.
+
+**Qué se hace:**
+1. Cuando se invoca desde `ContextoGenerator._generar_archivos_recuperacion()`,
+   el `EstadoGenerator` usa el último intercambio de la info nueva (no del
+   contexto existente).
+2. Si la info nueva no es cronológica (caso 5), no se invoca al
+   `EstadoGenerator` — el estado existente se preserva.
+
+## 7. Archivos intervenidos
+
+| Archivo | Cambio |
+|---|---|
+| `subagents/documento_indexer_subagent.py` | F1: rol cambia de indexador a extractor. |
+| `procesadores/procesador_documento.py` | F1: prompts piden contenido literal, no índice. Lote de 70K, no 5K. |
+| `coordinador/integrador_respuestas.py` | F2: escribe bloque con contenido literal vía BloqueGenerator. |
+| `generation/contexto_generator.py` | F3: hook `_debe_generar_recuperacion()` basado en cronología. |
+| `pipeline.py` | F3: `ampliar_contexto()` pasa a usar `AmpliarGenerator`. |
+| `generation/estado_generator.py` | F6: usa último intercambio de la info nueva si es cronológica. |
+| `mini-services/worker-cascade/index.ts` | F4+F5: confirmar que W1 lee bloque completo y W2-4 leen RESUMEN. |
+
+## 8. Validación esperada
+
+- Bloques externos miden ~70K (no 1-2 KB).
+- Bloques externos empiezan con `RESUMEN: <resumen>` (no con `# Bloque externo:`).
+- Bloques externos tienen contenido literal del documento, no índice.
+- Worker 1 genera RESUMEN significativo (no "resumen de un índice").
+- Workers 2-4 extraen nombre, decisiones, temas del RESUMEN.
+- `00_estado_actual.md` se genera solo cuando la info es cronológica y
+  posterior al último timestamp conocido.
+
+---
+
+**Fin de la spec v6.7.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.8 — Enriquecimiento confiable + clasificación jerárquica de temas
+
+**Versión:** 6.8
+**Fecha:** 2026-10-05
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.7.
+
+## 1. Propósito
+
+La v6.7 logró que los bloques contengan el contenido literal del documento, pero
+el enriquecimiento en cascada nunca se ejecuta en el entorno real. Además, los
+nombres de tema son un parche que produce 3 bugs detectados por el agente APA.
+Esta spec corrige ambos problemas con un cambio arquitectónico: la clasificación
+jerárquica de temas generada por el enriquecimiento.
+
+## 2. Los 4 problemas a resolver
+
+### Problema 1 — El enriquecimiento nunca arranca (import roto + error oculto)
+
+`generation/contexto_generator.py` importa 3 funciones desde `pipeline.py` en
+un solo bloque. Una de ellas (`_normalizar_bloques_externos`) no existe — se
+perdió en un reset. El `ImportError` tira todo el bloque, las otras dos
+funciones (que sí existen) nunca se llaman, y el `try/except Exception` oculta
+el error silenciosamente.
+
+**Consecuencia:** el post-procesamiento completo (enriquecer + consolidar
+decisiones + normalizar) nunca corre.
+
+### Problema 2 — El enriquecimiento en collect_responses() oculta errores
+
+`pipeline.py` invoca el enriquecimiento dentro de un `try/except Exception`
+que se traga cualquier error como `warning`. Si falla, el agente no se entera,
+no recibe `pending_tasks` para ejecutar subagentes de fallback, y los bloques
+quedan sin RESUMEN.
+
+**Consecuencia:** los bloques no tienen RESUMEN al inicio y `_responses/`
+está vacío.
+
+### Problema 3 — Temas provisionales generados de títulos de sección (parche)
+
+Como el enriquecimiento no corría, se añadió un parche que infiere temas de los
+títulos de sección del documento. Esto produce 3 bugs detectados por el APA:
+- Truncamiento a 50 chars en seco (nombres cortados a mitad de palabra).
+- Prefijos contaminados (`grande_ampliar_apa_03_txt_<tema>`).
+- Duplicados por prefijo (un tema es prefijo de otro y se ven como distintos).
+
+**Causa raíz:** los nombres de tema NO deberían generarse de los títulos de
+sección. Los genera el enriquecimiento después de leer el contenido del bloque.
+
+### Problema 4 — No hay estructura jerárquica de temas
+
+Hoy los temas son planos: una lista de strings en `tema_a_archivo`. Cuando hay
+colisión, se resuelve añadiendo prefijos largos. No hay concepto de
+tema → subtema → subtema más específico. No hay forma de organizar el contexto
+como una biblioteca clasifica libros.
+
+## 3. Los 4 principios rectores (ratificados + nuevos)
+
+### Principio 1 — OOP para lo común
+Crear, ampliar y actualizar contexto usan el mismo código vía `ContextoGenerator`.
+
+### Principio 2 — Estructura uniforme del contexto
+Un bloque es un bloque, sin importar el origen.
+
+### Principio 3 — Los 4 archivos dependen de la cronología
+Se generan cuando la información nueva permite identificar un "último
+intercambio" cronológico que sea el más reciente.
+
+### Principio 4 — Bloques secuenciales, índices abarcadores
+Los bloques se llenan hasta 70K. El índice cubre cada intercambio.
+
+### Principio 5 (NUEVO) — Los temas los genera el enriquecimiento
+Los nombres de tema NO se generan de los títulos de sección ni del nombre del
+archivo fuente. Los genera el enriquecimiento (Worker Bun o subagente de
+fallback) después de leer el contenido del bloque.
+
+### Principio 6 (NUEVO — CAMBIO ARQUITECTÓNICO) — Clasificación jerárquica
+Los temas se estructuran como una biblioteca: tema → subtema → subtema más
+específico. La subdivisión la determina el contenido del bloque a criterio del
+agente que enriquece, no el tamaño. Antes de crear un tema nuevo, el
+enriquecimiento revisa los existentes: si uno cubre el contenido, lo
+enriquece; si no, crea uno nuevo.
+
+Los temas se codifican jerárquicamente, no con prefijos largos. Un tema tiene
+un nombre corto y significativo. Un subtema indica su padre en la jerarquía.
+No se usan prefijos como `grande_ampliar_apa_03_txt_autenticacion_jwt`.
+
+### Principio 7 (NUEVO) — El enriquecimiento puede ser Worker Bun o subagente
+No siempre son Workers. Si el Worker Bun no está disponible o falla, el proceso
+genera `pending_tasks` y el agente lanza subagentes de fallback. Ambos caminos
+usan el mismo prompt y producen la misma estructura.
+
+### Principio 8 (NUEVO) — No se tapa ni enmascara nada
+Si algo falla, el error es visible. No hay `try/except` que se traga errores
+silenciosamente. El agente tiene que saber qué falló para poder corregirlo.
+
+## 4. Soluciones
+
+### F1 — Restaurar `_normalizar_bloques_externos` + separar imports + no ocultar errores
+
+**Archivos:** `pipeline.py`, `generation/contexto_generator.py`.
+
+**Qué se hace:**
+1. Definir `_normalizar_bloques_externos(workspace_dir)` en `pipeline.py`.
+   Esta función limpia nombres de tema en `_metadata.json`: normaliza la
+   estructura jerárquica, elimina prefijos contaminados que hayan quedado de
+   versiones anteriores, y aplica la codificación jerárquica.
+2. En `contexto_generator.py._post_procesar()`, importar cada función por
+   separado (no en un solo `import`). Si una falla, loguear ERROR y continuar
+   con las demás, pero no ocultar el error.
+3. Eliminar el `try/except Exception` que envuelve todo el post-procesamiento.
+   Si el enriquecimiento falla, el error sube.
+
+### F2 — Eliminar try/except silencioso en collect_responses()
+
+**Archivos:** `pipeline.py`.
+
+**Qué se hace:**
+1. En `collect_responses()`, eliminar el `try/except Exception` que se traga
+   errores del enriquecimiento. Si el enriquecimiento falla, el error se
+   propaga al resultado para que el agente sepa que falló.
+2. Si el Worker Bun falla, generar `pending_tasks` para subagentes de fallback
+   (eso ya está implementado, pero el try/except lo oculta).
+3. El agente recibe las `pending_tasks` y puede lanzar subagentes.
+
+### F3 — Eliminar temas provisionales de títulos de sección
+
+**Archivos:** `coordinador/integrador_respuestas.py`.
+
+**Qué se hace:**
+1. Eliminar el bloque de código que infiere temas tentativos de los títulos
+   de sección (`## Sección N — <título>`).
+2. El bloque se crea con un tema provisional genérico (`documento_externo_NN`).
+3. El enriquecimiento (F4) generará los temas definitivos.
+4. Esto elimina de raíz los 3 bugs del APA: truncamiento, prefijos
+   contaminados, y duplicados por prefijo. Ya no se generan temas de los
+   títulos de sección, así que no hay nada que truncar ni contaminar.
+
+### F4 — Enriquecimiento genera temas jerárquicos (CAMBIO ARQUITECTÓNICO)
+
+**Archivos:** `pipeline.py`, `mini-services/worker-cascade/index.ts`,
+`coordinador/integrador_respuestas.py`, `models.py`.
+
+**Qué se hace:**
+
+1. **Cambiar el prompt de extracción de temas** (Worker 4 en index.ts y
+   subagente fallback en pipeline.py) para que:
+   - Lea el RESUMEN del bloque.
+   - Revise los temas existentes en `_metadata.json` antes de crear nuevos.
+   - Si un tema existente cubre el contenido → añada el bloque a ese tema.
+   - Si no → cree un tema nuevo con nombre corto y significativo.
+   - Si el contenido abarca ideas distintas → genere subtemas.
+   - La subdivisión la determina el contenido, no el tamaño del bloque.
+   - Ambos caminos (Worker Bun y subagente fallback) usan el mismo prompt.
+
+2. **Codificación jerárquica de temas en el metadata:**
+   - Un tema tiene un nombre corto y significativo (`autenticacion_jwt`).
+   - Un subtema indica su padre con notación jerárquica
+     (`autenticacion_jwt.firma_token`), no con prefijos largos.
+   - El `tema_a_archivo` mapea cada tema/subtema a su bloque.
+   - No se usan prefijos como `grande_ampliar_apa_03_txt_<tema>`.
+
+3. **El integrador aplica los temas generados al metadata**, reemplazando los
+   provisionales. Lee los resultados del enriquecimiento (de `_responses/` o
+   de las `pending_tasks` resueltas) y actualiza `tema_a_archivo` con la
+   estructura jerárquica.
+
+4. **El índice refleja la jerarquía:** muestra temas agrupados con sus
+   subtemas, como un catálogo de biblioteca.
+
+### F5 — Tests con datos reales para cada intervención
+
+**Archivos:** `tests/test_v42_e2e.py`, `__main__` de cada script intervenido.
+
+**Qué se hace:**
+Los tests y validaciones de cada script intervenido deben reflejar y validar
+cada una de las intervenciones con datos reales (no mocks que ocultan los
+bugs). Cada test reproduce las condiciones reales que produjeron los bugs
+detectados por el agente APA.
+
+1. **Test F1 (import roto + error oculto):** verificar con datos reales que:
+   - El post-procesamiento de `ContextoGenerator` no falla aunque una función
+     no exista.
+   - Si una función falla, el error es visible (log ERROR, no WARNING oculto).
+   - Las funciones que sí existen se ejecutan aunque una falle.
+   - Datos reales: workspace con bloques sin RESUMEN, invocar
+     `ContextoGenerator.ejecutar()` y verificar que el enriquecimiento corre
+     (o falla con error visible).
+
+2. **Test F2 (try/except silencioso en collect_responses):** verificar con
+   datos reales que:
+   - `collect_responses()` propaga el error cuando el enriquecimiento falla
+     (no lo oculta como WARNING).
+   - Si el Worker Bun no está disponible, genera `pending_tasks` para
+     subagentes de fallback (no se cuelga ni se oculta).
+   - Datos reales: documento APA procesado, `collect_responses()` invocado
+     con proxy mockeado como no disponible, verificar que el resultado
+     contiene `pending_tasks` y no oculta el error.
+
+3. **Test F3 (eliminar temas tentativos):** verificar con datos reales que:
+   - El bloque se crea con tema genérico `documento_externo_NN`, no con
+     temas inferidos de títulos de sección.
+   - No hay truncamiento a 50 chars (porque no se generan temas de títulos).
+   - No hay prefijos `grande_ampliar_` (porque no se generan temas de
+     filenames).
+   - Datos reales: documento con secciones de título largas (como las del
+     APA 01), verificar que el bloque no tiene temas truncados ni
+     contaminados.
+
+4. **Test F4 (clasificación jerárquica):** verificar con datos reales que:
+   - El enriquecimiento genera temas con nombres cortos y significativos.
+   - El enriquecimiento revisa temas existentes antes de crear nuevos.
+   - Si un tema existente cubre el contenido, añade el bloque a ese tema.
+   - Si el contenido abarca ideas distintas, genera subtemas jerárquicos.
+   - No hay duplicados por prefijo.
+   - Datos reales: dos documentos que tratan el mismo tema (como APA 01 y
+     APA 03 que ambos hablan de autenticación), verificar que el segundo
+     enriquece el tema existente en vez de crear uno duplicado.
+
+5. **Test de regresión (bugs del APA):** verificar con datos reales que los
+   3 bugs detectados por el agente APA no se reproducen:
+   - Bug 1 (truncamiento): no hay nombres cortados a mitad de palabra.
+   - Bug 2 (prefijos contaminados): no hay `grande_ampliar_apa_03_txt_` en
+     los temas.
+   - Bug 3 (duplicados por prefijo): dos temas donde uno es prefijo del otro
+     se tratan como el mismo tema o se renombran distintivamente.
+   - Bug 7 (RESUMEN al inicio): los bloques tienen RESUMEN al inicio tras el
+     enriquecimiento.
+   - Datos reales: reproducir exactamente las condiciones del agente APA
+     (filename `APA 01.txt`, `APA 03.txt`, `APA 04.txt` con contenido real
+     de cada uno).
+
+## 5. Archivos intervenidos
+
+| Archivo | Cambio |
+|---|---|
+| `pipeline.py` | F1: definir `_normalizar_bloques_externos`. F2: eliminar try/except silencioso. F4: prompt del subagente fallback con clasificación jerárquica. |
+| `generation/contexto_generator.py` | F1: separar imports + no ocultar errores. |
+| `coordinador/integrador_respuestas.py` | F3: eliminar temas tentativos. F4: aplicar temas jerárquicos del enriquecimiento. |
+| `mini-services/worker-cascade/index.ts` | F4: prompt de Worker 4 con clasificación jerárquica. |
+| `models.py` | F4: posible soporte para estructura jerárquica en tema_a_archivo. |
+| `tests/test_v42_e2e.py` | F5: tests para los 4 cambios. |
+
+## 6. Flujo correcto tras v6.8
+
+```
+ampliar_contexto(fuente_externa)
+│
+├─ 1. Dividir documento en lotes de 70K tokens
+├─ 2. Para cada lote:
+│    └─ Subagente extrae contenido literal → escribe bloque_NN.md (70K)
+│       con tema provisional genérico (documento_externo_NN)
+│
+├─ 3. collect_responses() integra las respuestas (sin ocultar errores)
+│    └─ _integrar_documento() escribe bloque con contenido literal
+│
+└─ 4. collect_responses() invoca enriquecimiento (sin try/except silencioso):
+     ├─ Worker 1 (o subagente fallback) lee bloque (70K) → RESUMEN → escribe al inicio
+     ├─ Worker 4 (o subagente fallback) lee RESUMEN → genera temas jerárquicos:
+     │    ├─ Revisa temas existentes en _metadata.json
+     │    ├─ Si un tema cubre el contenido → añade bloque a ese tema
+     │    ├─ Si no → crea tema nuevo con nombre corto y significativo
+     │    └─ Si el contenido abarca ideas distintas → subtemas jerárquicos
+     ├─ Workers 2-3 (o subagente fallback) leen RESUMEN → nombre + decisiones
+     └─ Integrador aplica resultados a _metadata.json e índice
+         (reemplaza temas provisionales por definitivos)
+```
+
+**Si el Worker Bun falla:** el error es visible. El proceso genera
+`pending_tasks`. El agente lanza subagentes de fallback con el mismo prompt.
+Los subagentes producen el mismo resultado que el Worker Bun.
+
+**Si algo más falla:** el error sube. El agente se entera. No hay errores
+ocultos.
+
+---
+
+**Fin de la spec v6.8.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.8.1 — Capturar fallback_tasks del enriquecimiento que se perdían
+
+**Versión:** 6.8.1
+**Fecha:** 2026-10-05
+**Estado:** Implementado (commit 958db73).
+**Especifica continuación de:** spec v6.8.
+
+## 1. Propósito
+
+La v6.8 había hecho visible el error del enriquecimiento en `collect_responses()`
+(eliminando el `try/except` silencioso que ocultaba la importación rota), pero
+el camino que recuperaba las `pending_tasks` generadas por el enriquecimiento
+quedó roto: se invocaba `_enriquecer_bloques_con_fallback(...)` **ignorando su
+valor de retorno** y luego se intentaba leer las tareas del Orquestador con
+`orch2.leer_tareas_pendientes()`. El Orquestador no tenía esas tareas porque
+las devuelve la función, no las escribe a disco.
+
+**Consecuencia:** cuando el Worker Bun fallaba o no estaba disponible, el
+enriquecimiento generaba `pending_tasks` de fallback para subagentes, pero
+esas tareas **nunca llegaban al agente** — se perdían. Los bloques quedaban
+sin RESUMEN y el agente nunca recibía la tarea de procesarlos.
+
+## 2. Principio rector: proteger lo existente
+
+**Lo que ya funciona NO se toca:**
+- Bloques con contenido literal hasta 70K ✅
+- RESUMEN al inicio de cada bloque ✅
+- Enriquecimiento visible (sin `try/except` silencioso) ✅
+- Importación reparada (`_normalizar_bloques_externos` existe) ✅
+
+El fix es quirúrgico: una sola función modifica su forma de capturar el retorno.
+
+## 3. El problema en detalle
+
+### Código problemático (v6.8)
+
+```python
+bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+if bloques_sin_resumen:
+    # Se invoca pero se IGNORA el valor de retorno
+    _enriquecer_bloques_con_fallback(
+        blocks=bloques_sin_resumen,
+        workspace_dir=workspace_dir,
+        chat_label="collect_responses",
+    )
+    # Se intenta leer del Orquestador (que no tiene las tareas)
+    from contexto_zai.coordinador import Orquestador as _Orq
+    orch2 = _Orq(workspace_dir=workspace_dir)
+    nuevas_tasks = orch2.leer_tareas_pendientes()
+    if nuevas_tasks:
+        resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
+```
+
+### Causa raíz
+
+`_enriquecer_bloques_con_fallback(...)` **devuelve** la lista de `pending_tasks`
+en su valor de retorno (diseño v6.2). No las escribe al Orquestador. Leer
+`orch.leer_tareas_pendientes()` siempre devuelve una lista vacía (o tareas
+obsoletas de corridas previas, no las recién generadas).
+
+## 4. Solución
+
+### F1 — Capturar el valor de retorno
+
+**Archivos:** `pipeline.py` (`collect_responses()`).
+
+**Qué se hace:**
+1. Asignar el retorno de `_enriquecer_bloques_con_fallback(...)` a la variable
+   `fallback_tasks`.
+2. Si `fallback_tasks` no está vacío, añadir las tareas a
+   `resultado["pending_tasks"]` para que el agente las reciba.
+3. Eliminar la creación del `Orquestador` (`orch2`) y la llamada a
+   `leer_tareas_pendientes()` — ya no se necesita.
+
+**Lo que NO se toca:**
+- `_enriquecer_bloques_con_fallback()` — ya devuelve el valor correcto.
+- `_descubrir_bloques_sin_resumen()` — no se modifica.
+- El resto de `collect_responses()` — no se modifica.
+
+### Código corregido (v6.8.1)
+
+```python
+bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+if bloques_sin_resumen:
+    fallback_tasks = _enriquecer_bloques_con_fallback(
+        blocks=bloques_sin_resumen,
+        workspace_dir=workspace_dir,
+        chat_label="collect_responses",
+    )
+    # v6.8.1 fix: las pending_tasks vienen en el valor de retorno de la función,
+    # no en el Orquestador. Capturarlas directamente del retorno.
+    if fallback_tasks:
+        resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
+        logger.info("v6.8.1: %d pending_task(s) de enriquecimiento para subagentes",
+                   len(fallback_tasks))
+```
+
+## 5. Criterios de aceptación
+
+1. `pipeline.py` `collect_responses()` no contiene la línea `orch2 = _Orq(...)`.
+2. `pipeline.py` `collect_responses()` no contiene la llamada a `leer_tareas_pendientes()`.
+3. `pipeline.py` `collect_responses()` captura `fallback_tasks = _enriquecer_bloques_con_fallback(...)`.
+4. Si `_enriquecer_bloques_con_fallback` devuelve lista no vacía, las tareas se
+   añaden a `resultado["pending_tasks"]`.
+5. Tests E2E: cuando el proxy APA no está disponible (mock), `collect_responses()`
+   devuelve `pending_tasks` con las tareas de fallback para los bloques sin RESUMEN.
+
+## 6. Lección
+
+Esta spec documenta el antipatrón **AP4 (Silenciar errores)** en su forma más
+insidiosa: el código "funcionaba" (no tiraba excepción) pero perdía datos en
+silencio. El `try/except` de v6.6 ya estaba eliminado en v6.8, pero la lógica
+de captura del retorno era incorrecta. La detección fue por observación del
+Director (el agente no recibía tareas) — no por tests automatizados.
+
+**Aplicación futura:** cuando una función devuelva un valor importante, asignarlo
+siempre a una variable y verificarlo explícitamente. No asumir que el efecto
+secundario (escribir a disco) ocurre — capturar el retorno.
+
+---
+
+**Fin de la spec v6.8.1.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.8.2 — Normalizar formato de temas + detectar Worker Bun existente
+
+**Versión:** 6.8.2
+**Fecha:** 2026-10-06
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.8.
+
+## 1. Propósito
+
+La v6.8.1 logró que los bloques tengan RESUMEN al inicio y que el enriquecimiento
+en cascada funcione end-to-end. El agente APA detectó 2 bugs menores que no
+bloquean el proceso pero generan warnings ruidosos y dejan el índice
+desactualizado. Esta spec los corrige sin tocar lo que ya funciona.
+
+## 2. Principio rector: proteger lo existente
+
+**Lo que ya funciona NO se toca:**
+- Bloques con contenido literal hasta 70K ✅
+- RESUMEN al inicio de cada bloque ✅
+- pending_tasks de enriquecimiento que llegan al agente ✅
+- Temas enriquecidos con nombres significativos ✅
+- Tests atómicos y E2E que pasan ✅
+
+Los fixes son quirúrgicos y no modifican ninguno de estos logros.
+
+## 3. Los 2 bugs a corregir
+
+### Bug 1 — Mezcla de formatos en `tema_a_archivo` (índice desactualizado)
+
+**Qué pasa:** El metadata tiene 61 temas. 9 están en formato string (los
+provisionales `documento_externo_NN`) y 52 están en formato lista (los
+enriquecidos como `["bloque_01.md"]`). Cuando el regenerador del índice
+intenta procesar ambos formatos juntos, las listas causan
+`TypeError: unhashable type: 'list'` y el índice no se actualiza.
+
+**Impacto:** El índice solo muestra los 9 temas provisionales, no los 52
+enriquecidos. Los bloques y el metadata están correctos, pero el índice está
+desactualizado.
+
+**Causa raíz:** El integrador escribe temas como string
+(`"documento_externo_0": "bloque_01.md"`). El enriquecimiento escribe temas
+como lista (`"chat_sdd_flow": ["bloque_01.md"]`). El regenerador del índice
+no puede mezclar ambos formatos.
+
+### Bug 2 — Worker Bun choca consigo mismo en el puerto 8090
+
+**Qué pasa:** El Paso 7 de la estrategia arranca el Worker Bun manualmente.
+Después, `collect_responses()` intenta arrancar otro Worker Bun, choca con el
+primero en el puerto 8090, y muere. El proceso cae al fallback (subagentes),
+que funciona correctamente pero es más lento y ruidoso.
+
+**Impacto:** No se pierden datos, pero el proceso es más lento y el warning
+es ruidoso.
+
+**Causa raíz:** `_arrancar_worker_y_esperar()` no verifica si ya hay un
+Worker Bun corriendo antes de intentar arrancar otro.
+
+## 4. Soluciones
+
+### F1 — Normalizar formato de `tema_a_archivo` (siempre lista)
+
+**Archivos:** `coordinador/integrador_respuestas.py`, `generation/indice_generator.py`.
+
+**Qué se hace:**
+1. El integrador escribe temas como lista, no como string:
+   `"documento_externo_0": ["bloque_01.md"]` en vez de
+   `"documento_externo_0": "bloque_01.md"`.
+2. El regenerador del índice (`_regenerar_indice_recuperacion` en
+   `integrador_respuestas.py`) maneja ambos formatos con `isinstance(v, list)`
+   para ser tolerante con metadata pre-v6.8.2.
+3. El `IndiceGenerator` también maneja ambos formatos (ya lo hace, pero se
+   verifica).
+4. Los temas provisionales (`documento_externo_NN`) se eliminan del metadata
+   cuando el enriquecimiento los reemplaza por temas significativos.
+
+**Lo que NO se toca:**
+- Los bloques físicos (bloque_NN.md con contenido literal + RESUMEN).
+- Los RESUMENES al inicio.
+- Los temas enriquecidos (ya están en formato lista).
+- Las pending_tasks de enriquecimiento.
+
+### F2 — Detectar Worker Bun existente antes de arrancar otro
+
+**Archivos:** `pipeline.py`.
+
+**Qué se hace:**
+1. `_arrancar_worker_y_esperar()` verifica si el puerto 8090 ya está en uso
+   antes de intentar arrancar un Worker Bun nuevo.
+2. Si el puerto está en uso, asume que ya hay un Worker Bun corriendo y lo
+   reutiliza (espera a que procese los bloques del `_pending_blocks.json`).
+3. Si el puerto no está en uso, arranca un Worker Bun nuevo (comportamiento
+   actual).
+4. Esto elimina el warning ruidoso y permite que el Worker Bun existente
+   procese los bloques sin choque.
+
+**Lo que NO se toca:**
+- El fallback a subagentes (sigue funcionando si el Worker Bun falla por
+  otra razón).
+- Las pending_tasks de enriquecimiento (siguen llegando al agente).
+- El Worker Bun en sí (no se modifica su código).
+
+## 5. Archivos intervenidos
+
+| Archivo | Cambio |
+|---|---|
+| `coordinador/integrador_respuestas.py` | F1: escribir temas como lista, manejar ambos formatos, eliminar provisionales al enriquecer. |
+| `generation/indice_generator.py` | F1: verificar tolerancia a ambos formatos (ya existe, solo se confirma). |
+| `pipeline.py` | F2: detectar puerto 8090 en uso antes de arrancar Worker Bun. |
+
+## 6. Tests con datos reales
+
+1. **Test F1 (formato normalizado):** verificar con datos reales que:
+   - El metadata escribe todos los temas como lista (no string).
+   - El regenerador del índice no falla con `unhashable type: 'list'`.
+   - El índice se actualiza con todos los temas (provisionales + enriquecidos).
+   - Los temas provisionales se eliminan cuando el enriquecimiento los reemplaza.
+   - Datos reales: reproducir las condiciones del agente APA (3 documentos, 9
+     bloques, mezcla de temas provisionales y enriquecidos).
+
+2. **Test F2 (Worker Bun existente):** verificar con datos reales que:
+   - Si el puerto 8090 está en uso, no se intenta arrancar otro Worker Bun.
+   - El Worker Bun existente procesa los bloques.
+   - Si el puerto 8090 no está en uso, se arranca uno nuevo (comportamiento actual).
+   - Datos reales: mock del puerto en uso, verificar que no se lanza
+     `subprocess.run` para arrancar Worker Bun.
+
+---
+
+**Fin de la spec v6.8.2.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.8.3 — Verificar Worker Bun realmente procesó + restaurar captura de fallback_tasks
+
+**Versión:** 6.8.3
+**Fecha:** 2026-10-07
+**Estado:** Implementado (commit 790ec99).
+**Especifica continuación de:** spec v6.8.2.
+
+## 1. Propósito
+
+La v6.8.2 introdujo dos cosas buenas (formato lista en `tema_a_archivo`,
+detección del puerto 8090) pero **perdió** el fix de v6.8.1: el `try/except`
+silencioso volvió a aparecer, y la captura del retorno de
+`_enriquecer_bloques_con_fallback(...)` se reemplazó por la lectura del
+Orquestador. Además, el nuevo código de detección del puerto 8090 **asumía
+éxito sin verificar** que el Worker Bun existente procesara los bloques.
+
+**Dos problemas a corregir:**
+
+1. **Regresión de v6.8.1**: el `try/except Exception` silencioso volvió,
+   ocultando errores. La captura del retorno se reemplazó por
+   `orch2.leer_tareas_pendientes()` que no devuelve las tareas recién
+   generadas.
+2. **Asumir éxito en Worker Bun existente**: cuando el puerto 8090 está en
+   uso, v6.8.2 solo hacía `sleep(30)` y `return True`. Si el Worker Bun
+   existente no estaba procesando el workspace actual, los bloques quedaban
+   sin RESUMEN y `pending_tasks` vacío.
+
+## 2. Principio rector: proteger lo existente
+
+**Lo que ya funciona NO se toca:**
+- Bloques con contenido literal hasta 70K ✅
+- RESUMEN al inicio de cada bloque ✅
+- Formato lista en `tema_a_archivo` (v6.8.2 F1) ✅
+- Detección del puerto 8090 (v6.8.2 F2) ✅
+- Importación reparada ✅
+
+Los fixes son quirúrgicos en `collect_responses()` y `_arrancar_worker_y_esperar()`.
+
+## 3. Los dos problemas en detalle
+
+### Problema 1 — Regresión de v6.8.1
+
+**Código problemático (v6.8.2):**
+
+```python
+try:
+    bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+    if bloques_sin_resumen:
+        _enriquecer_bloques_con_fallback(...)  # retorno ignorado
+        from contexto_zai.coordinador import Orquestador as _Orq
+        orch2 = _Orq(workspace_dir=workspace_dir)
+        nuevas_tasks = orch2.leer_tareas_pendientes()
+        if nuevas_tasks:
+            resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
+except Exception as e:
+    logger.warning("v6.6 F3 Bug 7 fix: error en enriquecimiento tras collect_responses: %s", e)
+```
+
+**Causa raíz:** v6.8.2 partió de un código base que no incluía el fix de v6.8.1.
+La regresión es exactamente el antipatrón que v6.8.1 corrigió.
+
+### Problema 2 — Asumir éxito del Worker Bun existente
+
+**Código problemático (v6.8.2):**
+
+```python
+if puerto_en_uso:
+    logger.info("v6.8.2 F2: puerto %d en uso — Worker Bun ya está corriendo, reutilizando",
+               WORKER_BUN_PORT)
+    import time as _time
+    _time.sleep(min(timeout, 30))  # esperar hasta 30s o timeout
+    return True  # ← asumir éxito sin verificar
+```
+
+**Causa raíz:** asumir que el Worker Bun existente procesa los bloques del
+workspace actual es incorrecto. El Worker Bun existente podría estar procesando
+otro workspace, podría haber muerto (proceso zombi), o podría estar en una
+ pasada anterior. Sin verificación, los bloques quedan sin RESUMEN.
+
+## 4. Soluciones
+
+### F1 — Restaurar captura del retorno (v6.8.1 re-aplicado)
+
+**Archivos:** `pipeline.py` (`collect_responses()`).
+
+**Qué se hace:**
+1. Eliminar el `try/except Exception` silencioso.
+2. Asignar el retorno de `_enriquecer_bloques_con_fallback(...)` a
+   `fallback_tasks`.
+3. Si `fallback_tasks` no está vacío, extender
+   `resultado["pending_tasks"]` con esas tareas.
+4. Eliminar la creación del segundo Orquestador (`orch2`) y la llamada a
+   `leer_tareas_pendientes()`.
+5. Loggear con etiqueta `v6.8.3:` para distinguir de v6.8.1.
+
+**Lo que NO se toca:**
+- `_enriquecer_bloques_con_fallback()` — no se modifica.
+- `_descubrir_bloques_sin_resumen()` — no se modifica.
+
+### F2 — Verificar Worker Bun realmente procesó bloques
+
+**Archivos:** `pipeline.py` (`_arrancar_worker_y_esperar()`).
+
+**Qué se hace:**
+1. Tras `sleep(min(timeout, 30))`, leer los `bloque_*.md` del workspace.
+2. Contar cuántos tienen `RESUMEN:` al inicio de la primera línea.
+3. Si `0/N` bloques tienen RESUMEN (siendo N > 0), devolver `False` para que
+   el llamador active el fallback.
+4. Si algunos tienen RESUMEN, devolver `True` (el Worker Bun está progresando).
+5. Si no se pueden leer los bloques (error de I/O), devolver `False` — no
+   asumir éxito ciego.
+
+**Lo que NO se toca:**
+- La detección del puerto 8090 (v6.8.2 F2) — se mantiene.
+- El `subprocess.run` para arrancar Worker Bun nuevo — no se modifica.
+- El fallback a subagentes — no se modifica.
+
+### Código corregido (v6.8.3)
+
+```python
+if puerto_en_uso:
+    logger.info("v6.8.3: puerto %d en uso — Worker Bun ya está corriendo",
+               WORKER_BUN_PORT)
+    import time as _time
+    _time.sleep(min(timeout, 30))
+    ws_path = Path(workspace_dir)
+    if ws_path.exists():
+        bloques_con_resumen = 0
+        bloques_verificados = 0
+        for p in ws_path.glob("bloque_*.md"):
+            try:
+                content = p.read_text(encoding="utf-8")
+                if len(content) > 100:
+                    bloques_verificados += 1
+                    if content.startswith("RESUMEN:"):
+                        bloques_con_resumen += 1
+            except Exception:
+                pass
+        if bloques_verificados > 0 and bloques_con_resumen == 0:
+            logger.warning(
+                "v6.8.3: Worker Bun existente no procesó ningún bloque "
+                "(0/%d con RESUMEN). Activando fallback.",
+                bloques_verificados,
+            )
+            return False
+    return True
+```
+
+## 5. Criterios de aceptación
+
+1. `pipeline.py` `collect_responses()` no contiene `try:` ni `except Exception`
+   en el bloque de enriquecimiento.
+2. `pipeline.py` `collect_responses()` no contiene `orch2 = _Orq(...)`.
+3. `pipeline.py` `collect_responses()` captura `fallback_tasks = _enriquecer_bloques_con_fallback(...)`.
+4. `pipeline.py` `_arrancar_worker_y_esperar()` después del `sleep` lee los
+   `bloque_*.md` y cuenta cuántos tienen `RESUMEN:`.
+5. Si `0/N` bloques tienen RESUMEN (N > 0), devuelve `False`.
+6. Tests E2E: mock del puerto 8090 en uso + bloques sin RESUMEN →
+   `collect_responses()` devuelve `pending_tasks` con las tareas de fallback.
+
+## 6. Lección
+
+Esta spec documenta dos antipatrones simultáneos:
+
+- **AP4 (Silenciar errores)**: el `try/except Exception` regresó por la
+  pérdida del fix de v6.8.1. Cada implementación debe partir del código
+  actual, no de un estado anterior.
+- **Asumir éxito sin verificar**: la detección del puerto 8090 es necesaria
+  pero no suficiente. Puerto en uso ≠ Worker Bun procesando el workspace
+  actual. La verificación debe ser activa, no asumida.
+
+**Aplicación futura:**
+1. Tras cada implementación de versión, verificar con `git log` que el
+   commit anterior está incluido en el base.
+2. Toda afirmación de éxito (`return True`) debe respaldarse con una
+   verificación posterior (no asumir).
+
+---
+
+**Fin de la spec v6.8.3.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.8.4 — Eliminar temas provisionales + regenerar índice tras enriquecimiento
+
+**Versión:** 6.8.4
+**Fecha:** 2026-10-07
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.8.3.
+
+## 1. Propósito
+
+La v6.8.3 logró que los bloques tengan RESUMEN al inicio, contenido literal,
+y 57 temas enriquecidos con nombres significativos. Pero el metadata todavía
+contiene 9 temas provisionales (`documento_externo_*` y
+`grande_ampliar_*`) que ensucian el índice. Esta spec los elimina de raíz.
+
+## 2. Principio rector: proteger lo existente
+
+**Lo que ya funciona NO se toca:**
+- Bloques con contenido literal hasta 70K ✅
+- RESUMEN al inicio de cada bloque ✅
+- pending_tasks de enriquecimiento que llegan al agente ✅
+- Temas enriquecidos con nombres significativos ✅
+- Formato lista en tema_a_archivo ✅
+- Verificación del Worker Bun (v6.8.3) ✅
+- Captura de fallback_tasks (v6.8.3) ✅
+
+## 3. El problema
+
+### Problema 1 — Los bloques no necesitan temas provisionales
+
+Los bloques tienen su nombre propio (`bloque_NN.md`). El enriquecimiento
+encuentra los bloques leyendo el disco (`ws.glob("bloque_*.md")`), no leyendo
+`tema_a_archivo`. Los temas provisionales (`documento_externo_0`,
+`grande_ampliar_apa_03_txt_documento_externo_0`) son un invento innecesario
+que ensucia el metadata y el índice.
+
+### Problema 2 — El índice no se regenera tras el enriquecimiento
+
+Después de que el enriquecimiento asigna los temas reales, el índice debería
+reflejarlos. Hoy el índice se regenera antes del enriquecimiento, con los
+temas provisionales. Después del enriquecimiento, los temas reales se añaden
+al metadata pero el índice no se vuelve a regenerar.
+
+## 4. Soluciones
+
+### F1 — No crear temas provisionales al integrar bloques
+
+**Archivos:** `coordinador/integrador_respuestas.py`.
+
+**Qué se hace:**
+1. `_integrar_documento()` no registra temas provisionales en `tema_a_archivo`.
+   El bloque se escribe con su nombre `bloque_NN.md` y se registra en
+   `archivo_a_source` (procedencia), pero sin tema en `tema_a_archivo`.
+2. El índice se regenera con los bloques que sí tengan tema (los del chat
+   y los ya enriquecidos). Los bloques sin tema no aparecen en el índice
+   hasta que el enriquecimiento los clasifique.
+3. Esto elimina de raíz los 3 bugs del APA: truncamiento, prefijos
+   contaminados, y duplicados por prefijo. No hay temas provisionales
+   que truncar, contaminar, o duplicar.
+
+### F2 — Regenerar el índice después del enriquecimiento
+
+**Archivos:** `pipeline.py`, `coordinador/integrador_respuestas.py`.
+
+**Qué se hace:**
+1. Después de que `_enriquecer_bloques_con_fallback()` termina (ya sea
+   Worker Bun o subagentes de fallback), `collect_responses()` regenera
+   el índice leyendo el metadata actualizado con los temas enriquecidos.
+2. La función `_regenerar_indice_recuperacion` del integrador se invoca
+   con el metadata actualizado, que ahora tiene los temas reales.
+3. El índice refleja los temas reales, no los provisionales.
+
+### F3 — _normalizar_bloques_externos elimina provisionales residuales
+
+**Archivos:** `pipeline.py`.
+
+**Qué se hace:**
+1. `_normalizar_bloques_externos()` elimina del `tema_a_archivo` cualquier
+   tema que empiece con `documento_externo_` o `grande_ampliar_` cuando
+   el bloque al que apunta ya tiene temas enriquecidos.
+2. Esto limpia los provisionales que queden de versiones anteriores o
+   de corridas previas.
+
+## 5. Archivos intervenidos
+
+| Archivo | Cambio |
+|---|---|
+| `coordinador/integrador_respuestas.py` | F1: no registrar temas provisionales. F2: regenerar índice tras enriquecimiento. |
+| `pipeline.py` | F2: invocar regeneración del índice tras enriquecimiento. F3: limpiar provisionales residuales. |
+
+## 6. Lo que NO se toca
+
+- Bloques físicos (nombre, contenido, RESUMEN).
+- Worker Bun (código, prompts, detección de puerto).
+- pending_tasks (captura del valor de retorno).
+- Temas enriquecidos (ya están en formato lista).
+- Tests atómicos y E2E (se actualizan para reflejar que no hay provisionales).
+
+## 7. Tests con datos reales
+
+1. **Test F1 (sin temas provisionales):** verificar con datos reales que:
+   - El bloque se crea sin tema en `tema_a_archivo`.
+   - El bloque sí está en `archivo_a_source`.
+   - `query_context` no encuentra el bloque por tema (correcto: no tiene tema).
+   - Datos reales: documento APA procesado, verificar metadata.
+
+2. **Test F2 (índice tras enriquecimiento):** verificar con datos reales que:
+   - Después del enriquecimiento, el índice tiene los temas reales.
+   - El índice no tiene temas provisionales.
+   - Datos reales: documento APA procesado + enriquecimiento simulado.
+
+3. **Test F3 (limpieza de provisionales):** verificar con datos reales que:
+   - Metadata con temas provisionales + enriquecidos → después de normalizar,
+     los provisionales se eliminan.
+   - Datos reales: metadata con mezcla de provisionales y enriquecidos.
+
+---
+
+**Fin de la spec v6.8.4.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+
+# Spec v6.9 — Eliminar camino duplicado: link /s/ pasa por el mismo flujo que archivos externos
+
+**Versión:** 6.9
+**Fecha:** 2026-10-08
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.8.4.
+
+## 1. Propósito
+
+La v6.8.4 funciona correctamente para archivos externos (APA 01/03/04):
+bloques con contenido literal, RESUMEN al inicio, temas enriquecidos, sin
+provisionales, índice correcto. Pero cuando el agente APA procesó un link
+`/s/` de Z.ai sobre un workspace que ya tenía 9 bloques APA, el proceso
+**sobrescribió los bloques existentes** porque el link `/s/` delega a
+`pipeline.run()` que numera desde `bloque_01` sin verificar colisiones.
+
+Esto viola la spec v4.4 que dice: "ampliar contexto incorpora información
+nueva al workspace **sin tocar lo que ya funciona**" y la spec v6.7 que
+dice: "crear, ampliar y actualizar contexto usan el mismo código vía OOP".
+
+## 2. No olvidar del DTI
+
+- **NH1**: Corregir un bug sin diagnóstico y consenso previo — el diagnóstico
+  está hecho y conciliado con el Director.
+- **NH8**: Actuar sin autorización — el Director autorizó esta spec.
+- **NH14**: Tomar decisiones de arquitectura relevantes sin consenso — la
+  eliminación del camino duplicado fue consensuada con el Director.
+- **NH18**: Reescribir un archivo completo cuando solo se necesitan cambios
+  quirúrgicos — los cambios son quirúrgicos en `ampliar_contexto()`.
+- **NH19**: Ejecutar cambios sin verificar que no se rompe funcionalidad
+  existente — se valida con datos reales antes de entregar.
+- **NH23**: Modificar código que no fue solicitado — solo se toca lo que
+  el Director pidió: eliminar el camino duplicado del link `/s/`.
+
+## 3. El problema
+
+### Cómo funciona hoy (el bug)
+
+Cuando `ampliar_contexto()` recibe un link `/s/` de Z.ai:
+
+1. Detecta el patrón `/s/` en la URL.
+2. Delega a `pipeline.run()` (recuperación completa de chat).
+3. `pipeline.run()` ejecuta `RecoveryCycle` que numera bloques desde
+   `bloque_01` sin verificar si ya existen.
+4. Los bloques existentes se sobrescriben.
+5. El metadata queda inconsistente (`archivo_a_source` no se actualiza).
+
+### Cómo funcionan los archivos externos (que sí funciona)
+
+Cuando `ampliar_contexto()` recibe un archivo externo:
+
+1. El `ProcesadorDocumento` divide el documento en lotes.
+2. Los subagentes extraen contenido literal.
+3. `IntegradorRespuestas._integrar_documento()` escribe cada bloque usando
+   `_siguiente_nombre_bloque()` que lee el workspace y encuentra el número
+   más alto disponible.
+4. Los bloques existentes se preservan.
+5. El metadata se actualiza correctamente.
+
+### La desviación del diseño
+
+La spec v4.4 dice: "ampliar contexto incorpora información nueva al
+workspace sin tocar lo que ya funciona". La spec v6.7 dice: "crear, ampliar
+y actualizar contexto usan el mismo código vía OOP".
+
+El código actual viola ambas specs: el link `/s/` usa un camino distinto
+(`pipeline.run()` → `RecoveryCycle`) que no preserva los bloques existentes.
+
+## 4. Lo que no se puede retroceder (proteger lo existente)
+
+**Lo que ya funciona NO se toca:**
+- Bloques con contenido literal hasta 70K ✅
+- RESUMEN al inicio de cada bloque ✅
+- pending_tasks de enriquecimiento que llegan al agente ✅
+- Temas enriquecidos con nombres significativos ✅
+- Formato lista en tema_a_archivo ✅
+- Sin temas provisionales (v6.8.4) ✅
+- Verificación del Worker Bun (v6.8.3) ✅
+- Captura de fallback_tasks (v6.8.3) ✅
+- Índice regenerado tras enriquecimiento (v6.8.4) ✅
+- Archivos externos procesados correctamente ✅
+- Clasificación de intercambios del chat (MessageClassifier) ✅
+- Empaquetado secuencial (BlockPacker) ✅
+- Generación de los 4 archivos de recuperación según cronología ✅
+
+## 5. El problema que nos trajo hasta aquí
+
+Este bug es la manifestación concreta del problema arquitectónico que
+planteaste al principio de toda esta conversación: "No entiendo porque
+ampliar contexto y actualizar contexto van por dos caminos diferentes para
+tareas similares y no se usa la OOP como se establece en toda la
+documentación de referencia."
+
+Hemos estado corrigiendo síntomas (bugs 1-11, Worker Bun, provisionales,
+formato lista, etc.) sin abordar la causa raíz: el camino duplicado del
+link `/s/`. Esta spec la aborda directamente.
+
+## 6. Solución
+
+### F1 — Eliminar la delegación del link /s/ a pipeline.run()
+
+**Archivos:** `pipeline.py`.
+
+**Qué se hace:**
+1. Eliminar el bloque de código en `ampliar_contexto()` que detecta `/s/`
+   y delega a `pipeline.run()`.
+2. El link `/s/` pasa por el mismo camino que un archivo externo: se descarga
+   el contenido del chat compartido (usando `ChatClient.extract_all()` con
+   el `share_id`), se procesa el contenido como una fuente externa.
+3. El contenido extraído del chat se trata como cualquier otra fuente:
+   se llena el bloque con el contenido literal, se le asigna un nombre
+   `bloque_NN` (empezando desde el último existente con
+   `_siguiente_nombre_bloque()`), se enriquece, y se actualiza el metadata.
+4. Los bloques existentes se preservan automáticamente porque
+   `_siguiente_nombre_bloque()` lee el workspace.
+
+### F2 — Extraer contenido del chat /s/ como fuente externa
+
+**Archivos:** `pipeline.py`.
+
+**Qué se hace:**
+1. Cuando `ampliar_contexto()` recibe un link `/s/`:
+   - Extraer el `share_id` de la URL.
+   - Usar `ChatClient.extract_all(share_id=share_id)` para obtener los
+     mensajes del chat compartido.
+   - Construir intercambios con `ExchangeBuilder` y clasificarlos con
+     `MessageClassifier` (igual que hace `RecoveryCycle`).
+   - Pero en vez de pasarlos por `BlockPacker` (que numera desde 1),
+     pasarlos por `IntegradorRespuestas._integrar_documento()` (que
+     usa `_siguiente_nombre_bloque()`).
+2. El contenido del chat se escribe como bloques nuevos sin sobrescribir
+   los existentes.
+3. Los bloques nuevos se enriquecen (RESUMEN + temas) igual que los
+   externos.
+4. La generación de los 4 archivos de recuperación depende de la
+   cronología (Principio 3 de v6.7): si los intercambios del chat son
+   cronológicos y posteriores al último timestamp del workspace, se generan.
+
+### F3 — Actualizar el metadata correctamente
+
+**Archivos:** `pipeline.py`, `coordinador/integrador_respuestas.py`.
+
+**Qué se hace:**
+1. `archivo_a_source` se actualiza con el origen del link `/s/`
+   (source_type="url", source_path=<url>, share_id=<share_id>).
+2. `tema_a_archivo` se actualiza con los temas del chat (generados por el
+   enriquecimiento, no provisionales).
+3. `ultimo_timestamp` se actualiza si los intercambios del chat son
+   posteriores.
+4. No hay inconsistencia entre el metadata y los archivos físicos.
+
+### F4 — Tests con datos reales
+
+**Archivos:** `tests/test_v42_e2e.py`, `__main__` de `pipeline.py`.
+
+**Qué se hace:**
+1. Test: workspace con 3 bloques existentes → ampliar con link `/s/`
+   (mockeado) → los 3 bloques existentes se preservan → los bloques nuevos
+   se numeran desde `bloque_04`.
+2. Test: ampliar con link `/s/` → el metadata `archivo_a_source` registra
+   el origen correcto (url, share_id).
+3. Test: ampliar con link `/s/` → si los intercambios son cronológicos y
+   posteriores, se generan los 4 archivos de recuperación.
+4. Test: ampliar con link `/s/` → si no son cronológicos, no se generan
+   los 4 archivos.
+5. Test de regresión: ampliar con archivo externo sigue funcionando igual.
+
+## 7. Archivos intervenidos
+
+| Archivo | Cambio |
+|---|---|
+| `pipeline.py` | F1: eliminar delegación a `pipeline.run()`. F2: extraer contenido del chat como fuente externa. F3: actualizar metadata. |
+| `coordinador/integrador_respuestas.py` | F3: registrar origen del link `/s/` en `archivo_a_source`. |
+| `tests/test_v42_e2e.py` | F4: tests con datos reales. |
+
+## 8. Lo que NO se toca
+
+- `BlockPacker` — no se modifica (sigue numerando desde 1, pero ya no se
+  usa para ampliar contexto, solo para `pipeline.run()`).
+- `RecoveryCycle` — no se modifica (sigue funcionando para recuperación
+  completa de chat desde `pipeline.run()`).
+- `IncrementalCycle` — no se modifica.
+- `IntegradorRespuestas._integrar_documento()` — no se modifica (ya
+  preserva bloques existentes con `_siguiente_nombre_bloque()`).
+- `ContextoGenerator` — no se modifica.
+- Worker Bun — no se modifica.
+- Prompts de enriquecimiento — no se modifican.
+
+## 9. Flujo unificado tras v6.9
+
+```
+ampliar_contexto(source_type, source_path)
+│
+├─ source_type == "file"
+│   └─ ProcesadorDocumento → subagentes extractores → _integrar_documento()
+│       └─ _siguiente_nombre_bloque() → preserva existentes
+│
+├─ source_type == "url" con /s/ de Z.ai
+│   └─ ChatClient.extract_all(share_id) → ExchangeBuilder → MessageClassifier
+│       → _integrar_documento() (mismo camino que file)
+│       └─ _siguiente_nombre_bloque() → preserva existentes
+│
+├─ source_type == "url" con /c/ de Z.ai
+│   └─ ChatClient.extract_all(chat_id) → ExchangeBuilder → MessageClassifier
+│       → _integrar_documento() (mismo camino que file)
+│       └─ _siguiente_nombre_bloque() → preserva existentes
+│
+└─ source_type == "url" externa (no Z.ai)
+    └─ ProcesadorDocumento → subagentes extractores → _integrar_documento()
+        └─ _siguiente_nombre_bloque() → preserva existentes
+
+Todos los caminos terminan en _integrar_documento() que:
+1. Escribe bloque_NN.md (preservando existentes)
+2. Registra en archivo_a_source
+3. No crea temas provisionales (v6.8.4)
+4. El enriquecimiento genera los temas reales
+5. El índice se regenera tras enriquecimiento (v6.8.4)
+6. Los 4 archivos se generan si la cronología lo determina (Principio 3)
+```
+
+**Ya no hay dos caminos. Hay uno solo.**
+
+---
+
+**Fin de la spec v6.9.**
+
+<!-- ============================================================ -->
+
+<!-- ============================================================ -->
+<!-- Fin del documento de historial de specs                     -->
+<!-- ============================================================ -->
+
+# Spec v6.10 — Carga automática del JWT + eliminación de errores silenciados + arnés Worker Bun/subagentes
+
+**Versión:** 6.10
+**Fecha:** 2026-10-12
+**Estado:** Pendiente de implementación.
+**Especifica continuación de:** spec v6.9.
+
+---
+
+## 1. Propósito
+
+La v6.9 dejó tres problemas detectados en sesión real con el Director:
+
+1. El agente tiene que pasar el JWT manualmente al proceso. Si lo pasa vacío, el proceso falla con HTTP 401 sin explicación clara.
+2. El proceso oculta errores silenciosamente: cuando el enriquecimiento de bloques falla, el agente no recibe las tareas pendientes que debería ejecutar.
+3. Cuando el Worker Bun cae por saturación del servicio de Z.ai, el proceso se queda esperando. El agente no lanza subagentes de fallback y los bloques quedan sin procesar.
+
+Esta spec resuelve los tres problemas y re-aplica fixes de versiones anteriores (v6.8.1, v6.8.3, v6.8.4) que se perdieron del código local tras un reset.
+
+---
+
+## 2. Principio rector: proteger lo existente
+
+**Lo que ya funciona NO se toca:**
+- Bloques con contenido literal hasta 70K ✅
+- RESUMEN al inicio de cada bloque ✅
+- Worker Bun como camino prioritario de enriquecimiento ✅
+- Detección de Worker Bun existente por puerto 8090 (v6.8.2 F2) ✅
+- Formato lista en tema_a_archivo (v6.8.2 F1) ✅
+- Link /s/ procesado como fuente externa (v6.9) ✅
+
+Los cambios son quirúrgicos en tres puntos del proceso.
+
+---
+
+## 3. Los tres problemas a resolver
+
+### Problema 1 — El agente tiene que pasar el JWT manualmente
+
+**Qué pasa hoy:** el proceso principal exige que el agente le pase el JWT del Director como parámetro. Si el agente lo pasa vacío (porque asume que el proceso lo cargará solo), el proceso intenta crear un share con un JWT vacío y falla con HTTP 401.
+
+**Impacto:** el agente tiene que saber que el JWT vive en `~/.czai/credentials.json` y cargarlo manualmente cada vez. Si se olvida, el proceso falla con un error que no explica la causa raíz.
+
+**Causa raíz:** el proceso no carga el JWT automáticamente cuando recibe uno vacío.
+
+### Problema 2 — El proceso oculta errores silenciosamente
+
+**Qué pasa hoy:** hay dos puntos del proceso donde el enriquecimiento de bloques se ejecuta dentro de un bloque `try/except Exception` que captura cualquier error y solo lo registra como advertencia. El agente nunca se entera de que hubo un error. Las tareas pendientes de fallback (que deberían llegarle al agente para que lance subagentes) se pierden.
+
+**Impacto:** cuando el enriquecimiento falla (por ejemplo, el Worker Bun cae por rate limit), el agente recibe `pending_tasks: 0` aunque haya bloques sin procesar. El agente cree que no hay nada que hacer.
+
+**Causa raíz:** el `try/except` silencioso fue introducido en v6.6 como medida defensiva pero oculta errores que el agente debería ver.
+
+### Problema 3 — El proceso se queda esperando al Worker Bun cuando cae
+
+**Qué pasa hoy:** cuando el Worker Bun está procesando bloques y el servicio de Z.ai se satura (HTTP 429), el Worker Bun hace backoff exponencial pero eventualmente muere. El proceso Python queda esperando un timeout (hasta 30 segundos) antes de devolver el control al agente. Recién después de ese timeout, el agente recibe las pending_tasks y puede lanzar subagentes.
+
+**Impacto:** el agente pierde hasta 30 segundos esperando, cuando podría haber lanzado subagentes inmediatamente al detectar la caída del Worker Bun.
+
+**Causa raíz:** el proceso es secuencial: arranca Worker Bun → espera → verifica → construye pending_tasks. No hay un mecanismo que detecte la caída del Worker Bun en tiempo real y lance subagentes mientras lo monitorea.
+
+---
+
+## 4. Soluciones
+
+### F1 — Carga automática del JWT (Problema 1)
+
+**Qué se hace:**
+1. Cuando el proceso principal recibe un JWT vacío, lo carga automáticamente del `CredentialManager` (que es donde vive el JWT del Director persistido por el bookmarklet).
+2. Si después de intentar cargarlo sigue vacío, el proceso devuelve un error claro: "No hay JWT disponible. Pedí al Director que reconecte CZAI desde el sandbox."
+3. El agente ya no necesita cargar el JWT manualmente. Solo lo pasa si quiere usar uno distinto al persistido.
+
+**Lo que NO se toca:**
+- El `CredentialManager` (no se modifica).
+- El bookmarklet ni el flujo de conexión del Director.
+- El parámetro `jwt` del proceso principal (sigue existiendo, ahora con valor por defecto vacío).
+
+### F2 — Eliminar los dos `try/except` silenciosos (Problema 2)
+
+**Qué se hace:**
+1. En la función que enriquece bloques después de la activación principal (`_enriquecer_bloques_post_run`), eliminar el `try/except` que envuelve todo el bloque. Si el enriquecimiento falla, el error se propaga y se registra claramente.
+2. En la función que recoge respuestas de subagentes (`collect_responses`), eliminar el `try/except` similar. Capturar el valor de retorno del enriquecimiento directamente, sin re-leer del Orquestador.
+3. Re-aplicar el fix de v6.8.1: el enriquecimiento devuelve las pending_tasks en su valor de retorno. El agente las recibe directamente, sin intermediarios.
+
+**Lo que NO se toca:**
+- La lógica del enriquecimiento (sigue siendo la misma, ahora sin envoltorio silencioso).
+- El Worker Bun (no se modifica).
+- Los tests existentes (se actualizan para reflejar que los errores ya no se silencian).
+
+### F3 — Arnés Worker Bun / subagentes (Problema 3)
+
+**Modelo de funcionamiento:**
+
+El proceso de enriquecimiento funciona con un "arnés" que prioriza el Worker Bun y recurre a subagentes solo cuando el Worker Bun cae. El flujo es:
+
+1. **Worker Bun trabajando solo:** cuando el proceso necesita enriquecer bloques y el servicio de Z.ai está sano, el Worker Bun procesa los bloques. El agente no hace nada. No lanza subagentes. Solo espera a que el Worker Bun termine.
+
+2. **Worker Bun cae → subagentes entran:** si el Worker Bun falla (HTTP 429, timeout, muerte del proceso), la tarea que estaba procesando se devuelve a la lista de pendientes. En ese momento, el proceso le entrega al agente las pending_tasks y el agente lanza un lote de subagentes para procesar lo pendiente.
+
+3. **Monitor en segundo plano:** mientras los subagentes trabajan, el proceso monitorea al Worker Bun en segundo plano. Si el Worker Bun se recupera (el rate limit cedió), se deja que el lote de subagentes termine la tarea que está procesando (no se interrumpe a mitad) y se vuelve al Worker Bun como camino prioritario.
+
+4. **Ciclo:** Worker Bun solo → cae → subagentes solo → monitor → Worker Bun se recupera → lote termina → Worker Bun solo → ...
+
+**Regla de oro:** el Worker Bun y los subagentes nunca procesan la misma tarea al mismo tiempo. El Worker Bun es el camino prioritario. Los subagentes son el sustituto temporal cuando el Worker Bun cae. Cuando el Worker Bun se recupera, los subagentes terminan lo que están haciendo y se retiran.
+
+**Lo que se implementa:**
+1. Detectar la caída del Worker Bun sin esperar al timeout completo.
+2. Cuando cae: devolver la tarea en proceso a la lista de pendientes y construir pending_tasks para el agente inmediatamente.
+3. Lanzar el Worker Bun en segundo plano (no bloqueante) mientras los subagentes trabajan, para detectar cuándo se recupera.
+4. Cuando el Worker Bun se recupera: dejar que el lote actual de subagentes termine, luego volver al Worker Bun.
+
+**Lo que NO se toca:**
+- El Worker Bun en sí (su código TypeScript no se modifica).
+- El backoff exponencial interno del Worker Bun (sigue igual).
+- Los prompts de enriquecimiento (Worker Bun y subagentes usan el mismo prompt riguroso).
+- La idempotencia (Worker Bun y subagentes verifican si el bloque ya tiene RESUMEN antes de procesarlo).
+
+### F4 — Re-aplicación de fixes perdidos (v6.8.1, v6.8.3, v6.8.4)
+
+Los siguientes fixes se perdieron del código local tras un reset. Se re-aplican como parte de v6.10:
+
+- **v6.8.1:** capturar `fallback_tasks` del valor de retorno del enriquecimiento (parte de F2).
+- **v6.8.3:** verificar que el Worker Bun realmente procesó bloques tras esperar (parte de F3).
+- **v6.8.4:** no registrar temas provisionales en `tema_a_archivo` al integrar documentos externos; definir `_regenerar_indice_tras_enriquecimiento` y `_normalizar_bloques_externos`.
+
+**Lo que NO se toca:**
+- Las specs y planes de v6.8.1, v6.8.3, v6.8.4 (ya existen en el historial, no se regeneran).
+- El comportamiento documentado en esas specs (se respetan íntegramente).
+
+---
+
+## 5. Archivos intervenidos
+
+| Archivo | Cambio |
+|---|---|
+| `pipeline.py` | F1: carga automática del JWT. F2: eliminar `try/except` silencioso en `_enriquecer_bloques_post_run` y `collect_responses`. F3: arnés Worker Bun/subagentes. F4: re-aplicar v6.8.1, v6.8.3, v6.8.4. |
+| `coordinador/integrador_respuestas.py` | F4: re-aplicar v6.8.4 (sin temas provisionales). |
+| `tests/test_v42_e2e.py` | Actualizar tests que asumían el comportamiento viejo (try/except silencioso, temas provisionales). |
+
+---
+
+## 6. Lo que NO se toca
+
+- Worker Bun (código TypeScript, prompts, backoff).
+- `CredentialManager` (no se modifica).
+- Bookmarklet ni el flujo de conexión del Director.
+- Bloques físicos (nombre, contenido, RESUMEN).
+- Especificaciones y planes de versiones anteriores (ya en el historial).
+- La estructura de archivos de recuperación (`00_estado_actual.md`, `01_indice_recuperacion.md`, etc.).
+
+---
+
+## 7. Criterios de aceptación
+
+1. El agente puede llamar al proceso principal sin pasar el JWT (vacío) y el proceso lo carga automáticamente del `CredentialManager`.
+2. Si no hay JWT disponible, el proceso devuelve un error claro que explica qué hacer.
+3. Cuando el enriquecimiento falla, el agente recibe las `pending_tasks` correspondientes (no se silencian).
+4. Cuando el Worker Bun cae por rate limit, el agente recibe las `pending_tasks` en menos de 5 segundos (no espera 30 segundos de timeout).
+5. Cuando el Worker Bun se recupera mientras los subagentes trabajan, los subagentes terminan su lote actual y el Worker Bun retoma el control.
+6. El Worker Bun y los subagentes nunca procesan la misma tarea al mismo tiempo.
+7. Tests atómicos y E2E pasan.
+8. Importación de las funciones críticas (`_enriquecer_bloques_con_fallback`, `_consolidar_decisiones_llm`, `_normalizar_bloques_externos`, `_regenerar_indice_tras_enriquecimiento`) funciona sin error.
+
+---
+
+## 8. Validación con datos reales
+
+1. **Test F1 (JWT automático):** llamar al proceso principal sin pasar JWT. El proceso debe cargarlo automáticamente y funcionar. Si se elimina el JWT del `CredentialManager`, el proceso debe devolver el error claro.
+
+2. **Test F2 (sin errores silenciados):** simular una falla en el enriquecimiento (por ejemplo, Workspace sin bloques). El proceso debe devolver las `pending_tasks` correspondientes, no `0`.
+
+3. **Test F3 (arnés):** con el servicio de Z.ai saturado (429), verificar que:
+   - El agente recibe las `pending_tasks` en menos de 5 segundos.
+   - Los subagentes procesan los bloques mientras el Worker Bun intenta recuperarse.
+   - Cuando el servicio se recupera, el Worker Bun retoma el control.
+
+4. **Test F4 (fixes re-aplicados):** verificar que las funciones `_regenerar_indice_tras_enriquecimiento` y `_normalizar_bloques_externos` existen y se importan correctamente. Verificar que `_integrar_documento` no registra temas provisionales.
+
+---
+
+**Fin de la spec v6.10.**
+
+
+<!-- ============================================================ -->
+<!-- Fin del documento de historial de specs                     -->
 <!-- ============================================================ -->
 
 ## Notas finales
 
 - Este documento fue generado el 2025-01-09 consolidando las 10 versiones
   históricas iniciales de spec del proyecto CZAI.
-- Cada sección contiene el contenido íntegro del archivo original, sin modificaciones.
-- Los archivos originales fueron eliminados del repositorio `contexto_zai` para
-  reducir el clutter, pero su contenido se preserva aquí.
-- Versiones v4.0 a v6.0 se añadieron al índice pero no al cuerpo (su contenido
-  íntegro vive en los archivos `spec_recuperacion_contexto_v{4.0,4.2,4.3,4.4,4.5,5.0,6.0}.md`
-  del directorio `Documentos/`).
-- La versión v6.1 sí se añade al cuerpo (sección siguiente) por ser la versión
-  vigente.
-- La versión actual y vigente es la **v6.4**.
+- Actualizado el 2026-10-10 con las 9 versiones v6.5 → v6.9, reconstruidas
+  desde commits del repo (`git show <sha>:Documentos/...`) y de archivos
+  individuales en `Documentos/`.
+- Actualizado el 2026-10-12 con la versión v6.10 (carga automática JWT +
+  arnés Worker Bun/subagentes + re-aplicación fixes v6.8.1/v6.8.3/v6.8.4).
+- Cada sección contiene el contenido íntegro del archivo original.
+- Versiones v4.0 a v6.0 se añadieron al índice pero no al cuerpo.
+- Versiones v6.1 a v6.10 se añaden al cuerpo (secciones anteriores).
+- La versión actual y vigente es la **v6.10**.
 - Para futuras versiones, se recomienda mantener un único archivo de spec (sin
   versión en el nombre), usando git history para el versionado.

@@ -1,83 +1,110 @@
 ============================================================
-  CZAI v2.0 - INSTRUCCIONES DE INSTALACION
+  CZAI v6.10 - Carga automática JWT + arnés Worker Bun/subagentes
 ============================================================
 
-Este zip contiene TODOS los archivos modificados de CZAI.
+Este zip contiene TODOS los archivos modificados de CZAI v6.10.
 No necesitas nada más. Todo está aquí adentro.
 
 ------------------------------------------------------------
   QUÉ HAY EN ESTE ZIP
 ------------------------------------------------------------
 
-Este zip tiene 3 cosas:
+Este zip tiene 2 cosas:
 
 1. Este archivo de instrucciones (el que estás leyendo)
 
 2. Una carpeta llamada "para-repo-contexto_zai"
    Contiene los archivos que van en tu repositorio contexto_zai
 
-3. Una carpeta llamada "para-repo-estrategia"
-   Contiene 1 archivo que va en tu repositorio estrategia
+------------------------------------------------------------
+  QUÉ CONTIENE ESTA ACTUALIZACIÓN
+------------------------------------------------------------
+
+Esta entrega implementa v6.10 (3 DCEPI conciliados + re-aplicación
+de fixes perdidos):
+
+A) F1 — CARGA AUTOMÁTICA DEL JWT:
+   El proceso principal ahora carga el JWT del CredentialManager
+   automáticamente si se le pasa vacío. Si no hay JWT disponible,
+   devuelve un error claro en vez de fallar con HTTP 401 sin
+   explicación.
+
+B) F2 — ELIMINAR ERRORES SILENCIADOS:
+   Se eliminaron los dos try/except que ocultaban errores del
+   enriquecimiento. Ahora, cuando el enriquecimiento falla, las
+   pending_tasks llegan al agente (no se silencian).
+
+C) F3 — ARNÉS WORKER BUN / SUBAGENTES:
+   Cuando el Worker Bun cae (429, timeout), el proceso le entrega
+   las pending_tasks al agente en menos de 5 segundos (antes
+   esperaba hasta 30). El Worker Bun sigue intentando recuperarse
+   en segundo plano. Cuando se recupera, los subagentes terminan
+   su lote actual y el Worker Bun retoma el control.
+
+D) F4 — RE-APLICACIÓN DE FIXES PERDIDOS:
+   Se re-aplicaron los fixes de v6.8.1 (capturar fallback_tasks
+   del retorno), v6.8.3 (verificar Worker Bun procesó bloques) y
+   v6.8.4 (sin temas provisionales + funciones faltantes) que
+   se perdieron del código local tras un reset.
+
+Validación ejecutada:
+   - Tests atómicos pipeline.py: PASS
+   - Tests atómicos integrador_respuestas.py: PASS
+   - Tests E2E test_v42_e2e.py: 30/30 PASS
+   - Importación de las 4 funciones críticas: OK
 
 ------------------------------------------------------------
   QUÉ DEBES HACER (3 PASOS)
 ------------------------------------------------------------
 
-PASO 1: Sube los archivos al repositorio contexto_zai
------------------------------------------------------
+PASO 1: Descomprime el .zip y copia los archivos al repo contexto_zai
+---------------------------------------------------------------------
 
-a) Abre la carpeta "para-repo-contexto_zai" de este zip
+a) Descomprime este .zip en una carpeta temporal de tu PC.
 
-b) Dentro de ella hay 4 cosas:
-   - setup-czai.sh              (un archivo)
-   - sandbox-src/               (una carpeta con archivos dentro)
-   - download/                  (una carpeta con 2 archivos .bat y .ps1)
-   - Documentación/             (una carpeta con 1 archivo .md)
+b) Abre la carpeta "para-repo-contexto_zai" del .zip descomprimido.
 
-c) Copia estas 4 cosas a la raíz de tu repositorio contexto_zai
-   en tu computadora. Es decir, si tu repositorio está en:
-   C:\Usuarios\juanc\contexto_zai\
-   
-   Debes copiar así:
-   C:\Usuarios\juanc\contexto_zai\setup-czai.sh
-   C:\Usuarios\juanc\contexto_zai\sandbox-src\
-   C:\Usuarios\juanc\contexto_zai\download\czai-installer.bat
-   C:\Usuarios\juanc\contexto_zai\download\czai-installer.ps1
-   C:\Usuarios\juanc\contexto_zai\Documentación\metodologia_obtencion_jwt.md
+c) Dentro de ella hay esta estructura:
+   - Documentos/               (4 archivos: spec v6.10, plan v6.10, 2 historiales)
+   - pipeline.py               (1 archivo .py)
+   - coordinador/              (1 archivo .py dentro)
+   - tests/                    (1 archivo .py dentro)
 
-d) Si las carpetas "download" o "Documentación" ya existen en tu repo,
-   simplemente copia los archivos DENTRO de ellas (no borres lo que ya hay).
+d) Copia estas 4 cosas a la raíz de tu repositorio contexto_zai
+   en tu computadora, reemplazando los archivos existentes:
 
-e) Abre una terminal (cmd o PowerShell) en la carpeta del repositorio
-   y ejecuta estos 3 comandos:
+   C:\Python\Proyectos\contexto_zai\pipeline.py
+   C:\Python\Proyectos\contexto_zai\coordinador\integrador_respuestas.py
+   C:\Python\Proyectos\contexto_zai\tests\test_v42_e2e.py
+   C:\Python\Proyectos\contexto_zai\Documentos\historial_spec.md
+   C:\Python\Proyectos\contexto_zai\Documentos\historial_plan.md
+   C:\Python\Proyectos\contexto_zai\Documentos\spec_recuperacion_contexto_v6.10.md
+   C:\Python\Proyectos\contexto_zai\Documentos\plan_refactorizacion_v6.10.md
+
+e) IMPORTANTE — Elimina los individuales obsoletos:
+   Tras copiar, estos archivos DEBEN quedar ELIMINADOS de tu repo local
+   (su contenido ya vive en los historiales actualizados):
+
+   C:\Python\Proyectos\contexto_zai\Documentos\spec_recuperacion_contexto_v6.9.md
+   C:\Python\Proyectos\contexto_zai\Documentos\plan_refactorizacion_v6.9.md
+
+   Tras la copia, en tu carpeta Documentos/ deben quedar SOLO 4 archivos:
+   - historial_spec.md          (con secciones v6.5 a v6.10)
+   - historial_plan.md          (con secciones v6.5 a v6.10)
+   - spec_recuperacion_contexto_v6.10.md   (individual vigente)
+   - plan_refactorizacion_v6.10.md         (individual vigente)
+
+
+PASO 2: Sube los cambios a GitHub
+---------------------------------
+
+a) Abre una terminal (cmd o PowerShell) en la carpeta del repositorio
+   contexto_zai en tu computadora.
+
+b) Ejecuta estos 3 comandos:
 
    git add .
-   git commit -m "CZAI v2.0: persistencia localStorage + setup portable + metodologia"
-   git push origin main
-
-
-PASO 2: Sube el archivo al repositorio estrategia
---------------------------------------------------
-
-a) Abre la carpeta "para-repo-estrategia" de este zip
-
-b) Dentro hay 1 archivo:
-   - worklog_template.md
-
-c) Copia este archivo a la raíz de tu repositorio estrategia
-   en tu computadora. Es decir, si tu repositorio está en:
-   C:\Usuarios\juanc\estrategia-agentes-zai\
-   
-   Debes copiar así:
-   C:\Usuarios\juanc\estrategia-agentes-zai\worklog_template.md
-
-   Esto REEMPLAZA el archivo worklog_template.md que ya existe ahí.
-
-d) Abre una terminal en la carpeta del repositorio estrategia
-   y ejecuta estos 3 comandos:
-
-   git add worklog_template.md
-   git commit -m "CZAI v2.0: paso 2b obligatorio con flujo de 3 sub-pasos"
+   git commit -m "v6.10: carga automatica JWT + arnes Worker Bun/subagentes + re-aplicacion fixes v6.8.1/v6.8.3/v6.8.4"
    git push origin main
 
 
@@ -86,44 +113,57 @@ PASO 3: Verifica que todo quedó bien
 
 a) Entra a GitHub en tu navegador:
    https://github.com/Juank6507/contexto_zai
-   
-   Verás el último commit con el mensaje:
-   "CZAI v2.0: persistencia localStorage + setup portable + metodologia"
 
-b) Entra a:
-   https://github.com/Juank6507/estrategia-agentes-zai
-   
-   Verás el último commit con el mensaje:
-   "CZAI v2.0: paso 2b obligatorio con flujo de 3 sub-pasos"
+b) Verás el último commit con el mensaje:
+   "v6.10: carga automatica JWT + arnes Worker Bun/subagentes + re-aplicacion fixes v6.8.1/v6.8.3/v6.8.4"
 
-Si ves ambos commits en GitHub, está todo listo.
+c) Navega a la carpeta Documentos/ del repo en GitHub y verifica que
+   contiene SOLO 4 archivos:
+   - historial_spec.md
+   - historial_plan.md
+   - spec_recuperacion_contexto_v6.10.md
+   - plan_refactorizacion_v6.10.md
+
+Si ves el commit en GitHub y la carpeta Documentos/ tiene solo esos 4
+archivos, la actualización quedó aplicada correctamente.
 
 
 ------------------------------------------------------------
   QUÉ ES CADA COSA (por si te lo preguntas)
 ------------------------------------------------------------
 
-setup-czai.sh
-   Es un script que el agente Z.ai ejecuta al inicio de cada sesión nueva.
-   Lo que hace: copia el código de CZAI al sandbox vacío para que los
-   endpoints funcionen. Sin esto, el sandbox da error 404.
+historial_spec.md (con secciones v6.5 a v6.10)
+   Es la fuente de verdad de la secuencia de specs del proyecto CZAI.
+   Contiene 11 secciones: v3.5, v3.6, v6.5 a v6.10. Permite retroceder,
+   entender lo que existe y comparar versiones.
 
-sandbox-src/ (carpeta)
-   Es el código fuente de CZAI: los endpoints, el componente de la página,
-   y las librerías. El script setup-czai.sh copia estos archivos al sandbox.
+historial_plan.md (con secciones v6.5 a v6.10)
+   Es la fuente de verdad de la secuencia de planes. Misma estructura
+   que historial_spec.md con 11 secciones.
 
-czai-installer.bat y czai-installer.ps1
-   Es el instalador que el Director ejecuta en su PC (doble clic) para
-   crear el favorito "Conectar CZAI" en su navegador.
+spec_recuperacion_contexto_v6.10.md (individual vigente)
+   Es la spec de la versión actual. Se reemplaza en cada nueva versión.
 
-metodologia_obtencion_jwt.md
-   Es el documento que explica cómo obtener el JWT y cómo persiste entre
-   sesiones. Es para nuevos Directores.
+plan_refactorizacion_v6.10.md (individual vigente)
+   Es el plan de la versión actual. Se reemplaza en cada nueva versión.
 
-worklog_template.md
-   Es la plantilla que el agente lee al iniciar cada sesión. Ahora tiene
-   el paso 2b obligatorio: el agente DEBE ejecutar setup-czai.sh y verificar
-   el JWT antes de continuar.
+pipeline.py
+   Es el entry point del proceso CZAI. Contiene:
+   - run() con carga automática del JWT (F1)
+   - collect_responses() sin try/except silencioso (F2)
+   - _enriquecer_bloques_post_run() sin try/except silencioso (F2)
+   - _enriquecer_bloques_con_fallback() con arnés no bloqueante (F3)
+   - _arrancar_worker_y_esperar() con verificación de RESUMEN (F4 v6.8.3)
+   - _regenerar_indice_tras_enriquecimiento() definida (F4 v6.8.4)
+   - _normalizar_bloques_externos() definida (F4 v6.8.4)
+
+coordinador/integrador_respuestas.py
+   - _integrar_documento() no registra temas provisionales (F4 v6.8.4)
+   - Tests 12-17 actualizados para reflejar el nuevo contrato
+
+tests/test_v42_e2e.py
+   - test_query_context_encuentra_bloque_externo actualizado para
+     simular el enriquecimiento en vez de asumir tema provisional
 
 
 ------------------------------------------------------------

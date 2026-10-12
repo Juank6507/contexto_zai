@@ -359,36 +359,47 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
         bloques_externos = list(ws.glob("bloque_*.md"))
         assert len(bloques_externos) >= 1, f"Esperaba ≥1 bloque: {bloques_externos}"
 
-        # Verificar que los temas provisionales están en _metadata.json
-        # v6.8 F3: el bloque se crea con tema PROVISIONAL GENÉRICO.
-        # Los temas definitivos los genera el enriquecimiento (Worker 4 o subagente).
-        # v6.8.2 F1: el tema se escribe como lista.
+        # v6.10 F4: tras _integrar_documento, tema_a_archivo NO tiene entrada para el
+        # bloque externo (no se registra el provisional). El enriquecimiento la añadirá.
         metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
-        assert len(metadata["tema_a_archivo"]) >= 1, \
-            f"Falta tema provisional: {metadata['tema_a_archivo']}"
-        # v6.8 F3: el tema debe ser genérico (no inferido de título de sección)
-        assert "documento_externo_0" in metadata["tema_a_archivo"], \
-            f"v6.8 F3: esperaba tema genérico, obtuvo: {metadata['tema_a_archivo']}"
-        # v6.8.2 F1: el valor debe ser lista, no string
-        valor = metadata["tema_a_archivo"]["documento_externo_0"]
-        assert isinstance(valor, list), f"v6.8.2 F1: esperaba lista, obtuvo {type(valor).__name__}"
-        assert "bloque_01.md" in valor, f"v6.8.2 F1: esperaba bloque_01.md en lista"
+        assert len(metadata["tema_a_archivo"]) == 0, \
+            f"v6.10 F4: tema_a_archivo debe estar vacío: {metadata['tema_a_archivo']}"
+        for clave in metadata["tema_a_archivo"]:
+            assert not clave.startswith("documento_externo_"), \
+                f"v6.10 F4: tema provisional '{clave}' no debería estar"
+        # v6.10 F4: archivo_a_source SÍ debe tener la entrada del bloque
+        assert "archivo_a_source" in metadata, "v6.10 F4: archivo_a_source debe existir"
+        assert any(bloques_externos[0].name in src for src in metadata["archivo_a_source"]), \
+            f"v6.10 F4: archivo_a_source debe tener el bloque: {metadata.get('archivo_a_source')}"
 
-        # 4. query_context() encuentra el bloque externo por el tema provisional.
-        # v6.8 F3: query_context encuentra el bloque por tema genérico.
-        # Cuando el enriquecimiento corra, reemplazará el tema genérico por uno significativo.
+        # v6.10 F4: simular que el enriquecimiento ya corrió: escribir _responses/<bloque>_temas.txt
+        from contexto_zai.pipeline import _regenerar_indice_tras_enriquecimiento
+        responses_dir = ws / "_responses"
+        responses_dir.mkdir(exist_ok=True)
+        bloque_filename = bloques_externos[0].name
+        block_id = bloque_filename.replace(".md", "")
+        (responses_dir / f"{block_id}_temas.txt").write_text(
+            "autenticacion_jwt\ncontrol_acceso_roles\n", encoding="utf-8",
+        )
+        bloques_con_temas = _regenerar_indice_tras_enriquecimiento(workspace_dir=str(ws))
+        assert bloques_con_temas >= 1, \
+            f"v6.10 F4: esperaba ≥1 bloque con temas, obtuvo {bloques_con_temas}"
+
+        # Re-leer metadata tras el enriquecimiento simulado
+        metadata = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
+        assert "autenticacion_jwt" in metadata["tema_a_archivo"], \
+            f"v6.10 F4: esperaba 'autenticacion_jwt' registrado: {metadata['tema_a_archivo']}"
+
+        # 4. query_context() encuentra el bloque externo por el tema significativo.
         query_result = query_context("¿qué dice sobre jwt?", workspace_dir=str(ws))
         assert "error" not in query_result, f"Esperaba encontrar bloque, obtuvo error: {query_result}"
         assert query_result["mode"] == "direct"
-        # v6.6 F4: el bloque encontrado es bloque_01.md (canónico, no bloque_externo_*)
         assert any(b.startswith("bloque_") for b in query_result["bloques"]), \
             f"Esperaba bloque canónico en candidatos: {query_result['bloques']}"
-        # El tema tentativo está en los candidatos
-        primer_tema = list(metadata["tema_a_archivo"].keys())[0]
-        assert primer_tema in query_result["bloques_info"][0]["temas"], \
-            f"Esperaba tema tentativo '{primer_tema}' en candidatos: {query_result['bloques_info'][0]['temas']}"
+        assert "autenticacion_jwt" in query_result["bloques_info"][0]["temas"], \
+            f"Esperaba tema 'autenticacion_jwt' en candidatos: {query_result['bloques_info'][0]['temas']}"
 
-        print("[OK] query_context E2E: encuentra bloque externo por tema tentativo (v6.7 F2)")
+        print("[OK] query_context E2E: encuentra bloque externo por tema significativo (v6.10 F4)")
 
 
 def test_sintesis_contexto_e2e():

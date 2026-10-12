@@ -737,8 +737,22 @@ class IntegradorRespuestas:
         )
 
         # v6.7 F2: Los temas tentativos se registran en tema_a_archivo.
-        # Worker 4 (temas principales) los refinará después leyendo el RESUMEN.
-        # Actualizar _metadata.json
+        # v6.8.4 re-aplicado (v6.10 F4): NO registrar el tema provisional
+        # documento_externo_NN en tema_a_archivo. Antes se registraba y eso
+        # contaminaba el índice con entradas fantasma que solo el enriquecimiento
+        # posterior reemplazaba (y si el enriquecimiento fallaba o no corría,
+        # el fantasma quedaba). Ahora el bloque se escribe con el tema
+        # provisional solo en el header del .md (para que el Worker 1 sepa que
+        # es externo), pero tema_a_archivo queda sin entrada para este bloque
+        # hasta que el enriquecimiento escriba el _responses/<bloque>_temas.txt
+        # con los temas significativos extraídos del RESUMEN.
+        # _regenerar_indice_tras_enriquecimiento (pipeline.py) es el que vuelca
+        # los temas del _responses/ a tema_a_archivo y regenera el índice.
+        temas_registrados: list[str] = []  # vacío: el enriquecimiento los poblará
+
+        # Cargar metadata para registrar el source (archivo_a_source) y, si
+        # quedan entradas tema_a_archivo previas de versiones anteriores,
+        # preservarlas. v6.8.4: NO añadimos entrada nueva para este bloque.
         metadata_path = ws / "_metadata.json"
         if metadata_path.exists():
             try:
@@ -752,29 +766,6 @@ class IntegradorRespuestas:
         if "tema_a_archivo" not in metadata:
             metadata["tema_a_archivo"] = {}
 
-        # v6.7 F2: Registrar los temas tentativos en tema_a_archivo.
-        temas_registrados: list[str] = []
-        for tema_nombre in temas_tentativos:
-            clave = self._resolver_clave_tema(
-                tema_nombre=tema_nombre,
-                filename=filename,
-                bloque_filename=bloque_filename,
-                tema_a_archivo=metadata["tema_a_archivo"],
-            )
-            # v6.8.2 F1: escribir como lista (siempre lista, no string)
-            metadata["tema_a_archivo"][clave] = [bloque_filename]
-            temas_registrados.append(clave)
-        if not temas_registrados:
-            # Fallback: nombre genérico (compatibilidad con respuestas mal formadas)
-            clave_generica = f"documento_externo_{lote_idx}"
-            # v6.8.2 F1: escribir como lista
-            metadata["tema_a_archivo"][clave_generica] = [bloque_filename]
-            temas_registrados.append(clave_generica)
-            logger.warning(
-                "documento: sin temas tentativos, usando nombre genérico '%s'",
-                clave_generica,
-            )
-
         # Registrar el source (información de procedencia, no de tema)
         if "archivo_a_source" not in metadata:
             metadata["archivo_a_source"] = {}
@@ -782,7 +773,7 @@ class IntegradorRespuestas:
             "source_type": "file",
             "filename": filename,
             "lote": lote_idx,
-            "temas": temas_registrados,  # v6.7 F2: temas tentativos inferidos de los títulos
+            "temas": temas_registrados,  # v6.8.4: vacío — el enriquecimiento los poblará
         }
 
         metadata_path.write_text(
@@ -791,8 +782,9 @@ class IntegradorRespuestas:
         )
 
         logger.info(
-            "documento: metadata actualizada — %d tema(s) real(es) → '%s': %s",
-            len(temas_registrados), bloque_filename, temas_registrados,
+            "v6.10 F4: bloque externo '%s' escrito — tema_a_archivo sin entrada "
+            "provisional (el enriquecimiento la añadirá).",
+            bloque_filename,
         )
 
         # v4.3 (F0.1): regenerar 01_indice_recuperacion.md para que incluya los
@@ -1213,9 +1205,9 @@ if __name__ == "__main__":
 
     # v6.0: Tests 10-11 (CLASIFICACION_TEMAS) eliminados — el modo ya no existe.
 
-    # Test 12 (v4.2 unificación): _integrar_documento registra temas REALES (no nombre genérico)
-    # El subagente indexador devuelve formato TEMA/DESCRIPCION/SECCIONES.
-    # _integrar_documento debe parsearlos y registrarlos en tema_a_archivo con sus nombres semánticos.
+    # Test 12 (v6.10 F4): _integrar_documento NO registra tema provisional en tema_a_archivo.
+    # El bloque se escribe con contenido literal y tema provisional SOLO en el header del .md.
+    # tema_a_archivo queda vacío hasta que el enriquecimiento escriba _responses/<bloque>_temas.txt.
     with tempfile.TemporaryDirectory() as tmpdir:
         integrador = IntegradorRespuestas(workspace_dir=tmpdir)
         metadata_path = Path(tmpdir) / "_metadata.json"
@@ -1234,33 +1226,30 @@ El control de acceso por roles gestiona permisos según el rol del usuario.""",
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # v6.7 F2: los temas tentativos se infieren de los títulos de sección.
-        # "Sistema de autenticación JWT" → tema tentativo "sistema_de_autenticacion_jwt"
-        # "Control de acceso por roles" → tema tentativo "control_de_acceso_por_roles"
-        # Verificamos que al menos un tema tentativo esté registrado.
-        assert len(metadata["tema_a_archivo"]) >= 1, \
-            f"Esperaba ≥1 tema tentativo, obtuvo: {metadata['tema_a_archivo']}"
-        # v6.8.2 F1: el tema se escribe como lista. Verificar que contiene bloque_01.md.
-        primer_tema = list(metadata["tema_a_archivo"].keys())[0]
-        valor = metadata["tema_a_archivo"][primer_tema]
-        # v6.8.2 F1: tolerante a string (legacy) y lista (nuevo)
-        if isinstance(valor, list):
-            assert "bloque_01.md" in valor, \
-                f"v6.8.2 F1: esperaba 'bloque_01.md' en lista, obtuvo: {valor}"
-        else:
-            assert valor == "bloque_01.md", \
-                f"v6.8.2 F1: esperaba 'bloque_01.md', obtuvo: {valor}"
+        # v6.10 F4: tema_a_archivo NO debe tener entrada para el bloque externo.
+        assert len(metadata["tema_a_archivo"]) == 0, \
+            f"v6.10 F4: esperaba tema_a_archivo vacío, obtuvo: {metadata['tema_a_archivo']}"
+        for clave in metadata["tema_a_archivo"]:
+            assert not clave.startswith("documento_externo_"), \
+                f"v6.10 F4: tema provisional '{clave}' no debería estar registrado"
         # El bloque físico debe existir con nombre canónico
         bloque_path = Path(tmpdir) / "bloque_01.md"
         assert bloque_path.exists()
-        # v6.6 F4: el header debe ser "# Bloque tematico:" (no "# Bloque externo:")
+        # v6.6 F4: el header debe ser "# Bloque tematico:"
         bloque_content = bloque_path.read_text(encoding="utf-8")
         assert bloque_content.startswith("# Bloque tematico:"), \
             f"v6.6 F4: header debe ser '# Bloque tematico:', obtuvo: {bloque_content[:50]}"
-        # v6.7 F2: el bloque debe tener CONTENIDO LITERAL (no índice TEMA/DESCRIPCION)
+        # v6.7 F2: el bloque debe tener CONTENIDO LITERAL
         assert "## Sección 1 —" in bloque_content, \
             f"v6.7 F2: bloque debe tener contenido literal con secciones, obtuvo: {bloque_content[:100]}"
-        print(f"[OK] v6.7 F2: bloque con contenido literal + temas tentativos inferidos de títulos")
+        # v6.10 F4: el header debe mencionar documento_externo_0 (header only)
+        assert "documento_externo_0" in bloque_content.split("\n")[0], \
+            f"v6.10 F4: header debe mencionar documento_externo_0, obtuvo: {bloque_content[:80]}"
+        # v6.10 F4: archivo_a_source SÍ debe tener la entrada del bloque
+        assert "archivo_a_source" in metadata, "v6.10 F4: archivo_a_source debe existir"
+        assert "bloque_01.md" in metadata["archivo_a_source"], \
+            f"v6.10 F4: archivo_a_source debe tener bloque_01.md, obtuvo: {metadata.get('archivo_a_source')}"
+        print(f"[OK] v6.10 F4: bloque con contenido literal, tema_a_archivo vacío (sin provisional)")
 
     # Test 13 (v4.2 unificación): _integrar_documento cae a nombre genérico si no hay secciones parseables
     # (respuesta mal formada) — no se pierde el bloque.
@@ -1276,9 +1265,12 @@ El control de acceso por roles gestiona permisos según el rol del usuario.""",
         result = integrador.integrar([resp])
         assert result["total_applied"] == 1
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # Debe caer al nombre genérico para no perder el bloque
-        assert "documento_externo_0" in metadata["tema_a_archivo"]
-        print(f"[OK] _integrar_documento: fallback a nombre genérico si respuesta sin secciones")
+        # v6.10 F4: ni siquiera con respuesta mal formada se registra el provisional
+        assert len(metadata["tema_a_archivo"]) == 0, \
+            f"v6.10 F4: tema_a_archivo debe quedar vacío, obtuvo: {metadata['tema_a_archivo']}"
+        bloque_path = Path(tmpdir) / "bloque_01.md"
+        assert bloque_path.exists(), "v6.10 F4: el bloque debe existir aunque la respuesta sea mal formada"
+        print(f"[OK] v6.10 F4: respuesta mal formada → bloque conservado, tema_a_archivo vacío")
 
     # Test 14 (v4.2 unificación): _integrar_documento no sobrescribe tema existente del chat
     # Si el subagente devuelve un tema que ya existe en tema_a_archivo (del chat),
@@ -1304,14 +1296,16 @@ Documento sobre JWT con firma y verificación.""",
         _valor = metadata["tema_a_archivo"]["autenticacion_jwt"]
         _archivos = _valor if isinstance(_valor, list) else [_valor]
         assert "bloque_01.md" in _archivos, f"tema chat debe apuntar a bloque_01.md"
-        # v6.8 F3: el bloque externo se crea con tema genérico (no prefijado con filename)
-        # v6.8.2 F1: el tema genérico ahora es "documento_externo_N" (sin filename)
-        assert any(k.startswith("documento_externo_") for k in metadata["tema_a_archivo"]), \
-            f"v6.8 F3: esperaba tema genérico, obtuvo: {metadata['tema_a_archivo']}"
+        # v6.10 F4: NO debe aparecer ningún tema provisional documento_externo_NN
+        entradas_doc = [k for k in metadata["tema_a_archivo"] if k.startswith("documento_externo_")]
+        assert len(entradas_doc) == 0, \
+            f"v6.10 F4: no debe haber provisionales, obtuvo: {entradas_doc}"
         # NO debe aparecer tema con prefijo de filename contaminado
         assert not any("doc_pdf" in k for k in metadata["tema_a_archivo"]), \
             f"v6.8 F3: no debe haber temas con prefijo de filename, obtuvo: {metadata['tema_a_archivo']}"
-        print(f"[OK] _integrar_documento: no sobrescribe tema existente (prefija con filename)")
+        assert (Path(tmpdir) / "bloque_02.md").exists() or (Path(tmpdir) / "bloque_01.md").exists(), \
+            "v6.10 F4: el bloque externo debe existir"
+        print(f"[OK] v6.10 F4: no sobrescribe tema chat, no crea provisional, bloque conservado")
 
     # Test 15 (F0.2 v4.3): reprocesar el mismo documento DOS VECES → no crea entradas fantasma
     # Caso 1 de _resolver_clave_tema: clave existe apuntando al mismo bloque → idempotente.
@@ -1331,11 +1325,15 @@ Sistema de autenticación JWT con header y payload.""",
         # Segunda integración con la MISMA respuesta (simula reprocesamiento)
         integrador.integrar([resp])
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        # v6.8 F3: debe haber SOLO UNA entrada genérica (idempotente con tema genérico)
+        # v6.10 F4: tema_a_archivo sigue vacío (no se registran provisionales)
         entradas_doc = [k for k in metadata["tema_a_archivo"] if k.startswith("documento_externo_")]
-        assert len(entradas_doc) == 1, \
-            f"F0.2: esperaba 1 entrada genérica, obtuvo {entradas_doc} (entradas fantasma)"
-        print(f"[OK] F0.2 reprocesamiento: idempotente, sin entradas fantasma ({len(entradas_doc)} entrada)")
+        assert len(entradas_doc) == 0, \
+            f"v6.10 F4: esperaba 0 provisionales, obtuvo {entradas_doc}"
+        # Idempotencia: el bloque físico existe una sola vez
+        bloques = list(Path(tmpdir).glob("bloque_*.md"))
+        assert len(bloques) == 1, \
+            f"v6.10 F4: esperaba 1 bloque físico, obtuvo {len(bloques)}"
+        print(f"[OK] v6.10 F4 reprocesamiento: idempotente, sin provisionales ({len(bloques)} bloque)")
 
     # Test 16 (F0.2 v4.3): tres documentos distintos con el mismo tema → sufijo numérico
     # Caso 4 de _resolver_clave_tema: prefijada existe apuntando a otro bloque → sufijo.
@@ -1363,12 +1361,13 @@ Sistema de autenticación JWT con header y payload.""",
 
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         assert "autenticacion_jwt" in metadata["tema_a_archivo"]  # chat original
-        # v6.8 F3: ambos docs se crean con tema genérico (distinto lote_idx)
-        # El enriquecimiento decidirá si son el mismo tema o no
+        # v6.10 F4: no debe haber ningún tema provisional documento_externo_NN
         entradas_doc = [k for k in metadata["tema_a_archivo"] if k.startswith("documento_externo_")]
-        assert len(entradas_doc) >= 1, \
-            f"v6.8 F3: esperaba temas genéricos, obtuvo: {metadata['tema_a_archivo']}"
-        print(f"[OK] v6.8 F3: tres docs mismo tema → temas genéricos provisionales ({len(entradas_doc)} entradas)")
+        assert len(entradas_doc) == 0, \
+            f"v6.10 F4: esperaba 0 provisionales, obtuvo: {metadata['tema_a_archivo']}"
+        bloques = list(Path(tmpdir).glob("bloque_*.md"))
+        assert len(bloques) >= 2, f"v6.10 F4: esperaba ≥2 bloques físicos, obtuvo {len(bloques)}"
+        print(f"[OK] v6.10 F4: tres docs mismo tema → sin provisionales, {len(bloques)} bloques físicos")
 
     # Test 17 (F0.1 v4.3): _integrar_documento regenera 01_indice_recuperacion.md
     # con los bloques externos nuevos.
@@ -1396,13 +1395,13 @@ Documento sobre el diseño de la API REST con endpoints y auth.""",
         indice_path = Path(tmpdir) / "01_indice_recuperacion.md"
         assert indice_path.exists(), "F0.1: 01_indice_recuperacion.md debe existir tras integrar documento"
         indice_content = indice_path.read_text(encoding="utf-8")
-        # v6.8 F3: el índice debe contener el tema genérico (no inferido de título)
-        assert "documento_externo_0" in indice_content, \
-            f"v6.8 F3: el índice debe contener tema genérico, obtuvo: {indice_content[:200]}"
-        # NO debe contener tema inferido del título
-        assert "api_rest" not in indice_content, \
-            f"v6.8 F3: el índice NO debe inferir tema del título, obtuvo: {indice_content[:200]}"
-        print(f"[OK] v6.8 F3: índice con tema genérico (no inferido de título)")
+        # v6.10 F4: el índice NO debe contener tema provisional documento_externo_0
+        assert "documento_externo_0" not in indice_content, \
+            f"v6.10 F4: el índice no debe tener provisional, obtuvo: {indice_content[:200]}"
+        # El bloque físico SÍ debe existir (no se pierde aunque no esté en el índice)
+        bloques = list(Path(tmpdir).glob("bloque_*.md"))
+        assert len(bloques) >= 1, "v6.10 F4: el bloque físico debe existir"
+        print(f"[OK] v6.10 F4: índice regenerado sin provisional (bloque en disco, sin indexar aún)")
 
     # Test 18 (F2 v4.3): _integrar_sintesis_contexto inserta G0.B en 00_estado_actual.md sin la sección
     with tempfile.TemporaryDirectory() as tmpdir:

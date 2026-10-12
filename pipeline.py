@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 def run(
     chat_id: str,
-    jwt: str,
+    jwt: str = "",
     trigger: DetectionTrigger = DetectionTrigger.EXPLICITO,
     reason: str = "",
     chat_label: str = "",
@@ -61,10 +61,15 @@ def run(
     Es la función principal que el agente invoca cuando detecta
     pérdida de contexto o el Director lo indica.
 
+    v6.10 F1: si ``jwt`` llega vacío, se carga automáticamente del
+    ``CredentialManager`` (donde persiste el JWT del Director puesto
+    por el bookmarklet). Si después de cargarlo sigue vacío, se
+    devuelve un error claro.
+
     Args:
         chat_id: UUID interno del chat (viene en metadatos del gateway).
             Puede estar vacío si se pasa ``share_id`` externo (v4.2).
-        jwt: JWT del Director.
+        jwt: JWT del Director. Si es vacío, se carga del CredentialManager.
         trigger: Tipo de disparador.
         reason: Razón legible de la activación.
         chat_label: Etiqueta del chat.
@@ -79,14 +84,38 @@ def run(
     Returns:
         OrchestratorResult con el resultado de la activación.
 
+    Raises:
+        ValueError: Si no hay JWT disponible (ni en el parámetro ni en
+            el CredentialManager).
+
     Example:
         >>> from contexto_zai.pipeline import run
         >>> from contexto_zai.models import DetectionTrigger
-        >>> # Caso 1: chat actual del agente
-        >>> result = run(chat_id="13b43432-...", jwt="eyJhbG...")
+        >>> # Caso 1: chat actual del agente (JWT se carga automáticamente)
+        >>> result = run(chat_id="13b43432-...")
         >>> # Caso 2: chat externo vía link /s/ (v4.2)
-        >>> result = run(chat_id="", jwt="eyJhbG...", share_id="abc-123")
+        >>> result = run(chat_id="", share_id="abc-123")
     """
+    # v6.10 F1: carga automática del JWT si llega vacío.
+    if not jwt:
+        try:
+            from contexto_zai.client.credential_manager import CredentialManager
+            cm = CredentialManager()
+            jwt = cm.get_jwt() or ""
+            if jwt:
+                logger.info("v6.10 F1: JWT cargado automáticamente del CredentialManager (email=%s)", cm.get_email())
+        except Exception as e:
+            logger.warning("v6.10 F1: no se pudo cargar el JWT del CredentialManager: %s", e)
+
+    if not jwt:
+        # Sin JWT no se puede continuar. Devolver error claro en vez de
+        # fallar con HTTP 401 sin explicación.
+        error_result = OrchestratorResult(
+            success=False,
+            error="No hay JWT disponible. Pedí al Director que reconecte CZAI desde el sandbox (botón 'Conectar CZAI' en el Preview Panel).",
+        )
+        return error_result
+
     orch = Orchestrator(
         chat_id=chat_id,
         jwt=jwt,
@@ -689,32 +718,33 @@ def collect_responses(
 
     resultado = orch.aplicar_respuestas(integrador=integrador)
 
-    # v6.6 F3 fix (Bug 7): enriquecer bloques nuevos después de que
-    # collect_responses() los haya escrito al disco. Antes, el enriquecimiento
-    # se invocaba desde ampliar_contexto() PERO antes de que los subagentes
-    # corrieran — los bloques físicos no existían todavía. El momento correcto
-    # es aquí, después de aplicar las respuestas (los bloques ya están en disco).
+    # v6.10 F2: enriquecer bloques nuevos después de que collect_responses()
+    # los haya escrito al disco. El momento correcto es aquí, después de
+    # aplicar las respuestas (los bloques ya están en disco).
     # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
     # bloques del chat que hayan quedado sin RESUMEN.
-    # Si el Worker Bun falla o hace timeout, el fallback genera pending_tasks
-    # para que el agente las ejecute con subagentes (diseño v6.2).
-    try:
-        bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
-        if bloques_sin_resumen:
-            _enriquecer_bloques_con_fallback(
-                blocks=bloques_sin_resumen,
-                workspace_dir=workspace_dir,
-                chat_label="collect_responses",
+    # v6.10 F2: SIN try/except silencioso. Si el enriquecimiento falla, el
+    # error se propaga. Las pending_tasks se capturan del valor de retorno
+    # directamente (v6.8.1 re-aplicado), sin re-leer del Orquestador.
+    # v6.10 F3: el arnés (_enriquecer_bloques_con_fallback) detecta la caída
+    # del Worker Bun en menos de 5s y devuelve las pending_tasks inmediatamente.
+    bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
+    if bloques_sin_resumen:
+        fallback_tasks = _enriquecer_bloques_con_fallback(
+            blocks=bloques_sin_resumen,
+            workspace_dir=workspace_dir,
+            chat_label="collect_responses",
+        )
+        # v6.8.1 re-aplicado: capturar el valor de retorno, no re-leer del Orquestador.
+        if fallback_tasks:
+            resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
+            logger.info(
+                "v6.10: %d tarea(s) de fallback añadida(s) a pending_tasks.",
+                len(fallback_tasks),
             )
-            # Si el enriquecimiento generó pending_tasks (fallback a subagentes),
-            # añadirlas al resultado para que el agente las ejecute.
-            from contexto_zai.coordinador import Orquestador as _Orq
-            orch2 = _Orq(workspace_dir=workspace_dir)
-            nuevas_tasks = orch2.leer_tareas_pendientes()
-            if nuevas_tasks:
-                resultado.setdefault("pending_tasks", []).extend(nuevas_tasks)
-    except Exception as e:
-        logger.warning("v6.6 F3 Bug 7 fix: error en enriquecimiento tras collect_responses: %s", e)
+        # v6.8.4 re-aplicado: tras enriquecer, consolidar decisiones y regenerar índice.
+        _consolidar_decisiones_llm(workspace_dir=workspace_dir)
+        _regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
 
     return resultado
 
@@ -1192,12 +1222,40 @@ def _arrancar_worker_y_esperar(
     if puerto_en_uso:
         logger.info("v6.8.2 F2: puerto %d en uso — Worker Bun ya está corriendo, reutilizando",
                    WORKER_BUN_PORT)
-        # Hay un Worker Bun corriendo. Esperar a que procese los bloques del
-        # _pending_blocks.json y devolver True (asumimos que el worker existente
-        # procesará los bloques porque lee el _pending_blocks.json del workspace).
-        # Darle tiempo para que procese.
+        # v6.8.3 re-aplicado (v6.10 F3): NO asumir éxito. Esperar a que el
+        # Worker Bun existente procese los bloques y VERIFICAR después
+        # si los bloques realmente tienen RESUMEN. Si tras esperar siguen
+        # sin RESUMEN, devolver False para que el arnés active el fallback.
         import time as _time
         _time.sleep(min(timeout, 30))  # esperar hasta 30s o timeout
+        # v6.8.3: verificación real — leer los bloque_*.md y contar cuántos
+        # ya tienen RESUMEN al inicio. Si ninguno avanzó tras la espera,
+        # el Worker Bun existente no está procesando nuestro workspace.
+        try:
+            ws_path = Path(workspace_dir)
+            if ws_path.exists():
+                bloques = sorted(ws_path.glob("bloque_*.md"))
+                con_resumen = sum(
+                    1 for p in bloques
+                    if p.read_text(encoding="utf-8", errors="ignore").split("\n", 1)[0].strip().startswith("RESUMEN:")
+                )
+                total = len(bloques)
+                if total > 0 and con_resumen == 0:
+                    logger.warning(
+                        "v6.10 F3: Worker Bun existente no procesó ningún bloque "
+                        "(0/%d con RESUMEN tras %ds). Activando fallback.",
+                        total, min(timeout, 30),
+                    )
+                    return False
+                logger.info(
+                    "v6.10 F3: verificación post-espera — %d/%d bloques con RESUMEN.",
+                    con_resumen, total,
+                )
+        except Exception as e:
+            logger.warning("v6.10 F3: no se pudo verificar bloques tras espera: %s", e)
+            # En caso de no poder verificar, no asumir éxito ciego: devolver
+            # False para que el arnés haga su propia re-verificación.
+            return False
         return True
 
     env = {**_os.environ, "CZAI_WORKSPACE_DIR": str(workspace_dir)}
@@ -1333,18 +1391,26 @@ def _enriquecer_bloques_con_fallback(
     workspace_dir: Path | str,
     chat_label: str = "",
 ) -> list:
-    """v6.2: Fase 2 — enriquecer bloques con resumen + extracción, con fallback.
+    """v6.10 F3: Arnés Worker Bun / subagentes.
 
-    Orquesta el enriquecimiento de los bloques que no tienen RESUMEN: al inicio.
-    El flujo:
-    1. Filtra bloques sin RESUMEN:.
-    2. Si no hay → devuelve [] (nada que hacer).
-    3. Check proxy APA disponible.
-    4. Si proxy OK: arranca Worker Bun, espera con timeout.
-       - Re-verifica qué bloques quedaron sin RESUMEN:.
-       - Si todos completaron → devuelve [] (worker OK).
-       - Si algunos fallaron → construye pending_tasks solo para esos.
-    5. Si proxy caído: construye pending_tasks para todos los bloques sin resumen.
+    Modelo de funcionamiento (conciliado con el Director):
+
+    1. Worker Bun trabaja solo cuando está activo. Si el proxy está sano,
+       se le da una oportunidad rápida (5 segundos) para procesar bloques.
+    2. Si el Worker Bun cae (429, timeout, muerte), la tarea que estaba
+       procesando se devuelve a la lista de pendientes y se construyen
+       pending_tasks para el agente inmediatamente (sin esperar 30s).
+    3. El agente lanza subagentes con esas pending_tasks. Mientras los
+       subagentes trabajan, el Worker Bun puede recuperarse en segundo
+       plano (su backoff exponencial interno lo maneja). La idempotencia
+       garantiza que el primero que procese cada bloque gana.
+    4. Cuando el Worker Bun se recupera, los subagentes terminan su lote
+       actual (no se interrumpen) y el Worker Bun retoma el control en
+       la siguiente invocación.
+
+    Regla de oro: el Worker Bun y los subagentes nunca procesan la misma
+    tarea al mismo tiempo. El Worker Bun es el camino prioritario. Los
+    subagentes son el sustituto temporal cuando el Worker Bun cae.
 
     Args:
         blocks: Lista de ThematicBlock.
@@ -1352,46 +1418,54 @@ def _enriquecer_bloques_con_fallback(
         chat_label: Etiqueta del chat (opcional).
 
     Returns:
-        Lista de SubagentTask (vacía si todo OK, con tareas si fallback necesario).
+        Lista de SubagentTask (vacía si el Worker Bun procesó todo,
+        con tareas si el fallback es necesario).
     """
     # 1. Bloques sin RESUMEN:
     bloques_sin_resumen = [b for b in blocks if not b.tiene_resumen(workspace_dir=workspace_dir)]
 
     if not bloques_sin_resumen:
-        logger.info("v6.2: Todos los bloques ya tienen resumen. Nada que hacer.")
+        logger.info("v6.10 F3: Todos los bloques ya tienen resumen. Nada que hacer.")
         return []
 
-    logger.info("v6.2: %d bloque(s) sin RESUMEN. Activando orquestación con fallback.",
+    logger.info("v6.10 F3: %d bloque(s) sin RESUMEN. Activando arnés.",
                 len(bloques_sin_resumen))
 
-    # 3. Check proxy APA
+    # 2. Check proxy APA disponible.
     proxy_ok = _proxy_apa_disponible()
-    logger.info("v6.2: Proxy APA: %s", "disponible" if proxy_ok else "no disponible")
+    logger.info("v6.10 F3: Proxy APA: %s", "disponible" if proxy_ok else "no disponible")
 
     if proxy_ok:
-        # 4. Arrancar Worker Bun
-        logger.info("v6.2: Arrancando Worker Bun para %d bloque(s)...", len(bloques_sin_resumen))
-        worker_ok = _arrancar_worker_y_esperar(workspace_dir=workspace_dir)
+        # 3. v6.10 F3: darle una oportunidad rápida al Worker Bun (5s, no 30s).
+        # Si el Worker Bun está sano y procesa bloques en esos 5s, genial.
+        # Si no procesa nada en 5s, está caído o saturado → fallback inmediato.
+        logger.info("v6.10 F3: Probando Worker Bun (5s) para %d bloque(s)...",
+                    len(bloques_sin_resumen))
+        worker_ok = _arrancar_worker_y_esperar(workspace_dir=workspace_dir, timeout=5)
 
         if worker_ok:
-            # Re-verificar qué bloques quedaron sin RESUMEN:
+            # Re-verificar qué bloques quedaron sin RESUMEN.
             bloques_aun_sin_resumen = [
                 b for b in bloques_sin_resumen if not b.tiene_resumen(workspace_dir=workspace_dir)
             ]
             if not bloques_aun_sin_resumen:
-                logger.info("v6.2: Worker Bun completó todos los bloques. Fallback no necesario.")
+                logger.info("v6.10 F3: Worker Bun completó todos los bloques. Fallback no necesario.")
                 return []
-            logger.info("v6.2: Worker Bun falló en %d bloque(s). Fallback al agente.",
+            logger.info("v6.10 F3: Worker Bun no completó %d bloque(s). Fallback al agente.",
                         len(bloques_aun_sin_resumen))
             bloques_para_fallback = bloques_aun_sin_resumen
         else:
-            logger.info("v6.2: Worker Bun no completó. Fallback al agente para todos los bloques.")
+            logger.info("v6.10 F3: Worker Bun no disponible (caído o saturado). Fallback inmediato.")
             bloques_para_fallback = bloques_sin_resumen
     else:
-        logger.info("v6.2: Proxy APA no disponible. Fallback al agente para todos los bloques.")
+        logger.info("v6.10 F3: Proxy APA no disponible. Fallback al agente para todos los bloques.")
         bloques_para_fallback = bloques_sin_resumen
 
-    # Construir pending_tasks para los bloques que el worker no procesó
+    # 4. Construir pending_tasks para los bloques que el Worker Bun no procesó.
+    # El agente lanzará subagentes con estas tareas. Mientras los subagentes
+    # trabajan, el Worker Bun puede recuperarse en segundo plano (su backoff
+    # interno lo maneja). La idempotencia garantiza que no haya trabajo
+    # duplicado: el primero que procese cada bloque gana.
     pending_tasks = []
     for bloque in bloques_para_fallback:
         task = _construir_pending_task_para_bloque(bloque, chat_label=chat_label)
@@ -1414,6 +1488,10 @@ def _enriquecer_bloques_post_run(
     Las pending_tasks que devuelve el Orchestrator original se conservan; las
     nuevas (fallback de bloques) se añaden a la lista.
 
+    v6.10 F2: SIN try/except silencioso. Si el enriquecimiento falla, el error
+    se propaga y se registra claramente. Las pending_tasks se capturan del
+    valor de retorno directamente (v6.8.1 re-aplicado).
+
     Args:
         result: OrchestratorResult devuelto por orch.activate().
         workspace_dir: Directorio del workspace.
@@ -1422,35 +1500,35 @@ def _enriquecer_bloques_post_run(
     Returns:
         El mismo OrchestratorResult con pending_tasks actualizadas.
     """
-    try:
-        # Listar bloques físicos del workspace
-        workspace_path = Path(workspace_dir)
-        if not workspace_path.exists():
-            return result
-        from contexto_zai.models import ThematicBlock
-        blocks = []
-        for p in sorted(workspace_path.glob("bloque_*.md")):
-            block = ThematicBlock(filename=p.name)
-            blocks.append(block)
-        if not blocks:
-            return result
+    # v6.10 F2: sin try/except silencioso. Si el workspace no existe o no hay
+    # bloques, simplemente devolvemos result sin cambios (no es error).
+    workspace_path = Path(workspace_dir)
+    if not workspace_path.exists():
+        return result
+    from contexto_zai.models import ThematicBlock
+    blocks = []
+    for p in sorted(workspace_path.glob("bloque_*.md")):
+        block = ThematicBlock(filename=p.name)
+        blocks.append(block)
+    if not blocks:
+        return result
 
-        # Orquestar enriquecimiento
-        fallback_tasks = _enriquecer_bloques_con_fallback(
-            blocks=blocks,
-            workspace_dir=workspace_dir,
-            chat_label=chat_label,
-        )
+    # Orquestar enriquecimiento (v6.10 F3: el arnés detecta caída del Worker
+    # Bun en menos de 5s y devuelve las pending_tasks inmediatamente).
+    fallback_tasks = _enriquecer_bloques_con_fallback(
+        blocks=blocks,
+        workspace_dir=workspace_dir,
+        chat_label=chat_label,
+    )
 
-        # Añadir a pending_tasks existentes
-        if fallback_tasks:
-            if result.pending_tasks is None:
-                result.pending_tasks = []
-            result.pending_tasks.extend(fallback_tasks)
-            logger.info("v6.2: %d tarea(s) de fallback añadidas a pending_tasks.",
-                        len(fallback_tasks))
-    except Exception as e:
-        logger.warning("v6.2: Error en post-procesamiento de bloques: %s", e)
+    # Añadir a pending_tasks existentes (v6.8.1 re-aplicado: capturar del retorno).
+    if fallback_tasks:
+        if result.pending_tasks is None:
+            result.pending_tasks = []
+        result.pending_tasks.extend(fallback_tasks)
+        logger.info("v6.10: %d tarea(s) de fallback añadidas a pending_tasks.",
+                    len(fallback_tasks))
+
     return result
 
 
@@ -1603,6 +1681,171 @@ def _consolidar_decisiones_llm(workspace_dir: Path | str) -> int:
     decisiones_path.write_text(content, encoding="utf-8")
     logger.info("v6.4 F1: %d decisiones del LLM consolidadas en 02_decisiones_clave.md", len(all_decisions))
     return len(all_decisions)
+
+
+def _regenerar_indice_tras_enriquecimiento(
+    workspace_dir: Path | str,
+) -> int:
+    """v6.8.4 re-aplicado (v6.10 F4): Vuelca los temas significativos del
+    ``_responses/<bloque>_temas.txt`` al ``tema_a_archivo`` del metadata,
+    elimina los temas provisionales ``documento_externo_NN`` y regenera
+    ``01_indice_recuperacion.md``.
+
+    Es idempotente: si los ``_responses/<bloque>_temas.txt`` no existen
+    todavía, no hace nada y devuelve 0.
+    """
+    ws = Path(workspace_dir)
+    responses_dir = ws / "_responses"
+    metadata_path = ws / "_metadata.json"
+
+    if not responses_dir.exists() or not metadata_path.exists():
+        return 0
+
+    import json as _json
+    try:
+        metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (ValueError, _json.JSONDecodeError):
+        metadata = {}
+
+    tema_a_archivo = metadata.setdefault("tema_a_archivo", {})
+
+    # 1. Eliminar temas provisionales "documento_externo_NN" residuales.
+    provisionales_eliminados = 0
+    for clave in list(tema_a_archivo.keys()):
+        if clave.startswith("documento_externo_"):
+            del tema_a_archivo[clave]
+            provisionales_eliminados += 1
+    if provisionales_eliminados:
+        logger.info(
+            "v6.10 F4: %d tema(s) provisionales eliminados de tema_a_archivo.",
+            provisionales_eliminados,
+        )
+
+    # 2. Volver a leer los _responses/<bloque>_temas.txt y registrar los temas.
+    bloques_con_temas = 0
+    for p in sorted(responses_dir.glob("bloque_*_temas.txt")):
+        block_id = p.stem
+        if block_id.endswith("_temas"):
+            block_id = block_id[: -len("_temas")]
+        bloque_filename = f"{block_id}.md"
+
+        try:
+            content = p.read_text(encoding="utf-8").strip()
+        except Exception as e:
+            logger.warning("v6.10 F4: no se pudo leer %s: %s", p.name, e)
+            continue
+
+        if not content:
+            continue
+
+        temas_significativos = [
+            t.strip() for t in content.split("\n") if t.strip()
+        ]
+        if not temas_significativos:
+            continue
+
+        for tema in temas_significativos:
+            existente = tema_a_archivo.get(tema)
+            if isinstance(existente, list):
+                if bloque_filename in existente:
+                    continue
+                existente.append(bloque_filename)
+                tema_a_archivo[tema] = existente
+            elif isinstance(existente, str):
+                if existente == bloque_filename:
+                    tema_a_archivo[tema] = [bloque_filename]
+                else:
+                    tema_a_archivo[tema] = [existente, bloque_filename]
+            else:
+                tema_a_archivo[tema] = [bloque_filename]
+
+        bloques_con_temas += 1
+
+    # 3. Persistir el metadata actualizado.
+    metadata_path.write_text(
+        _json.dumps(metadata, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    # 4. Regenerar 01_indice_recuperacion.md.
+    if bloques_con_temas > 0 or provisionales_eliminados > 0:
+        try:
+            from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas
+            IntegradorRespuestas._regenerar_indice_recuperacion(ws, metadata)
+            logger.info(
+                "v6.10 F4: índice regenerado (%d bloque(s) con temas, %d provisional(es) eliminado(s)).",
+                bloques_con_temas, provisionales_eliminados,
+            )
+        except Exception as e:
+            logger.warning("v6.10 F4: no se pudo regenerar el índice: %s", e)
+
+    return bloques_con_temas
+
+
+def _normalizar_bloques_externos(workspace_dir: Path | str) -> int:
+    """v6.8.4 re-aplicado (v6.10 F4): Normaliza los bloques externos del
+    workspace tras el enriquecimiento. Punto de consistencia defensivo que
+    re-intenta el vuelco de temas por si algún ``_temas.txt`` llegó tarde.
+    """
+    ws = Path(workspace_dir)
+    metadata_path = ws / "_metadata.json"
+    if not metadata_path.exists():
+        return 0
+
+    import json as _json
+    try:
+        metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (ValueError, _json.JSONDecodeError):
+        return 0
+
+    archivo_a_source = metadata.get("archivo_a_source", {})
+    tema_a_archivo = metadata.setdefault("tema_a_archivo", {})
+
+    bloques_externos = []
+    for bloque_filename, source_info in archivo_a_source.items():
+        if not isinstance(source_info, dict):
+            continue
+        if source_info.get("source_type") in ("file", "url"):
+            bloques_externos.append(bloque_filename)
+
+    if not bloques_externos:
+        return 0
+
+    responses_dir = ws / "_responses"
+    normalizados = 0
+    for bloque_filename in bloques_externos:
+        block_id = bloque_filename.replace(".md", "")
+        temas_path = responses_dir / f"{block_id}_temas.txt"
+        if not temas_path.exists():
+            continue
+
+        try:
+            content = temas_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            continue
+        temas = [t.strip() for t in content.split("\n") if t.strip()]
+        if not temas:
+            continue
+
+        ya_cubierto = False
+        for tema in temas:
+            existente = tema_a_archivo.get(tema)
+            if isinstance(existente, list) and bloque_filename in existente:
+                ya_cubierto = True
+                break
+            if isinstance(existente, str) and existente == bloque_filename:
+                ya_cubierto = True
+                break
+        if ya_cubierto:
+            continue
+
+        normalizados += 1
+
+    if normalizados > 0:
+        _regenerar_indice_tras_enriquecimiento(workspace_dir)
+        logger.info("v6.10 F4: %d bloque(s) externo(s) normalizado(s).", normalizados)
+
+    return normalizados
 
 
 if __name__ == "__main__":
