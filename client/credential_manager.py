@@ -40,7 +40,8 @@ from typing import Optional
 
 import httpx
 
-from contexto_zai.config import API_CONFIG, CREDENTIALS_FILE
+from contexto_zai.client.zai_config import API_CONFIG
+from contexto_zai.config import CREDENTIALS_FILE
 
 logger = logging.getLogger(__name__)
 

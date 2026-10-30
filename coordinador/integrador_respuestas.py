@@ -86,16 +86,30 @@ class IntegradorRespuestas:
 
     # -- API pública ------------------------------------------------
 
+    # Handlers que tocan ``00_estado_actual.md`` (sección D4, A1 resumen,
+    # síntesis G0.B). v6.11 F6: se saltan cuando ``is_chat_chronological=False``
+    # (operaciones de ``ampliar_contexto()`` — fuente externa, no cronológica).
+    _ESTADO_HANDLERS: set[str] = {
+        "_integrar_estado_d4",
+        "_integrar_estado_a1_resumen",
+        "_integrar_sintesis_contexto",
+    }
+
     def integrar(
         self,
         responses: list[SubagentResponse],
         workspace_dir: Optional[Path | str] = None,
+        is_chat_chronological: bool = True,
     ) -> dict:
         """Aplica las respuestas a los archivos de recuperación.
 
         Args:
             responses: Lista de SubagentResponse leídas de _responses/.
             workspace_dir: Directorio del workspace (sobreescribe el del constructor).
+            is_chat_chronological: v6.11 F6 — Si ``False`` (la operación viene
+                de ``ampliar_contexto()``, fuente externa no cronológica),
+                se saltan los handlers que tocan ``00_estado_actual.md``.
+                Default ``True`` (operación cronológica desde ``pipeline.run()``).
 
         Returns:
             Dict con:
@@ -123,6 +137,19 @@ class IntegradorRespuestas:
             handler_method = self._get_handler(resp)
             if handler_method is None:
                 logger.debug("Sin handler para %s (purpose desconocido)", resp.task_id)
+                continue
+
+            # v6.11 F6: si la operación no es cronológica (ampliar_contexto),
+            # saltar handlers que regeneran ``00_estado_actual.md``.
+            handler_name = getattr(handler_method, "__name__", "") or ""
+            if (
+                not is_chat_chronological
+                and handler_name in self._ESTADO_HANDLERS
+            ):
+                logger.debug(
+                    "v6.11 F6: saltando handler de estado '%s' (no cronológico) para %s",
+                    handler_name, resp.task_id,
+                )
                 continue
 
             try:

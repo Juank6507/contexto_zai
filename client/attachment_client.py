@@ -41,7 +41,7 @@ from typing import Optional
 
 import httpx
 
-from contexto_zai.config import API_CONFIG
+from contexto_zai.client.zai_config import API_CONFIG
 from contexto_zai.models import Attachment
 
 logger = logging.getLogger(__name__)

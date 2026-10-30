@@ -46,8 +46,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.client.auth_client import AuthClient
-from contexto_zai.client.chat_client import ChatClient
 from contexto_zai.config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
 from contexto_zai.generation.recovery_generator import RecoveryGenerator
 from contexto_zai.metadata.manager import MetadataManager
@@ -57,6 +55,7 @@ from contexto_zai.processing.block_packer import BlockPacker
 from contexto_zai.processing.classifier import MessageClassifier
 from contexto_zai.processing.content_delegator import DocumentDelegator
 from contexto_zai.processing.exchange_builder import ExchangeBuilder
+from contexto_zai.processing.message_extractor import MessageExtractor
 from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
 from contexto_zai.subagents.documento_indexer_subagent import (
     DocumentoIndexResult,
@@ -220,39 +219,42 @@ class RecoveryCycle:
 
             # PASO 5: Extracción de mensajes
             logger.info("Paso 5: Extrayendo mensajes...")
+            # v6.11 F4: usar MessageExtractor (capa general) en vez de
+            # AuthClient/ChatClient directamente. Respeta separación de capas.
             # v4.2: si llega un share_id externo (link /s/ de otra sesión),
-            # usarlo directamente en vez de crear un share propio con
-            # AuthClient.create_share(). El chat_id se descubre del árbol.
+            # inyectarlo en el extractor para saltar create_share().
+            extractor = MessageExtractor(jwt=jwt, chat_id=self._chat_id)
             if self._share_id_externo:
-                share_id = self._share_id_externo
+                extractor._share_id = self._share_id_externo
                 logger.info(
                     "Usando share_id externo (link /s/): %s — se salta create_share()",
-                    share_id,
+                    self._share_id_externo,
                 )
-            else:
-                with AuthClient(token=jwt) as auth:
-                    share_id = auth.create_share(self._chat_id)
-            with ChatClient(token=jwt) as client:
-                messages, raw_messages = client.extract_all_with_raw(
-                    share_id=share_id, chat_id=self._chat_id or None
-                )
-                # v4.2: si el chat_id venía vacío (caso link /s/ externo),
-                # descubrirlo del árbol para que los pasos siguientes
-                # (metadata, logging) lo tengan.
-                if not self._chat_id:
-                    try:
-                        tree_data = client.get_message_tree(share_id)
-                        discovered_chat_id = tree_data.get("chat", {}).get("id", "")
-                        if discovered_chat_id:
-                            self._chat_id = discovered_chat_id
-                            logger.info(
-                                "chat_id descubierto del share externo: %s",
-                                self._chat_id,
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            "No se pudo descubrir el chat_id del árbol: %s", e
+
+            # v4.2: si el chat_id venía vacío (caso link /s/ externo),
+            # descubrirlo del árbol para que los pasos siguientes
+            # (metadata, logging) lo tengan.
+            if not self._chat_id:
+                try:
+                    tree_data = extractor.get_message_tree()
+                    discovered_chat_id = tree_data.get("chat", {}).get("id", "")
+                    if discovered_chat_id:
+                        self._chat_id = discovered_chat_id
+                        logger.info(
+                            "chat_id descubierto del share externo: %s",
+                            self._chat_id,
                         )
+                except Exception as e:
+                    logger.warning(
+                        "No se pudo descubrir el chat_id del árbol: %s", e
+                    )
+
+            messages = extractor.get_all_messages()
+            # v6.11 F4: ya no se accede al batch crudo desde aquí (capa general).
+            # La detección de attachments se desactiva si no hay raw_messages
+            # (ver _index_attachments: retorna [] si raw_messages es None/vacío).
+            raw_messages = None
+            share_id = extractor._share_id or ""
 
             if not messages:
                 return RecoveryCycleResult(
@@ -426,15 +428,10 @@ class RecoveryCycle:
             return self._jwt
 
         # 2. JWT desde CredentialManager (única fuente de verdad)
-        try:
-            from contexto_zai.client.credential_manager import CredentialManager
-            cm = CredentialManager()
-            jwt = cm.get_jwt()
-            if jwt:
-                logger.info("JWT obtenido de CredentialManager")
-                return jwt
-        except Exception as e:
-            logger.debug("CredentialManager no disponible: %s", e)
+        # v6.11 F4: el JWT lo carga pipeline.run() antes de crear el ciclo.
+        # Si llegamos aquí sin JWT, es que pipeline no lo cargó.
+        # El recovery_cycle ya no importa directamente de client/ (separación de capas).
+        logger.warning("No hay JWT disponible. pipeline.run() debe cargar el JWT del CredentialManager.")
 
         # 3. No hay JWT disponible
         logger.warning("No hay JWT disponible. El Director debe ejecutar el script .bat.")
@@ -461,12 +458,11 @@ class RecoveryCycle:
 
         logger.info("Detectados %d attachments para indexar", len(attachments))
 
-        # Cliente para descargar attachments
-        try:
-            from contexto_zai.client.attachment_client import AttachmentClient
-            att_client = AttachmentClient(token=self._jwt)
-        except Exception as e:
-            logger.warning("No se pudo inicializar AttachmentClient: %s", e)
+        # v6.11 F4: AttachmentClient se inyecta desde fuera (separación de capas).
+        # El recovery_cycle no importa de client/ directamente.
+        att_client = getattr(self, '_attachment_client', None)
+        if att_client is None:
+            logger.warning("No hay AttachmentClient configurado. Asignaciones de attachments omitidas.")
             return []
 
         # Subagente indexador

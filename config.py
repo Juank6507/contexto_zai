@@ -73,43 +73,13 @@ class TokenLimits:
 
 TOKEN_LIMITS = TokenLimits()
 
-# -- API de chat.z.ai -----------------------------------------------
+# -- v6.11 F1: APIConfig se mudó a client/zai_config.py (separación de capas) --
+# Todo lo particular de Z.ai (URLs, cookies, endpoints) vive ahora en client/zai_config.py.
+# Este archivo solo contiene configuración general (portable a cualquier plataforma).
 
-@dataclass(frozen=True)
-class APIConfig:
-    """Configuración de los endpoints de chat.z.ai.
-
-    Nota v3.2: El batch endpoint usa chat_id con autenticación, NO share_id
-    como invitado. La plataforma cambió desde v2.2.
-    """
-
-    base_url: str = "https://chat.z.ai"
-    timeout_seconds: float = 30.0
-    cookie_name: str = "token"
-
-    @property
-    def share_info_url(self) -> str:
-        return f"{self.base_url}/api/v1/chats/share/{{share_id}}"
-
-    @property
-    def share_messages_batch_url(self) -> str:
-        """Deprecated v3.2: la plataforma cambió. Usar messages_batch_by_chat_url."""
-        return f"{self.base_url}/api/v1/chats/share/{{share_id}}/messages/batch"
-
-    @property
-    def messages_batch_by_chat_url(self) -> str:
-        """Endpoint de batch autenticado por chat_id (v3.2)."""
-        return f"{self.base_url}/api/v1/chats/{{chat_id}}/messages/batch"
-
-    @property
-    def create_share_url(self) -> str:
-        return f"{self.base_url}/api/v1/chats/{{chat_id}}/share"
-
-    @property
-    def auth_check_url(self) -> str:
-        return f"{self.base_url}/api/v1/auths/"
-
-API_CONFIG = APIConfig()
+# v6.11 F2: Tamaño del lote para paginación de get_messages_batch().
+# Los message_ids se dividen en lotes de BATCH_SIZE para no exceder el timeout.
+BATCH_SIZE = 100
 
 # -- Reglas temáticas por defecto -----------------------------------
 
@@ -494,10 +464,14 @@ if __name__ == "__main__":
     assert TOKEN_LIMITS.umbral_disparo_tokens == expected_umbral
     print(f"[OK] Umbral disparo: {TOKEN_LIMITS.umbral_disparo_tokens} tokens (90% de {TOKEN_LIMITS.capacidad_util})")
 
-    # Test 3: API config con batch por chat_id (v3.2)
-    assert "chat_id" in API_CONFIG.messages_batch_by_chat_url
-    assert "share_id" not in API_CONFIG.messages_batch_by_chat_url
-    print(f"[OK] Batch endpoint v3.2: {API_CONFIG.messages_batch_by_chat_url}")
+    # Test 3 (v6.11 F1): APIConfig se mudó a client/zai_config.py
+    # Verificar que config.py NO contiene definiciones de Z.ai (solo referencias al test)
+    _cfg_src = open(__file__, encoding="utf-8").read()
+    # Excluir las lineas de este propio test de la verificacion
+    _cfg_lines = [l for l in _cfg_src.split("\n") if not l.strip().startswith(("# Test 3", "assert", "_cfg_", "    #"))]
+    _cfg_check = "\n".join(_cfg_lines)
+    assert "chat.z.ai" not in _cfg_check, "config.py contiene URL de Z.ai fuera del test"
+    print(f"[OK] config.py limpio: sin config de Z.ai (v6.11 F1)")
 
     # Test 4: conversiones chars
     assert TOKEN_LIMITS.max_chars_estado == int(20_000 * 3.5)

@@ -38,8 +38,7 @@ from typing import TYPE_CHECKING, Optional
 from contexto_zai.metadata.manager import MetadataManager
 
 if TYPE_CHECKING:
-    from contexto_zai.client.chat_client import ChatClient
-    from contexto_zai.models import Exchange, RecoveryMetadata
+    from contexto_zai.models import Exchange, Message, RecoveryMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -62,33 +61,35 @@ class MantenimientoResult:
 class MantenimientoSubagent:
     """Subagente de actualización incremental.
 
+    v6.11 F4: no importa ChatClient. Recibe los mensajes ya extraídos
+    (capa general) en vez de extraerlos directamente. Respeta separación
+    de capas.
+
     Args:
-        chat_client: ChatClient para extraer mensajes nuevos.
+        messages: Lista de mensajes ya extraídos (por el llamador, vía
+            MessageExtractor u otra fuente). El subagente filtra los
+            nuevos a partir del ``ultimo_timestamp`` de la metadata.
         metadata_manager: MetadataManager para leer/escribir metadata.
 
     Usage:
-        >>> sub = MantenimientoSubagent(chat_client=client, metadata_manager=mgr)
-        >>> result = sub.run(chat_id="...", share_id="...")
+        >>> sub = MantenimientoSubagent(messages=all_messages, metadata_manager=mgr)
+        >>> result = sub.run()
     """
 
     def __init__(
         self,
-        chat_client: "ChatClient",
+        messages: list,
         metadata_manager: MetadataManager,
     ) -> None:
-        self._chat_client = chat_client
+        self._messages = messages or []
         self._metadata_mgr = metadata_manager
 
-    def run(
-        self,
-        chat_id: str,
-        share_id: str,
-    ) -> MantenimientoResult:
+    def run(self) -> MantenimientoResult:
         """Ejecuta la actualización incremental.
 
-        Args:
-            chat_id: UUID interno del chat.
-            share_id: UUID del share.
+        v6.11 F4: ya no recibe ``chat_id``/``share_id`` ni llama a
+        ``chat_client.extract_all()``. Los mensajes se pasan en el
+        constructor (extraídos por la capa general).
 
         Returns:
             MantenimientoResult con el resultado.
@@ -97,10 +98,8 @@ class MantenimientoSubagent:
             # 1. Leer metadata actual
             metadata = self._metadata_mgr.read()
 
-            # 2. Extraer todos los mensajes (la API no soporta filtro por timestamp)
-            all_messages = self._chat_client.extract_all(
-                share_id=share_id, chat_id=chat_id
-            )
+            # 2. Mensajes ya extraídos por el llamador (capa general).
+            all_messages = self._messages
 
             # 3. Filtrar solo mensajes nuevos
             ultimo_ts = metadata.ultimo_timestamp
@@ -159,7 +158,6 @@ if __name__ == "__main__":
 
     import tempfile
     from pathlib import Path
-    from contexto_zai.client.chat_client import ChatClient
     from contexto_zai.models import Message, MessageRole
 
     # Test 1: mantenimiento exitoso con mensajes nuevos
@@ -168,17 +166,15 @@ if __name__ == "__main__":
         mgr = MetadataManager(output_dir=Path(tmpdir))
         # Set ultimo_timestamp = 0 (todo es nuevo)
 
-        # Chat client simulado
-        class MockChatClient:
-            def extract_all(self, share_id, chat_id):
-                return [
-                    Message(seq=1, role=MessageRole.USER, timestamp=100, content="msg1"),
-                    Message(seq=2, role=MessageRole.ASSISTANT, timestamp=200, content="msg2"),
-                    Message(seq=3, role=MessageRole.USER, timestamp=300, content="msg3"),
-                ]
+        # v6.11 F4: mensajes ya extraídos (capa general), no se usa ChatClient.
+        all_messages = [
+            Message(seq=1, role=MessageRole.USER, timestamp=100, content="msg1"),
+            Message(seq=2, role=MessageRole.ASSISTANT, timestamp=200, content="msg2"),
+            Message(seq=3, role=MessageRole.USER, timestamp=300, content="msg3"),
+        ]
 
-        sub = MantenimientoSubagent(chat_client=MockChatClient(), metadata_manager=mgr)
-        result = sub.run(chat_id="abc", share_id="def")
+        sub = MantenimientoSubagent(messages=all_messages, metadata_manager=mgr)
+        result = sub.run()
         assert result.success
         assert result.new_exchanges_count == 3  # 3 mensajes nuevos (ts=0 al inicio)
         assert result.new_ultimo_timestamp == 300
@@ -195,32 +191,31 @@ if __name__ == "__main__":
         mgr = MetadataManager(output_dir=Path(tmpdir))
         mgr.set_ultimo_timestamp(1000)  # último ts alto
 
-        class MockChatClient2:
-            def extract_all(self, share_id, chat_id):
-                return [
-                    Message(seq=1, role=MessageRole.USER, timestamp=100, content="old1"),
-                    Message(seq=2, role=MessageRole.ASSISTANT, timestamp=200, content="old2"),
-                ]
+        all_messages_old = [
+            Message(seq=1, role=MessageRole.USER, timestamp=100, content="old1"),
+            Message(seq=2, role=MessageRole.ASSISTANT, timestamp=200, content="old2"),
+        ]
 
-        sub2 = MantenimientoSubagent(chat_client=MockChatClient2(), metadata_manager=mgr)
-        result2 = sub2.run(chat_id="abc", share_id="def")
+        sub2 = MantenimientoSubagent(messages=all_messages_old, metadata_manager=mgr)
+        result2 = sub2.run()
         assert result2.success
         assert result2.new_exchanges_count == 0
         assert result2.new_ultimo_timestamp == 1000  # no cambió
         print(f"[OK] Sin mensajes nuevos: 0 intercambios procesados")
 
-    # Test 3: error en chat_client
+    # Test 3: error en iteración de mensajes (simula runtime error)
     with tempfile.TemporaryDirectory() as tmpdir:
         mgr = MetadataManager(output_dir=Path(tmpdir))
 
-        class FailingChatClient:
-            def extract_all(self, share_id, chat_id):
+        class _FailingMessages:
+            """Lista que falla al iterar (simula error de extracción)."""
+            def __iter__(self):
                 raise RuntimeError("API caída")
 
-        sub3 = MantenimientoSubagent(chat_client=FailingChatClient(), metadata_manager=mgr)
-        result3 = sub3.run(chat_id="abc", share_id="def")
+        sub3 = MantenimientoSubagent(messages=_FailingMessages(), metadata_manager=mgr)
+        result3 = sub3.run()
         assert not result3.success
         assert "API caída" in result3.error
-        print(f"[OK] Error en chat_client: capturado correctamente")
+        print(f"[OK] Error en mensajes: capturado correctamente")
 
     print("\n[PASS] mantenimiento_subagent.py: todos los tests pasaron")

@@ -136,6 +136,7 @@ class Orquestador:
     def aplicar_respuestas(
         self,
         integrador: Optional[object] = None,
+        is_chat_chronological: bool = True,
     ) -> dict:
         """Lee las respuestas de ``_responses/``, las integra a los archivos,
         y devuelve el resultado estructurado al agente.
@@ -148,6 +149,10 @@ class Orquestador:
                 que aplica las respuestas a los archivos. Si no se pasa,
                 solo se leen y devuelven las respuestas sin integrar (para
                 que el llamador decida qué hacer con ellas).
+            is_chat_chronological: v6.11 F6 — Se pasa al integrador. Si
+                ``False``, el integrador salta los handlers que tocan
+                ``00_estado_actual.md`` (operación no cronológica, p.ej.
+                desde ``ampliar_contexto()``).
 
         Returns:
             Dict con el resultado estructurado:
@@ -181,7 +186,18 @@ class Orquestador:
         # Aplicar con el integrador (si se pasó)
         if integrador is not None:
             try:
-                aplicadas = integrador.integrar(responses, self._workspace_dir)
+                # v6.11 F6: reenviar is_chat_chronological para que el
+                # integrador pueda saltar la regeneración de estado cuando
+                # la operación no es cronológica (ampliar_contexto).
+                try:
+                    aplicadas = integrador.integrar(
+                        responses, self._workspace_dir,
+                        is_chat_chronological=is_chat_chronological,
+                    )
+                except TypeError:
+                    # Compatibilidad con integradores que no aceptan el
+                    # parámetro is_chat_chronological.
+                    aplicadas = integrador.integrar(responses, self._workspace_dir)
                 if isinstance(aplicadas, dict):
                     total_aplicadas = aplicadas.get("total_applied", len(responses))
                 else:

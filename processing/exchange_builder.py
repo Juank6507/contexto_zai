@@ -85,7 +85,7 @@ class ExchangeBuilder:
         self._attachments = attachments or []
         logger.debug("Attachments establecidos: %d", len(self._attachments))
 
-    def build(self, messages: list[Message]) -> list[Exchange]:
+    def build(self, messages: list[Message], url_contents: dict = None) -> list[Exchange]:
         """Agrupa mensajes en exchanges secuenciales.
 
         Recorre la lista de mensajes en orden. Cada mensaje del Director
@@ -95,6 +95,11 @@ class ExchangeBuilder:
 
         Args:
             messages: Lista ordenada de mensajes (por campo ``seq``).
+            url_contents: v6.11 F4 — dict ``{url: ExternalContent}`` con
+                el contenido de links externos ya leído por el llamador
+                (capa general). El builder NO importa WebReader ni lee
+                links directamente (respeta separación de capas).
+                Si es None, no se procesan links externos.
 
         Returns:
             Lista de :class:`Exchange` con ids secuenciales (1-based),
@@ -172,6 +177,7 @@ class ExchangeBuilder:
             attachments=self._attachments,
             delegator=self._delegator,
             indexer_subagent=self._indexer_subagent,
+            url_contents=url_contents,
         )
 
         # v6.3 F4: ordenar intercambios por start_timestamp ascendente.
@@ -192,6 +198,7 @@ class ExchangeBuilder:
         delegator=None,
         indexer_subagent=None,
         agent_context_pct: float = 0.0,
+        url_contents: dict = None,
     ) -> list[Exchange]:
         """Procesa links externos + attachments unificados bajo ContentDelegator (v3.5).
 
@@ -203,31 +210,27 @@ class ExchangeBuilder:
         4. Si no delega: lee directamente con WebReader (URLs) o AttachmentClient
            (attachments). Crea intercambio virtual con contenido completo.
         5. NO trunca a 10K chars (el Subdivider se encarga de partir contenido grande).
+
+        v6.11 F4: NO importa WebReader directamente. El contenido de URLs
+        externas se recibe vía ``url_contents`` (dict ``{url: ExternalContent}``)
+        inyectado por el llamador (capa general). Respeta separación de capas.
         """
         attachments = attachments or []
+        url_contents = url_contents or {}
 
         # 1. Procesar links externos en mensajes del Director
-        try:
-            from contexto_zai.client.web_reader import WebReader
-            reader = WebReader()
-        except ImportError:
-            try:
-                from client.web_reader import WebReader
-                reader = WebReader()
-            except ImportError:
-                reader = None
-                logger.debug("WebReader no disponible, saltando links externos")
-
-        if reader:
+        # v6.11 F4: ya NO se crea WebReader aquí. El contenido se recibe como
+        # parámetro inyectado por el llamador (capa general).
+        if url_contents:
             for msg in messages:
                 if not msg.is_user:
                     continue
-                urls = WebReader.find_urls(msg.content)
-                for url in urls:
-                    exchanges = self._process_url(
-                        exchanges, msg, url, reader, delegator,
-                        agent_context_pct,
-                    )
+                for url, content in url_contents.items():
+                    if url in msg.content:
+                        exchanges = self._process_url(
+                            exchanges, msg, url, content, delegator,
+                            agent_context_pct,
+                        )
 
         # 2. Procesar attachments (v3.5)
         for att in attachments:
@@ -243,11 +246,15 @@ class ExchangeBuilder:
         exchanges: list[Exchange],
         director_msg: Message,
         url: str,
-        reader,
+        content,
         delegator=None,
         agent_context_pct: float = 0.0,
     ) -> list[Exchange]:
-        """Procesa una URL externa (v3.5: con delegación)."""
+        """Procesa una URL externa (v3.5: con delegación).
+
+        v6.11 F4: ``content`` (ExternalContent) se recibe ya leído por el
+        llamador; el builder no importa WebReader.
+        """
         director_override = self._detect_override(director_msg.content)
 
         # Estimar tokens (aproximado, no se sabe hasta descargar)
@@ -260,7 +267,6 @@ class ExchangeBuilder:
         else:
             should_delegate = estimated_tokens > 5000
 
-        content = reader.read(url)
         if content.source == "error" or not content.content:
             logger.warning("No se pudo leer link: %s", url)
             return exchanges

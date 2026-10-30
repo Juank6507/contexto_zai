@@ -42,7 +42,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from contexto_zai.config import API_CONFIG, BROWSER_AUTH_STATE_PATH
+from contexto_zai.client.zai_config import API_CONFIG
+from contexto_zai.config import BROWSER_AUTH_STATE_PATH
 
 logger = logging.getLogger(__name__)
 

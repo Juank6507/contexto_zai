@@ -56,6 +56,15 @@ def _patched_context_manager(mock_class, **method_returns):
     mock_class.return_value = instance
     return instance
 
+def _patched_message_extractor(mock_class, messages, share_id="s-id", tree_data=None):
+    """v6.11 F4: Configura un mock de MessageExtractor."""
+    instance = MagicMock()
+    instance.get_all_messages.return_value = messages
+    instance.get_message_tree.return_value = tree_data or {"chat": {"id": "fake-chat-id"}}
+    instance._share_id = share_id
+    mock_class.return_value = instance
+    return instance
+
 def make_realistic_chat() -> list[Message]:
     """Crea un chat realista con varios temas y varios intercambios."""
     messages = []
@@ -93,10 +102,8 @@ def test_e2e_pipeline_run_success():
     print("\n=== Test E2E 1: pipeline.run() completo ===")
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="share-id-123")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="share-id-123")
 
             result = run(
                 chat_id="chat-abc-def",
@@ -122,10 +129,8 @@ def test_e2e_all_4_file_types_generated():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         # Verificar los 4 tipos
@@ -143,10 +148,8 @@ def test_e2e_estado_with_5_sections():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         estado = (ws / "00_estado_actual.md").read_text(encoding="utf-8")
@@ -164,10 +167,8 @@ def test_e2e_indice_with_mapping_table():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         indice = (ws / "01_indice_recuperacion.md").read_text(encoding="utf-8")
@@ -185,10 +186,8 @@ def test_e2e_metadata_correct():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="share-xyz")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="share-xyz")
             run(chat_id="chat-id-xyz", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         meta = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
@@ -207,10 +206,8 @@ def test_e2e_no_block_exceeds_70k_tokens():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         for b in ws.glob("bloque_*.md"):
@@ -225,10 +222,8 @@ def test_e2e_unicity_tematica():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         meta = json.loads((ws / "_metadata.json").read_text(encoding="utf-8"))
@@ -252,10 +247,8 @@ def test_e2e_status_function():
         assert st_before["metadata_exists"] is False
         assert st_before["total_temas"] == 0
 
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
 
         # Después de ejecutar, status debe mostrar metadata
@@ -272,10 +265,8 @@ def test_e2e_orchestrator_chooses_recovery_when_no_metadata():
     fake_messages = make_realistic_chat()
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
 
             orch = Orchestrator(chat_id="c", jwt="x", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             result = orch.activate(trigger=DetectionTrigger.EXPLICITO, reason="Test")
@@ -292,10 +283,8 @@ def test_e2e_files_in_workspace_and_download():
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
         dl = Path(tmpdir) / "dl"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             run(chat_id="c", jwt="x", workspace_dir=ws, download_dir=dl)
 
         ws_files = sorted([f.name for f in ws.glob("*.md")])

@@ -240,22 +240,28 @@ class Orchestrator:
         Esto permite al Orchestrator comparar el chat que llega con el
         que ya está en la metadata.
 
+        v6.11 F4: usa MessageExtractor (capa general) en vez de
+        ChatClient directamente. Respeta separación de capas.
+
         Returns:
             El ``chat_id`` descubierto, o string vacío si falla.
         """
         if not self._share_id or not self._jwt:
             return ""
         try:
-            from contexto_zai.client.chat_client import ChatClient
-            with ChatClient(token=self._jwt) as client:
-                tree_data = client.get_message_tree(self._share_id)
-                chat_id = tree_data.get("chat", {}).get("id", "")
-                if chat_id:
-                    logger.info(
-                        "chat_id descubierto del share %s: %s",
-                        self._share_id[:12], chat_id[:12],
-                    )
-                return chat_id
+            from contexto_zai.processing.message_extractor import MessageExtractor
+            # v6.11 F4: el share_id externo se inyecta en el extractor
+            # para que NO cree un share propio (ya lo tenemos).
+            extractor = MessageExtractor(jwt=self._jwt, chat_id="")
+            extractor._share_id = self._share_id
+            tree_data = extractor.get_message_tree()
+            chat_id = tree_data.get("chat", {}).get("id", "")
+            if chat_id:
+                logger.info(
+                    "chat_id descubierto del share %s: %s",
+                    self._share_id[:12], chat_id[:12],
+                )
+            return chat_id
         except Exception as e:
             logger.warning(
                 "No se pudo descubrir chat_id del share %s: %s",

@@ -40,14 +40,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.client.auth_client import AuthClient
-from contexto_zai.client.chat_client import ChatClient
 from contexto_zai.config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
 from contexto_zai.metadata.manager import MetadataManager
 from contexto_zai.models import RecoveryFile
 from contexto_zai.processing.block_packer import BlockPacker
 from contexto_zai.processing.classifier import MessageClassifier
 from contexto_zai.processing.exchange_builder import ExchangeBuilder
+from contexto_zai.processing.message_extractor import MessageExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -132,25 +131,27 @@ class IncrementalCycle:
                 )
 
             # 2. Extraer mensajes nuevos (filtrar por timestamp)
-            # v4.4: si hay share_id externo, usarlo directamente (saltar create_share)
+            # v6.11 F3/F4: usa MessageExtractor que filtra ANTES de descargar
+            # el contenido. Esto resuelve el timeout en chats grandes.
+            # Si hay share_id externo, se pasa al extractor para que no cree uno nuevo.
             if self._share_id_externo:
-                share_id = self._share_id_externo
-                logger.info(
-                    "Incremental: usando share_id externo %s (se salta create_share)",
-                    share_id[:12],
-                )
+                extractor = MessageExtractor(jwt=self._jwt, chat_id=self._chat_id)
+                extractor._share_id = self._share_id_externo  # usar share externo
             else:
-                with AuthClient(token=self._jwt) as auth:
-                    share_id = auth.create_share(self._chat_id)
+                extractor = MessageExtractor(jwt=self._jwt, chat_id=self._chat_id)
 
-            with ChatClient(token=self._jwt) as client:
-                all_messages = client.extract_all(
-                    share_id=share_id, chat_id=self._chat_id
-                )
+            new_messages = extractor.get_new_messages(since_timestamp=previous_ts)
 
-            new_messages = [
-                m for m in all_messages if m.timestamp > previous_ts
-            ]
+            # v4.4: para el reempaquetado selectivo necesitamos también los
+            # intercambios viejos de los temas afectados. Los obtenemos del
+            # extractor (que ya tiene el árbol cargado).
+            if new_messages:
+                # Obtener TODOS los mensajes para reconstruir intercambios
+                # de temas afectados (viejos + nuevos). El extractor ya paginó
+                # el batch, así que esto no hace timeout.
+                all_messages = extractor.get_all_messages()
+            else:
+                all_messages = []
 
             logger.info(
                 "Incremental: %d/%d mensajes son nuevos (ts > %d)",

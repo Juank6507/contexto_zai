@@ -41,7 +41,7 @@ from typing import Optional
 
 import httpx
 
-from contexto_zai.config import API_CONFIG
+from contexto_zai.client.zai_config import API_CONFIG
 from contexto_zai.models import Message, MessageRole
 
 logger = logging.getLogger(__name__)
@@ -154,8 +154,13 @@ class ChatClient:
         chat_id: str,
         message_ids: list[str],
         share_id: Optional[str] = None,
+        batch_size: Optional[int] = None,
     ) -> dict:
         """Extrae el contenido completo de una lista de mensajes (v3.2).
+
+        v6.11 F2: Pagina los message_ids en lotes de ``batch_size`` para no
+        exceder el timeout en chats grandes. El tamaño por defecto viene de
+        ``config.BATCH_SIZE`` (100).
 
         v3.2: Usa el endpoint autenticado por chat_id.
         El endpoint por share_id como invitado dejó de funcionar.
@@ -164,6 +169,7 @@ class ChatClient:
             chat_id: UUID interno del chat (requerido para autenticación).
             message_ids: Lista de IDs de mensajes a extraer.
             share_id: UUID del share (obsoleto en v3.2, ignorado).
+            batch_size: Tamaño del lote. Si es None, usa config.BATCH_SIZE (100).
 
         Returns:
             Diccionario {data: {msg_id: {content, content_blocks, ...}}}.
@@ -178,43 +184,59 @@ class ChatClient:
                 "Proporciona token=... o browser_session=... al crear ChatClient."
             )
 
+        # v6.11 F2: paginación
+        from contexto_zai.config import BATCH_SIZE as _DEFAULT_BATCH_SIZE
+        _batch_size = batch_size if batch_size is not None else _DEFAULT_BATCH_SIZE
+
         url = API_CONFIG.messages_batch_by_chat_url.format(chat_id=chat_id)
-        payload = {"ids": message_ids}
         cookies = {API_CONFIG.cookie_name: token}
 
-        logger.debug(
-            "Extrayendo batch de %d mensajes desde chat %s (v3.2 autenticado)",
-            len(message_ids),
-            chat_id,
-        )
-        response = self._client.post(
-            url,
-            json=payload,
-            cookies=cookies,
-            headers={"Content-Type": "application/json"},
-        )
+        # v6.11 F2: dividir message_ids en lotes y acumular resultados
+        all_extracted: dict = {}
+        total_lotes = (len(message_ids) + _batch_size - 1) // _batch_size if message_ids else 0
 
-        if response.status_code in (401, 403):
-            raise BatchExtractionError(
-                f"Acceso denegado al batch (HTTP {response.status_code}). "
-                f"El token puede ser inválido o de invitado."
+        for lote_idx in range(total_lotes):
+            inicio = lote_idx * _batch_size
+            fin = inicio + _batch_size
+            lote_ids = message_ids[inicio:fin]
+            payload = {"ids": lote_ids}
+
+            logger.debug(
+                "Extrayendo lote %d/%d (%d mensajes) desde chat %s",
+                lote_idx + 1, total_lotes, len(lote_ids), chat_id,
+            )
+            response = self._client.post(
+                url,
+                json=payload,
+                cookies=cookies,
+                headers={"Content-Type": "application/json"},
             )
 
-        if response.status_code == 404:
-            raise BatchExtractionError(
-                f"Chat {chat_id} no encontrado (HTTP 404). "
-                f"Verifica que el chat_id sea correcto y el token tenga acceso."
-            )
+            if response.status_code in (401, 403):
+                raise BatchExtractionError(
+                    f"Acceso denegado al batch (HTTP {response.status_code}). "
+                    f"El token puede ser inválido o de invitado."
+                )
 
-        response.raise_for_status()
-        data = response.json()
-        extracted = data.get("data", {})
+            if response.status_code == 404:
+                raise BatchExtractionError(
+                    f"Chat {chat_id} no encontrado (HTTP 404). "
+                    f"Verifica que el chat_id sea correcto y el token tenga acceso."
+                )
+
+            response.raise_for_status()
+            data = response.json()
+            extracted = data.get("data", {})
+            all_extracted.update(extracted)
+
         logger.info(
-            "Batch extraido: %d/%d mensajes con contenido",
-            len(extracted),
+            "Batch extraido: %d/%d mensajes con contenido (en %d lote(s) de %d)",
+            len(all_extracted),
             len(message_ids),
+            total_lotes,
+            _batch_size,
         )
-        return data
+        return {"data": all_extracted}
 
     def extract_all(
         self,

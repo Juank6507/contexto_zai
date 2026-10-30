@@ -60,6 +60,19 @@ def _patched_context_manager(mock_class, **method_returns):
     mock_class.return_value = instance
     return instance
 
+def _patched_message_extractor(mock_class, messages, share_id="s-id", tree_data=None):
+    """v6.11 F4: Configura un mock de MessageExtractor.
+
+    MessageExtractor(jwt=..., chat_id=...) debe devolver una instancia con
+    métodos get_all_messages() y get_message_tree(), y atributo _share_id.
+    """
+    instance = MagicMock()
+    instance.get_all_messages.return_value = messages
+    instance.get_message_tree.return_value = tree_data or {"chat": {"id": "fake-chat-id"}}
+    instance._share_id = share_id
+    mock_class.return_value = instance
+    return instance
+
 def test_recovery_cycle_success_with_mocked_api():
     """Test 1: ciclo exitoso con API simulada."""
     print("\n=== Test 1: ciclo exitoso con API simulada ===")
@@ -70,10 +83,8 @@ def test_recovery_cycle_success_with_mocked_api():
         Message(seq=4, role=MessageRole.ASSISTANT, timestamp=130, content="Worklog leído"),
     ]
     with tempfile.TemporaryDirectory() as tmpdir:
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="fake-share-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="fake-share-id")
 
             cycle = RecoveryCycle(
                 jwt="fake-jwt",
@@ -101,10 +112,8 @@ def test_recovery_cycle_writes_files_in_workspace_and_download():
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
         dl = Path(tmpdir) / "dl"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=dl)
             result = cycle.run()
 
@@ -124,10 +133,8 @@ def test_recovery_cycle_metadata_correct():
     ]
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             cycle = RecoveryCycle(jwt="x", chat_id="chat-abc", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -151,10 +158,8 @@ def test_recovery_cycle_estado_5_secciones():
     ]
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -176,10 +181,8 @@ def test_recovery_cycle_indice_with_mapping():
     ]
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -199,10 +202,8 @@ def test_recovery_cycle_unicity():
     ]
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=ws, download_dir=Path(tmpdir) / "dl")
             cycle.run()
 
@@ -229,12 +230,11 @@ def test_recovery_cycle_api_error():
     _logging.getLogger("contexto_zai").setLevel(_logging.CRITICAL)
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls:
+            with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
                 instance = MagicMock()
-                instance.__enter__ = MagicMock(return_value=instance)
-                instance.__exit__ = MagicMock(return_value=None)
-                instance.create_share.side_effect = RuntimeError("API caída")
-                mock_auth_cls.return_value = instance
+                instance.get_all_messages.side_effect = RuntimeError("API caída")
+                instance._share_id = ""
+                mock_extractor_cls.return_value = instance
 
                 cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=Path(tmpdir), download_dir=Path(tmpdir) / "dl")
                 result = cycle.run()
@@ -250,10 +250,8 @@ def test_recovery_cycle_empty_messages():
     """Test 8: lista vacía de mensajes."""
     print("\n=== Test 8: lista vacia de mensajes ===")
     with tempfile.TemporaryDirectory() as tmpdir:
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=[], extract_all_with_raw=([], {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, [], share_id="s-id")
             cycle = RecoveryCycle(jwt="x", chat_id="c", workspace_dir=Path(tmpdir), download_dir=Path(tmpdir) / "dl")
             result = cycle.run()
 
@@ -278,10 +276,8 @@ def test_recovery_cycle_no_block_exceeds_70k():
         ))
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir) / "ws"
-        with patch("contexto_zai.process.recovery_cycle.AuthClient") as mock_auth_cls, \
-             patch("contexto_zai.process.recovery_cycle.ChatClient") as mock_chat_cls:
-            _patched_context_manager(mock_auth_cls, create_share="s-id")
-            _patched_context_manager(mock_chat_cls, extract_all=fake_messages, extract_all_with_raw=(fake_messages, {"data": {}}))
+        with patch("contexto_zai.process.recovery_cycle.MessageExtractor") as mock_extractor_cls:
+            _patched_message_extractor(mock_extractor_cls, fake_messages, share_id="s-id")
             # Silenciar el logger durante el test para que los errores esperados
             # (Task no disponible en Windows) no se impriman en pantalla
             import logging as _logging
