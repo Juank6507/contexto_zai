@@ -1176,35 +1176,37 @@ class EnriquecimientoOrquestador:
         workspace_dir: Path | str,
         timeout: Optional[int] = None,
     ) -> bool:
-            """v6.2: Arranca el Worker Bun (v6.1) y espera a que termine.
+            """v6.12: Arranca el Worker Bun y monitorea progreso con ProgressMonitor.
 
-            Publica ``_pending_blocks.json`` con los bloques del workspace, arranca el
-            worker vía ``subprocess.run()`` con timeout, y devuelve True si el worker
-            completó (exit code 0), False si falló o hizo timeout.
+            v6.12 F2: Reemplaza el timeout fijo por monitoreo de progreso.
+            El Worker Bun arranca en background (no bloqueante) y
+            ProgressMonitor comprueba cada intervalo si hay progreso
+            (mas bloques completos). Si no progresa en 2 intervalos
+            seguidos, se declara que cayo y se devuelve False.
 
-            v6.8.2 F2: verifica si el puerto 8090 ya está en uso antes de intentar
-            arrancar otro Worker Bun. Si ya hay uno corriendo, lo reutiliza.
+            v6.8.2 F2: verifica si el puerto 8090 ya está en uso antes
+            de intentar arrancar otro Worker Bun.
 
             Args:
-                workspace_dir: Directorio del workspace (donde viven los bloque_NN.md).
-                timeout: Segundos máximos (default: ``WORKER_BUN_TIMEOUT`` de config).
+                workspace_dir: Directorio del workspace.
+                timeout: Ignorado en v6.12 (se usa ProgressMonitor).
 
             Returns:
-                True si el worker completó (exit code 0), False si falló o timeout.
+                True si el Worker Bun completo todos los bloques.
+                False si no progresa o falla.
             """
             import subprocess
             import socket as _socket
             try:
-                from contexto_zai.config import WORKER_BUN_DIR, WORKER_BUN_TIMEOUT as _DEFAULT_TIMEOUT
+                from contexto_zai.config import WORKER_BUN_DIR
             except ImportError:
-                logger.warning("v6.2: no se pudo importar WORKER_BUN_DIR, fallback desactivado")
+                logger.warning("v6.12: no se pudo importar WORKER_BUN_DIR, fallback desactivado")
                 return False
-            timeout = timeout if timeout is not None else _DEFAULT_TIMEOUT
             if not Path(WORKER_BUN_DIR).exists():
-                logger.warning("v6.2: WORKER_BUN_DIR no existe: %s", WORKER_BUN_DIR)
+                logger.warning("v6.12: WORKER_BUN_DIR no existe: %s", WORKER_BUN_DIR)
                 return False
 
-            # v6.8.2 F2: verificar si el puerto 8090 ya está en uso (Worker Bun existente)
+            # v6.8.2 F2: verificar si el puerto 8090 ya está en uso
             WORKER_BUN_PORT = 8090
             puerto_en_uso = False
             try:
@@ -1217,68 +1219,38 @@ class EnriquecimientoOrquestador:
                 puerto_en_uso = False
 
             if puerto_en_uso:
-                logger.info("v6.8.2 F2: puerto %d en uso — Worker Bun ya está corriendo, reutilizando",
+                logger.info("v6.12: puerto %d en uso — Worker Bun ya corriendo, monitoreando progreso",
                            WORKER_BUN_PORT)
-                # v6.8.3 re-aplicado (v6.10 F3): NO asumir éxito. Esperar a que el
-                # Worker Bun existente procese los bloques y VERIFICAR después
-                # si los bloques realmente tienen RESUMEN. Si tras esperar siguen
-                # sin RESUMEN, devolver False para que el arnés active el fallback.
-                import time as _time
-                _time.sleep(min(timeout, 30))  # esperar hasta 30s o timeout
-                # v6.8.3: verificación real — leer los bloque_*.md y contar cuántos
-                # ya tienen RESUMEN al inicio. Si ninguno avanzó tras la espera,
-                # el Worker Bun existente no está procesando nuestro workspace.
-                try:
-                    ws_path = Path(workspace_dir)
-                    if ws_path.exists():
-                        bloques = sorted(ws_path.glob("bloque_*.md"))
-                        con_resumen = sum(
-                            1 for p in bloques
-                            if p.read_text(encoding="utf-8", errors="ignore").split("\n", 1)[0].strip().startswith("RESUMEN:")
-                        )
-                        total = len(bloques)
-                        if total > 0 and con_resumen == 0:
-                            logger.warning(
-                                "v6.10 F3: Worker Bun existente no procesó ningún bloque "
-                                "(0/%d con RESUMEN tras %ds). Activando fallback.",
-                                total, min(timeout, 30),
-                            )
-                            return False
-                        logger.info(
-                            "v6.10 F3: verificación post-espera — %d/%d bloques con RESUMEN.",
-                            con_resumen, total,
-                        )
-                except Exception as e:
-                    logger.warning("v6.10 F3: no se pudo verificar bloques tras espera: %s", e)
-                    # En caso de no poder verificar, no asumir éxito ciego: devolver
-                    # False para que el arnés haga su propia re-verificación.
-                    return False
-                return True
+                # v6.12 F2: usar ProgressMonitor en vez de sleep fijo
+                return ProgressMonitor.esperar_y_verificar(workspace_dir)
 
+            # v6.12 F2: arrancar Worker Bun en background (no bloqueante)
             env = {**_os.environ, "CZAI_WORKSPACE_DIR": str(workspace_dir)}
             try:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     ["bun", "run", "cli.ts", "run"],
                     cwd=WORKER_BUN_DIR,
                     env=env,
-                    timeout=timeout,
-                    capture_output=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
                     text=True,
                 )
-                if result.returncode == 0:
-                    logger.info("v6.2: Worker Bun completó exitosamente.")
-                    return True
-                logger.warning("v6.2: Worker Bun falló (exit code %d). stderr: %s",
-                               result.returncode, (result.stderr or "")[:500])
-                return False
-            except subprocess.TimeoutExpired:
-                logger.warning("v6.2: Worker Bun timeout tras %ds.", timeout)
-                return False
+                logger.info("v6.12: Worker Bun arrancado en background (PID %d). Monitoreando progreso...", proc.pid)
+
+                # v6.12 F2: ProgressMonitor decide si hay progreso
+                todo_completo = ProgressMonitor.esperar_y_verificar(workspace_dir)
+
+                # Si el proceso sigue corriendo, dejarlo (puede seguir procesando)
+                if proc.poll() is None:
+                    logger.info("v6.12: Worker Bun sigue corriendo en background.")
+
+                return todo_completo
+
             except FileNotFoundError:
-                logger.warning("v6.2: 'bun' no está en PATH. Fallback desactivado.")
+                logger.warning("v6.12: 'bun' no está en PATH. Fallback desactivado.")
                 return False
             except Exception as e:
-                logger.warning("v6.2: Error arrancando Worker Bun: %s", e)
+                logger.warning("v6.12: Error arrancando Worker Bun: %s", e)
                 return False
 
     @staticmethod
@@ -1422,53 +1394,263 @@ class EnriquecimientoOrquestador:
             bloques_sin_resumen = [b for b in blocks if not b.tiene_resumen(workspace_dir=workspace_dir)]
 
             if not bloques_sin_resumen:
-                logger.info("v6.10 F3: Todos los bloques ya tienen resumen. Nada que hacer.")
+                logger.info("v6.12: Todos los bloques ya tienen resumen. Nada que hacer.")
                 return []
 
-            logger.info("v6.10 F3: %d bloque(s) sin RESUMEN. Activando arnés.",
+            logger.info("v6.12: %d bloque(s) sin RESUMEN. Activando arnés de 3 niveles.",
                         len(bloques_sin_resumen))
 
             # 2. Check proxy APA disponible.
             proxy_ok = _proxy_apa_disponible()
-            logger.info("v6.10 F3: Proxy APA: %s", "disponible" if proxy_ok else "no disponible")
+            logger.info("v6.12: Proxy APA: %s", "disponible" if proxy_ok else "no disponible")
 
             if proxy_ok:
-                # 3. v6.10 F3: darle una oportunidad rápida al Worker Bun (5s, no 30s).
-                # Si el Worker Bun está sano y procesa bloques en esos 5s, genial.
-                # Si no procesa nada en 5s, está caído o saturado → fallback inmediato.
-                logger.info("v6.10 F3: Probando Worker Bun (5s) para %d bloque(s)...",
+                # NIVEL 1: Worker Bun con ProgressMonitor (timeout progresivo).
+                logger.info("v6.12 Nivel 1: Arrancando Worker Bun para %d bloque(s)...",
                             len(bloques_sin_resumen))
-                worker_ok = _arrancar_worker_y_esperar(workspace_dir=workspace_dir, timeout=5)
+                worker_ok = EnriquecimientoOrquestador._arrancar_worker_y_esperar(workspace_dir=workspace_dir)
 
-                if worker_ok:
-                    # Re-verificar qué bloques quedaron sin RESUMEN.
-                    bloques_aun_sin_resumen = [
-                        b for b in bloques_sin_resumen if not b.tiene_resumen(workspace_dir=workspace_dir)
-                    ]
-                    if not bloques_aun_sin_resumen:
-                        logger.info("v6.10 F3: Worker Bun completó todos los bloques. Fallback no necesario.")
-                        return []
-                    logger.info("v6.10 F3: Worker Bun no completó %d bloque(s). Fallback al agente.",
-                                len(bloques_aun_sin_resumen))
-                    bloques_para_fallback = bloques_aun_sin_resumen
-                else:
-                    logger.info("v6.10 F3: Worker Bun no disponible (caído o saturado). Fallback inmediato.")
-                    bloques_para_fallback = bloques_sin_resumen
+                # Re-verificar qué bloques quedaron sin completar (RESUMEN + 3 archivos).
+                bloques_aun_sin_completar = [
+                    b for b in bloques_sin_resumen
+                    if not EnriquecimientoOrquestador._bloque_esta_completo(b, workspace_dir=workspace_dir)
+                ]
+
+                if not bloques_aun_sin_completar:
+                    logger.info("v6.12 Nivel 1: Worker Bun completó todos los bloques. Listo.")
+                    return []
+
+                logger.info("v6.12 Nivel 1: Worker Bun dejó %d bloque(s) sin completar.",
+                            len(bloques_aun_sin_completar))
+
+                # NIVEL 2: Proxy APA directo (el proceso Python llama al proxy, un bloque a la vez).
+                logger.info("v6.12 Nivel 2: Intentando %d bloque(s) con proxy APA directo...",
+                            len(bloques_aun_sin_completar))
+                bloques_restantes = []
+                for bloque in bloques_aun_sin_completar:
+                    ok = EnriquecimientoOrquestador._enriquecer_con_proxy_apa(
+                        bloque, workspace_dir=workspace_dir
+                    )
+                    if not ok:
+                        bloques_restantes.append(bloque)
+
+                if not bloques_restantes:
+                    logger.info("v6.12 Nivel 2: Proxy APA completó todos los bloques restantes. Listo.")
+                    return []
+
+                logger.info("v6.12 Nivel 2: Proxy APA dejó %d bloque(s). Pasando a subagentes.",
+                            len(bloques_restantes))
+                bloques_para_fallback = bloques_restantes
             else:
-                logger.info("v6.10 F3: Proxy APA no disponible. Fallback al agente para todos los bloques.")
+                logger.info("v6.12: Proxy APA no disponible. Subagentes para todos los bloques.")
                 bloques_para_fallback = bloques_sin_resumen
 
-            # 4. Construir pending_tasks para los bloques que el Worker Bun no procesó.
-            # El agente lanzará subagentes con estas tareas. Mientras los subagentes
-            # trabajan, el Worker Bun puede recuperarse en segundo plano (su backoff
-            # interno lo maneja). La idempotencia garantiza que no haya trabajo
-            # duplicado: el primero que procese cada bloque gana.
+            # NIVEL 3: Subagentes (ultimo recurso).
             pending_tasks = []
             for bloque in bloques_para_fallback:
                 task = _construir_pending_task_para_bloque(bloque, chat_label=chat_label)
                 pending_tasks.append(task)
 
             return pending_tasks
+
+    @staticmethod
+    def _bloque_esta_completo(
+        bloque,
+        workspace_dir: Path | str,
+    ) -> bool:
+        """v6.12 F5: Verifica si un bloque esta realmente completo.
+
+        Un bloque esta completo cuando tiene:
+        1. RESUMEN: al inicio del archivo bloque_NN.md
+        2. _responses/bloque_NN_nombre.txt
+        3. _responses/bloque_NN_decisiones.txt
+        4. _responses/bloque_NN_temas.txt
+
+        Args:
+            bloque: ThematicBlock con filename.
+            workspace_dir: Directorio del workspace.
+
+        Returns:
+            True si el bloque esta completo, False si falta algo.
+        """
+        ws = Path(workspace_dir)
+        filename = bloque.filename
+        block_id = filename.replace(".md", "")
+
+        # 1. Verificar RESUMEN al inicio
+        bloque_path = ws / filename
+        if not bloque_path.exists():
+            return False
+        content = bloque_path.read_text(encoding="utf-8", errors="ignore")
+        if not content.startswith("RESUMEN:"):
+            return False
+
+        # 2. Verificar los 3 archivos de _responses/
+        responses_dir = ws / "_responses"
+        if not responses_dir.exists():
+            return False
+        if not (responses_dir / f"{block_id}_nombre.txt").exists():
+            return False
+        if not (responses_dir / f"{block_id}_decisiones.txt").exists():
+            return False
+        if not (responses_dir / f"{block_id}_temas.txt").exists():
+            return False
+
+        return True
+
+    @staticmethod
+    def _enriquecer_con_proxy_apa(
+        bloque,
+        workspace_dir: Path | str,
+    ) -> bool:
+        """v6.12 F3: Nivel 2 del arnés - enriquecer un bloque llamando al proxy APA directamente.
+
+        El proceso Python lee el bloque, llama al proxy APA con el prompt W1 (resumen)
+        y W2 (extraccion), y escribe los resultados siguiendo el protocolo del proceso
+        (prefijo RESUMEN:, _responses/, caché por hash).
+
+        Args:
+            bloque: ThematicBlock con filename.
+            workspace_dir: Directorio del workspace.
+
+        Returns:
+            True si el bloque se completo, False si fallo.
+        """
+        import json as _json
+        import urllib.request as _ur
+        import urllib.error as _ue
+        import hashlib as _hashlib
+
+        ws = Path(workspace_dir)
+        filename = bloque.filename
+        block_id = filename.replace(".md", "")
+        bloque_path = ws / filename
+        responses_dir = ws / "_responses"
+        cache_dir = responses_dir / "cache"
+
+        if not bloque_path.exists():
+            logger.warning("v6.12 Nivel 2: bloque %s no existe.", filename)
+            return False
+
+        responses_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Leer el contenido del bloque
+        bloque_content = bloque_path.read_text(encoding="utf-8")
+        if len(bloque_content) < 100:
+            logger.warning("v6.12 Nivel 2: bloque %s demasiado corto.", filename)
+            return False
+
+        # Truncar si es muy grande (igual que el Worker Bun)
+        max_chars = 50000
+        if len(bloque_content) > max_chars:
+            bloque_content = bloque_content[:max_chars] + "\n...(contenido truncado)..."
+
+        try:
+            from contexto_zai.config import PROXY_APA_URL, PROXY_APA_TIMEOUT, PROMPT_RESUMEN_RIGIDO
+        except ImportError:
+            logger.warning("v6.12 Nivel 2: no se pudo importar config del proxy.")
+            return False
+
+        def _llamar_proxy(prompt: str, model: str = "glm-4-plus") -> str:
+            """Llama al proxy APA y devuelve la respuesta de texto."""
+            payload = _json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 2000,
+            }).encode("utf-8")
+
+            # Caché por hash SHA256 del prompt
+            prompt_hash = _hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            cache_path = cache_dir / f"{prompt_hash}.txt"
+            if cache_path.exists():
+                logger.info("v6.12 Nivel 2: caché hit para %s (hash %s...)", block_id, prompt_hash[:8])
+                return cache_path.read_text(encoding="utf-8").strip()
+
+            req = _ur.Request(
+                PROXY_APA_URL,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with _ur.urlopen(req, timeout=PROXY_APA_TIMEOUT) as resp:
+                data = _json.loads(resp.read().decode("utf-8"))
+                text = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+            # Guardar en caché
+            cache_path.write_text(text, encoding="utf-8")
+            return text
+
+        # W1: Generar resumen
+        prompt_w1 = PROMPT_RESUMEN_RIGIDO.format(bloque_content=bloque_content)
+        logger.info("v6.12 Nivel 2: W1 (resumen) para %s...", block_id)
+        resumen = _llamar_proxy(prompt_w1, model="glm-4-plus")
+
+        if not resumen or len(resumen) < 100:
+            logger.warning("v6.12 Nivel 2: W1 devolvio respuesta vacia para %s.", block_id)
+            return False
+
+        # Escribir RESUMEN al inicio del bloque
+        original_content = bloque_path.read_text(encoding="utf-8")
+        new_content = f"RESUMEN: {resumen}\n\n---\n\n{original_content}"
+        bloque_path.write_text(new_content, encoding="utf-8")
+
+        # Guardar resumen en _responses/
+        (responses_dir / f"{block_id}_resumen.txt").write_text(resumen, encoding="utf-8")
+
+        # W2: Extraccion JSON (nombre, decisiones, temas)
+        prompt_w2 = f"""Basándote en este resumen de un bloque de chat, extrae TRES piezas de información. Devuelve EXCLUSIVAMENTE un JSON válido con esta forma exacta:
+
+{{
+  "nombre": "<snake_case, máximo 5 palabras, captura el tema central>",
+  "decisiones": ["DECISION: ... | ALCANCE: ...", "DECISION: ... | ALCANCE: ..."],
+  "temas": ["tema_uno", "tema_dos", "tema_tres"]
+}}
+
+Reglas:
+- "nombre": snake_case, máximo 5 palabras.
+- "decisiones": lista (puede ser vacía si no hay decisiones explícitas). Cada item con formato "DECISION: ... | ALCANCE: ...".
+- "temas": lista de máximo 5 temas en snake_case.
+
+Resumen:
+{resumen}
+
+JSON:"""
+
+        logger.info("v6.12 Nivel 2: W2 (extraccion) para %s...", block_id)
+        raw_w2 = _llamar_proxy(prompt_w2, model="glm-4-flash")
+
+        # Parsear JSON (tolerante a markdown fences)
+        cleaned = raw_w2.replace("```json", "").replace("```", "").strip()
+        try:
+            parsed = _json.loads(cleaned)
+        except _json.JSONDecodeError:
+            logger.warning("v6.12 Nivel 2: W2 JSON parse failed para %s. Guardando raw.", block_id)
+            (responses_dir / f"{block_id}_extract_raw.txt").write_text(raw_w2, encoding="utf-8")
+            parsed = {}
+
+        nombre = (parsed.get("nombre") or "bloque_sin_nombre").strip()
+        decisiones = parsed.get("decisiones", [])
+        if not isinstance(decisiones, list):
+            decisiones = []
+        temas = parsed.get("temas", [])
+        if not isinstance(temas, list):
+            temas = []
+
+        # Escribir los 3 archivos
+        (responses_dir / f"{block_id}_nombre.txt").write_text(nombre, encoding="utf-8")
+        (responses_dir / f"{block_id}_decisiones.txt").write_text(
+            "\n".join(decisiones) if decisiones else "", encoding="utf-8"
+        )
+        (responses_dir / f"{block_id}_temas.txt").write_text(
+            "\n".join(temas) if temas else "", encoding="utf-8"
+        )
+
+        logger.info(
+            "v6.12 Nivel 2: %s completado (nombre=%s, %d decisiones, %d temas).",
+            block_id, nombre, len(decisiones), len(temas),
+        )
+        return True
 
     @staticmethod
     def _enriquecer_bloques_post_run(
@@ -1575,33 +1757,36 @@ class EnriquecimientoOrquestador:
                 logger.warning("v6.3 F1: collect_responses() falló: %s", e)
                 applied = 0
 
-            # Re-leer pending_tasks tras collect_responses
-            try:
-                from contexto_zai.coordinador.orquestador import Orquestador
-                orch = Orquestador(workspace_dir=workspace_dir)
-                remaining = orch.leer_tareas_pendientes()
-            except Exception as e:
-                logger.warning("v6.3 F1: no se pudo re-leer pending_tasks: %s", e)
-                remaining = result.pending_tasks
+            # v6.12 F5: verificar estado físico de los bloques, no la cola.
+            # El falso positivo ocurria cuando _pending_tasks.json no existia
+            # y la cola decia "0 restantes = todo resuelto" aunque los bloques
+            # no tenian RESUMEN. Ahora verificamos el estado real de cada bloque.
+            from contexto_zai.models import ThematicBlock as _TB
+            ws_path = Path(workspace_dir)
+            bloques_reales = []
+            if ws_path.exists():
+                for p in sorted(ws_path.glob("bloque_*.md")):
+                    bloques_reales.append(_TB(filename=p.name))
 
-            resolved = initial_count - len(remaining)
-            if hasattr(result, "pending_tasks_resolved"):
-                result.pending_tasks_resolved = resolved
-            else:
-                # OrchestratorResult no tiene el campo (versiones viejas)
-                pass
+            bloques_incompletos = [
+                b for b in bloques_reales
+                if not EnriquecimientoOrquestador._bloque_esta_completo(b, workspace_dir=workspace_dir)
+            ]
 
-            if remaining:
+            if bloques_incompletos:
                 logger.warning(
-                    "v6.3 F1: %d tarea(s) pendientes sin resolver tras collect_responses() "
-                    "(resueltas: %d de %d). El agente principal debe ejecutarlas con Task tool.",
-                    len(remaining), resolved, initial_count,
+                    "v6.12 F5: %d bloque(s) incompletos (sin RESUMEN + 3 archivos). "
+                    "El agente debe completarlos con el arnés o subagentes.",
+                    len(bloques_incompletos),
                 )
-                result.pending_tasks = remaining
+                # Reconstruir pending_tasks solo para los bloques incompletos
+                result.pending_tasks = [
+                    _construir_pending_task_para_bloque(b, chat_label="v6.12_f5")
+                    for b in bloques_incompletos
+                ]
             else:
                 logger.info(
-                    "v6.3 F1: todas las pending_tasks resueltas (%d de %d).",
-                    resolved, initial_count,
+                    "v6.12 F5: todos los bloques estan completos (verificado fisicamente)."
                 )
                 result.pending_tasks = []
 
@@ -1956,6 +2141,144 @@ class EnriquecimientoOrquestador:
             # Quitar sufijos de query string o fragmento (defensivo)
             id_extraido = id_extraido.split("?")[0].split("#")[0]
             return id_extraido if id_extraido else None
+
+
+class ProgressMonitor:
+    """v6.12 F1: Monitorea el progreso del Worker Bun contando bloques completos.
+
+    Un bloque esta completo cuando tiene RESUMEN al inicio Y los 3 archivos
+    en _responses/ (nombre, decisiones, temas). ProgressMonitor cuenta
+    bloques completos en intervalos y decide si hay progreso.
+
+    Separada del arnés (OOP): la comprobacion de progreso es una cosa,
+    el uso de los componentes del arnés (Worker Bun, proxy APA, subagentes)
+    es otra.
+    """
+
+    @staticmethod
+    def contar_bloques_completos(workspace_dir: Path | str) -> int:
+        """Cuenta cuantos bloques estan realmente completos.
+
+        Un bloque esta completo cuando tiene:
+        1. RESUMEN: al inicio del archivo bloque_NN.md
+        2. _responses/bloque_NN_nombre.txt
+        3. _responses/bloque_NN_decisiones.txt
+        4. _responses/bloque_NN_temas.txt
+
+        Args:
+            workspace_dir: Directorio del workspace.
+
+        Returns:
+            Numero de bloques completos.
+        """
+        ws = Path(workspace_dir)
+        if not ws.exists():
+            return 0
+
+        responses_dir = ws / "_responses"
+        completos = 0
+
+        for p in sorted(ws.glob("bloque_*.md")):
+            block_id = p.stem  # "bloque_01"
+            content = p.read_text(encoding="utf-8", errors="ignore")
+            if not content.startswith("RESUMEN:"):
+                continue
+            # Verificar los 3 archivos de _responses/
+            if not responses_dir.exists():
+                continue
+            if not (responses_dir / f"{block_id}_nombre.txt").exists():
+                continue
+            if not (responses_dir / f"{block_id}_decisiones.txt").exists():
+                continue
+            if not (responses_dir / f"{block_id}_temas.txt").exists():
+                continue
+            completos += 1
+
+        return completos
+
+    @staticmethod
+    def contar_bloques_totales(workspace_dir: Path | str) -> int:
+        """Cuenta el total de bloques en el workspace."""
+        ws = Path(workspace_dir)
+        if not ws.exists():
+            return 0
+        return len(list(ws.glob("bloque_*.md")))
+
+    @staticmethod
+    def esperar_y_verificar(
+        workspace_dir: Path | str,
+        intervalo_inicial: int = 20,
+        max_intervalos: int = 10,
+        crecimiento: float = 1.5,
+    ) -> bool:
+        """Espera al Worker Bun monitoreando progreso en intervalos progresivos.
+
+        Comienza tras 20s iniciales. Despues comprueba cada intervalo
+        (que crece progresivamente). Si hay progreso (mas bloques completos
+        que antes), sigue esperando. Si no hay progreso en 2 intervalos
+        seguidos, declara que el Worker Bun cayo.
+
+        Args:
+            workspace_dir: Directorio del workspace.
+            intervalo_inicial: Segundos del primer intervalo (default 20).
+            max_intervalos: Maximo numero de comprobaciones (default 10).
+            crecimiento: Factor de crecimiento del intervalo (default 1.5).
+
+        Returns:
+            True si el Worker Bun completo todos los bloques.
+            False si no progreso en 2 intervalos seguidos o se agotaron los intervalos.
+        """
+        import time as _time
+
+        total_bloques = ProgressMonitor.contar_bloques_totales(workspace_dir)
+
+        # Espera inicial
+        logger.info(
+            "v6.12 ProgressMonitor: esperando %ds iniciales (%d bloques totales)...",
+            intervalo_inicial, total_bloques,
+        )
+        _time.sleep(intervalo_inicial)
+
+        completos_anterior = ProgressMonitor.contar_bloques_completos(workspace_dir)
+        sin_progreso_consecutivos = 0
+        intervalo_actual = intervalo_inicial
+
+        for i in range(max_intervalos):
+            _time.sleep(intervalo_actual)
+            completos_ahora = ProgressMonitor.contar_bloques_completos(workspace_dir)
+
+            logger.info(
+                "v6.12 ProgressMonitor: intervalo %d/%d - %d/%d bloques completos (intervalo=%ds)",
+                i + 1, max_intervalos, completos_ahora, total_bloques, intervalo_actual,
+            )
+
+            if completos_ahora >= total_bloques:
+                logger.info("v6.12 ProgressMonitor: todos los bloques completos.")
+                return True
+
+            if completos_ahora > completos_anterior:
+                sin_progreso_consecutivos = 0
+                logger.info(
+                    "v6.12 ProgressMonitor: progreso detectado (%d -> %d).",
+                    completos_anterior, completos_ahora,
+                )
+            else:
+                sin_progreso_consecutivos += 1
+                logger.warning(
+                    "v6.12 ProgressMonitor: sin progreso (%d/%d consecutivos).",
+                    sin_progreso_consecutivos, 2,
+                )
+                if sin_progreso_consecutivos >= 2:
+                    logger.warning(
+                        "v6.12 ProgressMonitor: Worker Bun sin progreso en 2 intervalos. Cayo."
+                    )
+                    return False
+
+            completos_anterior = completos_ahora
+            intervalo_actual = int(intervalo_actual * crecimiento)
+
+        logger.warning("v6.12 ProgressMonitor: maximo de intervalos alcanzado.")
+        return completos_ahora >= total_bloques
 
 
 def _proxy_apa_disponible() -> bool:

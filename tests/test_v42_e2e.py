@@ -621,16 +621,24 @@ def test_v62_proxy_disponible_worker_completa():
         blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 4)]
 
         # Mock: proxy disponible + worker simula que completa todos los bloques
-        # (escribe RESUMEN: en cada archivo)
+        # v6.12: el mock ahora tambien escribe los 3 archivos de _responses/
+        # (nombre, decisiones, temas) porque el ProgressMonitor verifica bloques completos
         def mock_arrancar(workspace_dir, timeout=None):
             from pathlib import Path
+            ws_path = Path(workspace_dir)
+            responses_dir = ws_path / "_responses"
+            responses_dir.mkdir(exist_ok=True)
             for i in range(1, 4):
-                p = Path(workspace_dir) / f"bloque_{i:02d}.md"
+                p = ws_path / f"bloque_{i:02d}.md"
                 p.write_text(f"RESUMEN: Simulado por worker.\n\n---\n\nContenido original.", encoding="utf-8")
+                block_id = f"bloque_{i:02d}"
+                (responses_dir / f"{block_id}_nombre.txt").write_text("nombre_simulado", encoding="utf-8")
+                (responses_dir / f"{block_id}_decisiones.txt").write_text("DECISION: ejemplo | ALCANCE: test", encoding="utf-8")
+                (responses_dir / f"{block_id}_temas.txt").write_text("tema_simulado", encoding="utf-8")
             return True
 
         with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=True), \
-             patch("contexto_zai.pipeline._arrancar_worker_y_esperar", side_effect=mock_arrancar):
+             patch("contexto_zai.pipeline.EnriquecimientoOrquestador._arrancar_worker_y_esperar", side_effect=mock_arrancar):
             pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)} tarea(s)"
@@ -681,15 +689,23 @@ def test_v62_worker_falla_parcialmente():
 
         def mock_arrancar(workspace_dir, timeout=None):
             from pathlib import Path
-            # Solo completa los primeros 3 bloques
+            ws_path = Path(workspace_dir)
+            responses_dir = ws_path / "_responses"
+            responses_dir.mkdir(exist_ok=True)
+            # Solo completa los primeros 3 bloques (con RESUMEN + 3 archivos)
             for i in range(1, 4):
-                p = Path(workspace_dir) / f"bloque_{i:02d}.md"
+                p = ws_path / f"bloque_{i:02d}.md"
                 p.write_text(f"RESUMEN: Simulado por worker.\n\n---\n\nContenido.", encoding="utf-8")
+                block_id = f"bloque_{i:02d}"
+                (responses_dir / f"{block_id}_nombre.txt").write_text("nombre_simulado", encoding="utf-8")
+                (responses_dir / f"{block_id}_decisiones.txt").write_text("DECISION: ejemplo | ALCANCE: test", encoding="utf-8")
+                (responses_dir / f"{block_id}_temas.txt").write_text("tema_simulado", encoding="utf-8")
             # Los bloques 4 y 5 no se tocan
-            return True  # Worker "completa" exitosamente, pero dejó 2 sin RESUMEN
+            return True  # Worker "completa" exitosamente, pero dejó 2 sin completar
 
         with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=True), \
-             patch("contexto_zai.pipeline._arrancar_worker_y_esperar", side_effect=mock_arrancar):
+             patch("contexto_zai.pipeline.EnriquecimientoOrquestador._arrancar_worker_y_esperar", side_effect=mock_arrancar), \
+             patch("contexto_zai.pipeline.EnriquecimientoOrquestador._enriquecer_con_proxy_apa", return_value=False):
             pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         # 3 bloques con RESUMEN: (worker OK), 2 sin (fallback)
@@ -713,8 +729,10 @@ def test_v62_worker_timeout():
         blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 4)]
 
         # Mock: proxy OK, pero worker devuelve False (timeout simulado)
+        # y Nivel 2 (proxy APA directo) tambien falla (mockeado)
         with patch("contexto_zai.pipeline._proxy_apa_disponible", return_value=True), \
-             patch("contexto_zai.pipeline._arrancar_worker_y_esperar", return_value=False):
+             patch("contexto_zai.pipeline.EnriquecimientoOrquestador._arrancar_worker_y_esperar", return_value=False), \
+             patch("contexto_zai.pipeline.EnriquecimientoOrquestador._enriquecer_con_proxy_apa", return_value=False):
             pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert len(pending) == 3, f"Esperaba 3 pending_tasks (timeout), obtuvo {len(pending)}"

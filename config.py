@@ -81,6 +81,12 @@ TOKEN_LIMITS = TokenLimits()
 # Los message_ids se dividen en lotes de BATCH_SIZE para no exceder el timeout.
 BATCH_SIZE = 100
 
+# v6.12 F6: ProgressMonitor - monitoreo de progreso del Worker Bun
+PROGRESS_INTERVAL_INITIAL = 20  # segundos del primer intervalo
+PROGRESS_MAX_INTERVALS = 10     # maximo de comprobaciones
+PROGRESS_GROWTH = 1.5            # factor de crecimiento del intervalo
+PROGRESS_MAX_NO_PROGRESS = 2     # intervalos sin progreso antes de declarar caida
+
 # -- Reglas temáticas por defecto -----------------------------------
 
 @dataclass

@@ -1,0 +1,101 @@
+﻿---- INTENTO 2026-11-02T23:20:00.2021250+00:00 ----
+{
+    "proyecto":  "contexto_zai",
+    "version":  "6.12",
+    "fecha":  "2026-11-02 23:20:00",
+    "aprobado":  false,
+    "items_fallados":  [
+                           "C1: carpeta de la entrega no indicada o inexistente ()",
+                           "C4: sentencia de prueba 8 lanzo error: Traceback (most recent call last):"
+                       ],
+    "motivo":  "Entrega NO aplicada: vuelve al DCEPI (I.3b). Escalar al Director.",
+    "vuelve_a":  "DCEPI",
+    "comandos_fallidos":  [
+
+                          ],
+    "no_automatizable":  [
+                             "git push a GitHub | el sandbox no tiene credenciales | el Director ejecuta git push manualmente"
+                         ]
+}
+---- INTENTO 2026-11-03T00:14:27.1870227+00:00 ----
+{
+    "proyecto":  "contexto_zai",
+    "version":  "6.12",
+    "fecha":  "2026-11-03 00:14:27",
+    "aprobado":  false,
+    "items_fallados":  [
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\config.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\pipeline.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\chat_client.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\zai_config.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\attachment_client.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\auth_client.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\browser_session.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\credential_manager.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\coordinador\\orquestador.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\coordinador\\integrador_respuestas.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\process\\recovery_cycle.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\process\\incremental_cycle.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\process\\orchestrator.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\processing\\message_extractor.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\processing\\exchange_builder.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\subagents\\mantenimiento_subagent.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\tests\\test_v42_e2e.py",
+                           "C1: falta el archivo requerido MANIFIESTO_ENTREGA.txt",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\retorno\\documento_consolidado.md",
+                           "C2: MANIFIESTO_ENTREGA.txt ausente en la entrega",
+                           "C6: el documento consolidado de retorno no esta en para-repo-contexto_zai\\retorno\\documento_consolidado.md (R1/NH26)",
+                           "C4: sentencia de prueba 8 lanzo error (cd /d C:\\Python\\Proyectos\\contexto_zai \u0026\u0026 python -c \"from pipeline import ProgressMonitor; print(\u0027OK ProgressMonitor\u0027)\"): Traceback (most recent call last):",
+                           "C4: sentencia de prueba 9 lanzo error (cd /d C:\\Python\\Proyectos\\contexto_zai \u0026\u0026 python -c \"from pipeline import EnriquecimientoOrquestador; assert hasattr(EnriquecimientoOrquestador, \u0027_enriquecer_con_proxy_apa\u0027); print(\u0027OK proxy APA nivel 2\u0027)\"): Traceback (most recent call last):",
+                           "C4: sentencia de prueba 10 lanzo error (cd /d C:\\Python\\Proyectos\\contexto_zai \u0026\u0026 python -c \"from pipeline import EnriquecimientoOrquestador; assert hasattr(EnriquecimientoOrquestador, \u0027_bloque_esta_completo\u0027); print(\u0027OK bloque completo\u0027)\"): Traceback (most recent call last):"
+                       ],
+    "motivo":  "Entrega NO aplicada: la entrega vuelve al DCEPI (I.3b). Escalar al Director con el problema exacto: item, evidencia y diagnostico.",
+    "vuelve_a":  "DCEPI",
+    "comandos_fallidos":  [
+
+                          ],
+    "no_automatizable":  [
+                             "git push a GitHub | el sandbox no tiene credenciales | el Director ejecuta git push manualmente"
+                         ]
+}
+---- INTENTO 2026-11-03T00:18:49.9855659+00:00 ----
+{
+    "proyecto":  "contexto_zai",
+    "version":  "6.12",
+    "fecha":  "2026-11-03 00:18:49",
+    "aprobado":  false,
+    "items_fallados":  [
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\config.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\pipeline.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\chat_client.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\zai_config.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\attachment_client.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\auth_client.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\browser_session.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\client\\credential_manager.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\coordinador\\orquestador.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\coordinador\\integrador_respuestas.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\process\\recovery_cycle.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\process\\incremental_cycle.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\process\\orchestrator.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\processing\\message_extractor.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\processing\\exchange_builder.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\subagents\\mantenimiento_subagent.py",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\tests\\test_v42_e2e.py",
+                           "C1: falta el archivo requerido MANIFIESTO_ENTREGA.txt",
+                           "C1: falta el archivo requerido para-repo-contexto_zai\\retorno\\documento_consolidado.md",
+                           "C2: MANIFIESTO_ENTREGA.txt ausente en la entrega",
+                           "C6: el documento consolidado de retorno no esta en para-repo-contexto_zai\\retorno\\documento_consolidado.md (R1/NH26)",
+                           "C4: sentencia de prueba 8 lanzo error (cd /d C:\\Python\\Proyectos\\contexto_zai \u0026\u0026 python -c \"from pipeline import ProgressMonitor; print(\u0027OK ProgressMonitor\u0027)\"): Traceback (most recent call last):",
+                           "C4: sentencia de prueba 9 lanzo error (cd /d C:\\Python\\Proyectos\\contexto_zai \u0026\u0026 python -c \"from pipeline import EnriquecimientoOrquestador; assert hasattr(EnriquecimientoOrquestador, \u0027_enriquecer_con_proxy_apa\u0027); print(\u0027OK proxy APA nivel 2\u0027)\"): Traceback (most recent call last):",
+                           "C4: sentencia de prueba 10 lanzo error (cd /d C:\\Python\\Proyectos\\contexto_zai \u0026\u0026 python -c \"from pipeline import EnriquecimientoOrquestador; assert hasattr(EnriquecimientoOrquestador, \u0027_bloque_esta_completo\u0027); print(\u0027OK bloque completo\u0027)\"): Traceback (most recent call last):"
+                       ],
+    "motivo":  "Entrega NO aplicada: la entrega vuelve al DCEPI (I.3b). Escalar al Director con el problema exacto: item, evidencia y diagnostico.",
+    "vuelve_a":  "DCEPI",
+    "comandos_fallidos":  [
+
+                          ],
+    "no_automatizable":  [
+                             "git push a GitHub | el sandbox no tiene credenciales | el Director ejecuta git push manualmente"
+                         ]
+}
