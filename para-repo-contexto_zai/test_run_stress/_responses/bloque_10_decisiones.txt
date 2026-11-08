@@ -1,0 +1,2 @@
+DECISION: Empaquetamiento de intercambios temáticos | ALCANCE: Pipeline del sistema
+DECISION: Generación de resúmenes rigurosos | ALCANCE: Worker Bun

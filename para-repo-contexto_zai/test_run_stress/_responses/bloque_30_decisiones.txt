@@ -1,0 +1,2 @@
+DECISION: determinar estructura de bloques temáticos | ALCANCE: proceso contexto_zai
+DECISION: procesar con Worker Bun | ALCANCE: generación de resúmenes

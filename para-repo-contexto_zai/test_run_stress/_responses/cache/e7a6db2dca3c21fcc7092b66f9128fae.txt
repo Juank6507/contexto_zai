@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_proceso_tres",
+  "decisiones": ["DECISION: mantener estructura actual | ALCANCE: sin cambios formales", "DECISION: mejorar empaquetado de datos | ALCANCE: funcionalidad del bloque"],
+  "temas": ["worker_bun", "resumen_riguroso", "empaquetado_temático", "diseño", "validacion_funcionalidad"]
+}
+```

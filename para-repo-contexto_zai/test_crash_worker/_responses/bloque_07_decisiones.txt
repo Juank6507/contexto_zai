@@ -1,0 +1,1 @@
+DECISION: mantener formato actual de empaquetamiento | ALCANCE: bloque número 7 del proceso

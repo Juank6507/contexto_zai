@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "proyecto_contexto_zai",
+  "decisiones": ["DECISION: mantener estructura actual | ALCANCE: sin cambios formales"],
+  "temas": ["arquitectura_pipeline", "worker_bun", "proxy_zai", "eficiencia_procesamiento", "compatibilidad_sistema"]
+}
+```

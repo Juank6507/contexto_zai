@@ -1,0 +1,2 @@
+DECISION: clasificar intercambios temáticamente | ALCANCE: para generar resúmenes rigurosos
+DECISION: empaquetar intercambios juntos | ALCANCE: para generar resúmenes rigurosos

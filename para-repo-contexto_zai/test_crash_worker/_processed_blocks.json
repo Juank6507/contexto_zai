@@ -1,0 +1,112 @@
+{
+  "blocks": [
+    {
+      "block_id": "bloque_01",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:08:40.198Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_02",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:08:42.335Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_03",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:08:44.655Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_04",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:08:47.317Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_05",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:08:49.477Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_06",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:23.889Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_07",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:26.627Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_08",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:29.522Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_09",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:31.819Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_10",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:34.505Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_11",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:37.239Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_12",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:39.557Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_13",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:09:41.969Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_14",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:10:15.996Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_15",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:10:19.937Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_16",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:10:23.256Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_17",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:10:26.051Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_18",
+      "status": "completed",
+      "processed_at": "2026-11-05T00:10:28.610Z",
+      "error": null
+    }
+  ]
+}

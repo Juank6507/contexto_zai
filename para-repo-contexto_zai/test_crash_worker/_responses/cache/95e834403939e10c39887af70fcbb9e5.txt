@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_18_recuperacion",
+  "decisiones": ["DECISION: mantener estructura actual | ALCANCE: intercambios clasificados y empaquetados"],
+  "temas": ["recuperacion_contexto", "worker_bun", "empaquetado_datos"]
+}
+```

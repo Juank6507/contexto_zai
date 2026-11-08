@@ -1,0 +1,5 @@
+worker_bun
+resumen_riguroso
+empaquetado_temático
+diseño
+validacion_funcionalidad

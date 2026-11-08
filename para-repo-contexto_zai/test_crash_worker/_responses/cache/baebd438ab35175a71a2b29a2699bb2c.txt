@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_recuperacion_contexto",
+  "decisiones": [],
+  "temas": ["clasificacion_intercambios", "empaquetado_datos", "proxy_zai", "arquitectura_pipeline", "funcionamiento_bloque"]
+}
+```

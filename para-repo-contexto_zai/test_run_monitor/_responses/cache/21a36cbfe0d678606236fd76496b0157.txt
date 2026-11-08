@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "funcionamiento_worker_proxy",
+  "decisiones": ["DECISION: mantener formato resumen | ALCANCE: 600-900 caracteres con 4 oraciones"],
+  "temas": ["worker_bun", "proxy_zai", "resumen_tematico", "recuperacion_contexto", "arquitectura_pipeline"]
+}
+```

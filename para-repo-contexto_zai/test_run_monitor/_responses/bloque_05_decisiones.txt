@@ -1,0 +1,2 @@
+DECISION: Worker Bun genera resúmenes de 600-900 caracteres | ALCANCE: 4 oraciones por resumen
+DECISION: Cumplir requisitos mínimos de 100 caracteres para Nivel 2 | ALCANCE: Enriquecedor del sistema

@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_tematico_contexto_zai",
+  "decisiones": ["DECISION: superar umbral mínimo de caracteres | ALCANCE: bloque temático 9"],
+  "temas": ["arquitectura_pipeline", "worker_bun", "integracion_proxy_zai", "diseño_sistema", "generacion_resumenes"]
+}
+```

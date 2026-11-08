@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "contexto_zai_bloque_tres",
+  "decisiones": [],
+  "temas": ["worker_bun", "proxy_zai", "clasificacion_tematica"]
+}
+```

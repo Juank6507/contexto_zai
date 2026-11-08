@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_proceso_recuperacion",
+  "decisiones": ["DECISION: mantener formato actual de empaquetamiento | ALCANCE: bloque número 7 del proceso"],
+  "temas": ["recuperacion_contexto", "clasificacion_bloques", "funcionamiento_sistema", "estructura_bloque", "intercambios"]
+}
+```

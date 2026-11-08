@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "worker_bun_y_proxy_zai",
+  "decisiones": ["DECISION: clasificación y empaquetamiento de intercambios | ALCANCE: optimización de recuperación de datos"],
+  "temas": ["worker_bun", "recuperación_de_contexto", "proxy_zai", "diseño", "validación_funcionalidad"]
+}
+```

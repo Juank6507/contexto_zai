@@ -1,0 +1,1 @@
+DECISION: Worker Bun genera resúmenes de 600-900 caracteres con 4 oraciones exactas | ALCANCE: Intercambios clasificados temáticamente y empaquetados

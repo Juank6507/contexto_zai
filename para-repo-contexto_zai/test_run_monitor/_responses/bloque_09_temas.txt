@@ -1,0 +1,5 @@
+worker_bun
+proxy_zai
+enriquecedor_nivel_2
+recuperacion_contexto
+rendimiento_sistema

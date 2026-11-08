@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "recuperacion_bloque_tres",
+  "decisiones": ["DECISION: Contener intercambios clasificados y empaquetados | ALCANCE: Facilitar recuperación del Worker Bun tras caída"],
+  "temas": ["proceso_recuperacion", "proxy_zai", "estructura_bloques", "arquitectura_pipeline"]
+}
+```

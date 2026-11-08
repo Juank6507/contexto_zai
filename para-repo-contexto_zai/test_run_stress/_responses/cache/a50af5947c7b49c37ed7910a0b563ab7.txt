@@ -1,0 +1,16 @@
+```json
+{
+  "nombre": "proxy_zai_contexto_zai",
+  "decisiones": [
+    "DECISION: Empaquetamiento de intercambios temáticos | ALCANCE: Implementación en el sistema",
+    "DECISION: Generación de resúmenes rigurosos | ALCANCE: Mediante el Worker Bun"
+  ],
+  "temas": [
+    "proxy_zai",
+    "empaquetamiento_intercambios",
+    "worker_bun",
+    "arquitectura_pipeline",
+    "integracion_sistema"
+  ]
+}
+```

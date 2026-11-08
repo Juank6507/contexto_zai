@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "proxy_zai_contexto_zai",
+  "decisiones": ["DECISION: implementar resumen riguroso generado por Worker Bun | ALCANCE: cada bloque temático empaquetado"],
+  "temas": ["proxy_zai", "worker_bun", "clasificacion_tematica", "arquitectura_pipeline", "integracion_worker"]
+}
+```

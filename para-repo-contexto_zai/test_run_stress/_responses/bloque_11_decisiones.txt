@@ -1,0 +1,1 @@
+DECISION: mantener estructura actual | ALCANCE: sin cambios formales

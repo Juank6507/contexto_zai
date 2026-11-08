@@ -1,0 +1,64 @@
+{
+  "blocks": [
+    {
+      "block_id": "bloque_01",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:16:56.264Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_02",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:16:59.009Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_03",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:01.027Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_04",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:03.776Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_05",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:07.135Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_06",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:09.918Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_07",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:12.140Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_08",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:15.038Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_09",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:18.443Z",
+      "error": null
+    },
+    {
+      "block_id": "bloque_10",
+      "status": "completed",
+      "processed_at": "2026-11-04T23:17:21.166Z",
+      "error": null
+    }
+  ]
+}

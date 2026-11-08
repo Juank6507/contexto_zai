@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "contexto_zai_recuperacion",
+  "decisiones": [],
+  "temas": ["recuperacion_contexto", "proxy_zai", "worker_bun", "arquitectura_pipeline", "diseno_sistema"]
+}
+```

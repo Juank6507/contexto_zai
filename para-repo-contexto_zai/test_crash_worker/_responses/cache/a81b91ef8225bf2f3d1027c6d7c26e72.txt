@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "pipeline_contexto_zai",
+  "decisiones": ["DECISION: clasificación y empaquetamiento de intercambios | ALCANCE: optimizar recuperación del sistema"],
+  "temas": ["pipeline", "recuperación_contexto", "proxy_zai", "arquitectura", "diseño_sistema"]
+}
+```

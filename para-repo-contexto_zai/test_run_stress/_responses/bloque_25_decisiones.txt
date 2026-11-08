@@ -1,0 +1,2 @@
+DECISION: intercambios clasificados temáticamente y empaquetados | ALCANCE: bloque temático 25
+DECISION: Worker Bun genera resúmenes rigurosos | ALCANCE: procesamiento de datos

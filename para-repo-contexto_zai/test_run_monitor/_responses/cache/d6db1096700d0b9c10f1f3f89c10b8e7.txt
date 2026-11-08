@@ -1,0 +1,17 @@
+```json
+{
+  "nombre": "bun_worker_zai_context",
+  "decisiones": [
+    "DECISION: Generar resúmenes de 600-900 caracteres | ALCANCE: Cada bloque temático",
+    "DECISION: Clasificar intercambios temáticamente | ALCANCE: Todo el proyecto contexto_zai",
+    "DECISION: Empaquetar datos clasificados | ALCANCE: Proceso de recuperación de contexto"
+  ],
+  "temas": [
+    "recuperacion_contexto",
+    "clasificacion_tematica",
+    "empaquetamiento_datos",
+    "arquitectura_sistema",
+    "flujo_procesamiento"
+  ]
+}
+```

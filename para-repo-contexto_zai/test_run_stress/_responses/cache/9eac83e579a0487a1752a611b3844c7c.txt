@@ -1,0 +1,10 @@
+```json
+{
+  "nombre": "proxy_zai_integracion",
+  "decisiones": [
+    "DECISION: clasificar intercambios temáticamente | ALCANCE: para generar resúmenes rigurosos",
+    "DECISION: empaquetar intercambios juntos | ALCANCE: para generar resúmenes rigurosos"
+  ],
+  "temas": ["proxy_zai", "worker_bun", "arquitectura_pipeline", "clasificacion_tematica", "generacion_resumenes"]
+}
+```

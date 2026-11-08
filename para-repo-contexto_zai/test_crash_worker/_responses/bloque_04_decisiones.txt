@@ -1,0 +1,1 @@
+DECISION: implementar sistema de clasificacion y empaquetamiento de intercambios | ALCANCE: mejorar recuperacion y gestion de datos

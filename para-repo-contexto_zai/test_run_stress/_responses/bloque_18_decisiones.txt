@@ -1,0 +1,1 @@
+DECISION: Implementar resumen riguroso generado por Worker Bun | ALCANCE: Clasificar intercambios temáticamente

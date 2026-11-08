@@ -1,0 +1,1 @@
+DECISION: Cumplir con requisitos mínimos de caracteres | ALCANCE: Formato temático para proxy Z.ai

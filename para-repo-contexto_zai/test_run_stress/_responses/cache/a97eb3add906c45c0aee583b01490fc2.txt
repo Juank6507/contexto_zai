@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_temático_contexto_zai",
+  "decisiones": ["DECISION: mantener formato actual del bloque | ALCANCE: estructura y empaquetamiento temático", "DECISION: continuar usando Worker Bun | ALCANCE: generación automática de resúmenes"],
+  "temas": ["bloque_temático", "worker_bun", "generación_resúmenes", "clasificación_temática", "funcionamiento_sistema"]
+}
+```

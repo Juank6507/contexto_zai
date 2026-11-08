@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "proxy_zai_arquitectura",
+  "decisiones": ["DECISION: mantener estructura actual con intercambios temáticos empaquetados | ALCANCE: diseño del pipeline", "DECISION: generar resúmenes rigurosos mediante Worker Bun | ALCANCE: integración con el sistema"],
+  "temas": ["proxy_zai", "worker_bun", "arquitectura_pipeline", "validacion_funcionalidades", "diseño_sistema"]
+}
+```

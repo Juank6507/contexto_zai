@@ -1,0 +1,2 @@
+DECISION: mantener estructura actual del bloque 6 | ALCANCE: continuar con intercambios temáticos
+DECISION: usar Worker Bun para resúmenes | ALCANCE: generar resúmenes rigurosos del sistema

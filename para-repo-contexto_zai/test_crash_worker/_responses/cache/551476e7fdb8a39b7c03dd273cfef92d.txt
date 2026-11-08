@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "prueba_recuperacion_worker",
+  "decisiones": ["DECISION: mantener estructura de intercambios | ALCANCE: sin cambios formales"],
+  "temas": ["recuperacion_contexto", "proxy_zai", "arquitectura_pipeline", "worker_bun", "validacion_conceptual"]
+}
+```

@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_tematico_contexto_zai",
+  "decisiones": ["DECISION: Cumplir con requisitos mínimos de caracteres | ALCANCE: Formato temático para proxy Z.ai"],
+  "temas": ["worker_bun", "resumen_riguroso", "empaquetamiento_intercambios", "estructura_bloque", "funcionamiento_sistema"]
+}
+```
