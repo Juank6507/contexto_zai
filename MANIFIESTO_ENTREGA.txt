@@ -1,11 +1,12 @@
 MANIFIESTO DE ENTREGA — contexto_zai v6.14
-Fecha de generación: 2026-11-08 16:12:33
+Fecha de generación: 2026-11-08 16:26:16
 Versión: 6.14
-Total archivos: 623
+Total archivos: 624
 
 # Formato: ruta_relativa|sha256|tamaño_bytes
 
 .gitignore|862263fa1f46c20f0d1e4dac5ffcc75abd55c08211b2c3864c5f8764b9d87793|19
+1-LEER-PRIMERO.txt|159d42ef8c2590de6ab3047f2bdf1bab40f45e3250905973a871052cbf6f617b|7841
 Documentos/1-LEER-PRIMERO.txt|159d42ef8c2590de6ab3047f2bdf1bab40f45e3250905973a871052cbf6f617b|7841
 Documentos/DIAGNOSTICO_CONSENSO_v4.0.md|fdf3aace60128ac298241210966623a442430c1c50d942ba3206bd7a6330f3d0|15365
 Documentos/LEEME_INSTALACION.md|b4fb6316bbbbde4c88c58c382d73eca69179315d4bd71189c71c59239fdc7dd2|6162
