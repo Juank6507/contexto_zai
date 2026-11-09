@@ -69,7 +69,7 @@ $ErrorActionPreference = "Stop"
 # ============================================================
 
 $NombreProyecto    = "contexto_zai"           # p. ej. APA
-$VersionEntrega    = "6.14"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
+$VersionEntrega    = "6.15"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
 $RutaLocalProyecto = "C:\Python\Proyectos\contexto_zai"       # raiz local del repo del proyecto
 $RepoGitHub        = "https://github.com/Juank6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
 $RamaPrincipal     = "main"            # p. ej. main

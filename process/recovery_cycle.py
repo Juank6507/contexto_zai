@@ -122,6 +122,7 @@ class RecoveryCycle:
         enable_attachments: bool = True,
         share_id: Optional[str] = None,
         origen: str = "cronologico",  # v6.14 F8 (criterio 24)
+        estructura: str = "cronologico",  # v6.15 F2 (criterio 28)
     ) -> None:
         self._jwt = jwt
         self._chat_id = chat_id
@@ -135,6 +136,15 @@ class RecoveryCycle:
         # RecoveryGenerator.generate_all() para decidir si se genera
         # 00_estado_actual.md (solo cronológico) o no (externo).
         self._origen = origen
+        # v6.15 F2 (criterio 28): estructura del contenido ("cronologico" si
+        # tiene marcadores cronológicos ## Exchange N o ### 📅 YYYY-MM-DD,
+        # "arbitrario" en caso contrario). Se propaga al
+        # RecoveryGenerator.generate_all() para decidir si se omiten
+        # EstadoGenerator y DecisionesGenerator (estructura != "cronologico").
+        # Un archivo externo con estructura cronológica SÍ genera los 4
+        # archivos. La detecta P4.2 (_detectar_estructura_contenido) en
+        # ampliar_contexto() y la pasa aquí.
+        self._estructura = estructura
 
         # Componentes atómicos (inyectados en constructor)
         # v3.5: ExchangeBuilder recibe delegator y attachments
@@ -326,12 +336,15 @@ class RecoveryCycle:
 
             # PASO 7: Generación de los 3 archivos + bloques
             logger.info("Paso 7: Generando archivos de recuperacion...")
-            # v6.14 F8 (criterio 24): pasar origen al RecoveryGenerator.
-            # Para RecoveryCycle (invocado por pipeline.run() sobre chat Z.ai)
-            # el origen siempre es "cronologico" — se generan los 4 archivos
-            # (00_estado_actual, 01_indice, 02_decisiones, 03_objetivo).
-            # El parámetro queda disponible para futuras invocaciones desde
-            # ampliar_contexto (que usaría origen="externo" y omitiría 00_estado).
+            # v6.15 F2 (criterio 28): pasar estructura al RecoveryGenerator.
+            # RecoveryCycle se invoca tanto desde pipeline.run() (chat Z.ai,
+            # estructura="cronologico") como desde ampliar_contexto()
+            # (archivo externo; estructura depende de P4.2 — puede ser
+            # "cronologico" si el archivo tiene marcadores cronológicos, o
+            # "arbitrario" si no). Cuando estructura != "cronologico", se
+            # omiten EstadoGenerator y DecisionesGenerator (los otros 2
+            # archivos siempre se generan).
+            # v6.14 F8: origen se mantiene por compatibilidad retroactiva.
             recovery_files = self._recovery_gen.generate_all(
                 exchanges=exchanges,
                 blocks=blocks,
@@ -339,6 +352,7 @@ class RecoveryCycle:
                 metadata=metadata,
                 attachments_indexados=attachments_indexados,
                 origen=self._origen,
+                estructura=self._estructura,
             )
 
             # PASO 8: (Subagente de estado actual) ya integrado en la generación

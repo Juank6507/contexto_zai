@@ -108,6 +108,16 @@ MAX_ITER_W3 = 5
 # (qué falló → qué se diagnosticó → cómo se corrigió → qué se implementó).
 MAX_ITER_D7 = 5
 
+# -- v6.15 F5 (criterio 32): Polling de progreso de la cascada de acceso LLM --
+# La cascada baja niveles 1→2→3. En cada transición de nivel hay un bucle D7
+# corto que hace polling de progreso: intervalo fijo de 5s, umbral de 3
+# intervalos consecutivos sin progreso = 15s sin progreso = caída del nivel.
+# Se eliminó el backoff exponencial (v6.13 C10) — el polling de progreso es
+# más eficiente y más predecible: si no hay nuevos bloques completos en 15s,
+# el nivel se declara caído y la cascada prueba el siguiente nivel.
+CASCADA_INTERVALO_PROGRESO = 5   # segundos entre comprobaciones
+CASCADA_UMBRAL_SIN_PROGRESO = 3   # intervalos consecutivos sin progreso = caída
+
 # -- v6.13 C7+C8: Umbrales de validacion del RESUMEN --
 RESUMEN_MIN_CHARS = 600
 RESUMEN_MAX_CHARS = 900

@@ -750,8 +750,13 @@ class IntegradorRespuestas:
         # v6.7 F2: Escribir el bloque con CONTENIDO LITERAL hasta 70K.
         # El bloque se llena con el contenido extraído por el subagente
         # (no con un índice). Header canónico + contenido literal.
-        temas_str = ", ".join(block_temp.temas) if block_temp.temas else "documento_externo"
-        content = f"# Bloque tematico: {temas_str}\n\n"
+        # v6.15 F1 (criterio 27): la cabecera pasa de "# Bloque tematico: {temas_str}"
+        # a "# Bloque externo {block_num}", MISMO formato que
+        # ``BloqueGenerator.generate(origen="externo")``. ``block_num`` se
+        # deriva de ``bloque_filename`` (ej: ``bloque_05.md`` -> ``05``),
+        # igual que en ``BloqueGenerator.generate``.
+        block_num = bloque_filename.replace("bloque_", "").replace(".md", "")
+        content = f"# Bloque externo {block_num}\n\n"
         content += f"**Source:** ampliar_contexto (documento externo)\n"
         content += f"**Lote:** {lote_idx}\n"
         content += f"**Tamano estimado:** ~{block_temp.estimated_tokens / 1000:.1f}K tokens\n"
@@ -1262,16 +1267,17 @@ El control de acceso por roles gestiona permisos según el rol del usuario.""",
         # El bloque físico debe existir con nombre canónico
         bloque_path = Path(tmpdir) / "bloque_01.md"
         assert bloque_path.exists()
-        # v6.6 F4: el header debe ser "# Bloque tematico:"
+        # v6.15 F1 (criterio 27): el header debe ser "# Bloque externo N"
+        # (mismo formato que ``BloqueGenerator.generate(origen="externo")``).
         bloque_content = bloque_path.read_text(encoding="utf-8")
-        assert bloque_content.startswith("# Bloque tematico:"), \
-            f"v6.6 F4: header debe ser '# Bloque tematico:', obtuvo: {bloque_content[:50]}"
+        assert bloque_content.startswith("# Bloque externo "), \
+            f"v6.15 F1: header debe ser '# Bloque externo N', obtuvo: {bloque_content[:50]}"
         # v6.7 F2: el bloque debe tener CONTENIDO LITERAL
         assert "## Sección 1 —" in bloque_content, \
             f"v6.7 F2: bloque debe tener contenido literal con secciones, obtuvo: {bloque_content[:100]}"
-        # v6.10 F4: el header debe mencionar documento_externo_0 (header only)
-        assert "documento_externo_0" in bloque_content.split("\n")[0], \
-            f"v6.10 F4: header debe mencionar documento_externo_0, obtuvo: {bloque_content[:80]}"
+        # v6.15 F1: la segunda línea debe ser el source marker.
+        assert "**Source:** ampliar_contexto (documento externo)" in bloque_content, \
+            f"v6.15 F1: falta línea '**Source:** ampliar_contexto (documento externo)'."
         # v6.10 F4: archivo_a_source SÍ debe tener la entrada del bloque
         assert "archivo_a_source" in metadata, "v6.10 F4: archivo_a_source debe existir"
         assert "bloque_01.md" in metadata["archivo_a_source"], \

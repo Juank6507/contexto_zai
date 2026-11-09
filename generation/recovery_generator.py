@@ -99,15 +99,19 @@ class RecoveryGenerator:
         attachments_indexados: list = None,
         workspace_dir: Optional[str] = None,  # v6.3 F2
         origen: str = "cronologico",  # v6.14 F8
+        estructura: str = "cronologico",  # v6.15 F2 (criterio 28)
     ) -> list[RecoveryFile]:
         """Genera todos los archivos de recuperación.
 
-        v6.14 F8 (criterio 24): ``origen`` controla si se genera
-        ``00_estado_actual.md``. Si ``origen == "externo"`` (viene de
-        ``ampliar_contexto`` sobre un documento arbitrario), se OMITE la
-        invocación a ``EstadoGenerator.generate()`` — no hay "estado
-        actual" para un documento externo. Los otros 3 archivos
-        (``01_indice``, ``02_decisiones``, ``03_objetivo``) SÍ se generan.
+        v6.15 F2 (criterio 28): la omisión de ``00_estado_actual.md`` y
+        ``02_decisiones_clave.md`` depende de ``estructura != "cronologico"``,
+        NO de ``origen == "externo"``. Un archivo externo con estructura
+        cronológica SÍ genera los 4 archivos. La detección la hace P4.2
+        (``_detectar_estructura_contenido``) y se propaga desde
+        ``ampliar_contexto()`` → ``RecoveryCycle.__init__()`` → aquí.
+
+        v6.14 F8 (criterio 24): ``origen`` se mantiene por compatibilidad
+        retroactiva, pero la decisión de omisión ahora la toma ``estructura``.
 
         Args:
             exchanges: Lista completa de intercambios.
@@ -123,37 +127,48 @@ class RecoveryGenerator:
                 "Documentos indexados" en el índice.
             workspace_dir: Directorio del workspace (v6.3 F2).
             origen: ``"cronologico"`` (default, chat Z.ai) o ``"externo"``
-                (ampliar_contexto sobre documento arbitrario).
+                (ampliar_contexto sobre documento arbitrario). Mantenido
+                por compatibilidad; la decisión de omisión la toma
+                ``estructura`` (v6.15 F2).
+            estructura: ``"cronologico"`` (default) o ``"arbitrario"``.
+                Si ``!= "cronologico"`` se omiten ``EstadoGenerator``
+                y ``DecisionesGenerator`` (no hay "estado actual" ni
+                "decisiones clave" para un documento arbitrario sin
+                intercambios cronológicos). Los otros 2 archivos
+                (``01_indice``, bloques) SÍ se generan.
 
         Returns:
             Lista de RecoveryFile con todos los archivos generados.
         """
         recovery_files: list[RecoveryFile] = []
 
-        # 1. Decisiones (primero, para obtener el resumen)
-        logger.debug("Generando decisiones clave")
-        decisiones_content, decisiones_summary = self._decisiones_gen.generate(
-            exchanges,
-            from_timestamp=from_timestamp,
-        )
-        recovery_files.append(
-            RecoveryFile(
-                filename=DECISIONES_CLAVE_FILENAME,
-                category=FileCategory.DECISIONES,
-                content=decisiones_content,
-                token_limit=self._get_token_limit(FileCategory.DECISIONES),
-            )
-        )
-
-        # 2. Estado actual — v6.14 F8 (criterio 24): solo si cronológico.
-        if origen == "externo":
-            # Omitir 00_estado_actual.md para fuentes externas (no hay
-            # "estado actual" para un documento arbitrario). Los otros
-            # 3 archivos (01_indice, 02_decisiones, 03_objetivo) SÍ se generan.
+        # v6.15 F2 (criterio 28): omisión por estructura, no por origen.
+        # Un archivo externo con estructura cronológica SÍ genera los 4 archivos.
+        decisiones_summary = ""  # default para IndiceGenerator
+        if estructura != "cronologico":
             logger.info(
-                "v6.14 F8: origen=externo — saltando generación de 00_estado_actual.md"
+                "v6.15 F2: estructura=%s — saltando generación de "
+                "00_estado_actual.md y 02_decisiones_clave.md (estructura "
+                "no cronológica). Los archivos 01_indice y bloques SÍ se generan.",
+                estructura,
             )
         else:
+            # 1. Decisiones (primero, para obtener el resumen)
+            logger.debug("Generando decisiones clave")
+            decisiones_content, decisiones_summary = self._decisiones_gen.generate(
+                exchanges,
+                from_timestamp=from_timestamp,
+            )
+            recovery_files.append(
+                RecoveryFile(
+                    filename=DECISIONES_CLAVE_FILENAME,
+                    category=FileCategory.DECISIONES,
+                    content=decisiones_content,
+                    token_limit=self._get_token_limit(FileCategory.DECISIONES),
+                )
+            )
+
+            # 2. Estado actual
             logger.debug("Generando estado actual")
             estado_content = self._estado_gen.generate(exchanges, chat_label=chat_label)
             recovery_files.append(
@@ -166,7 +181,17 @@ class RecoveryGenerator:
             )
 
         # 3. Índice (usa metadata y resumen de decisiones)
-        logger.debug("Generando indice")
+        # v6.15 F6 (criterio 33): esta invocación de IndiceGenerator es un
+        # PLACEHOLDER INICIAL. En este punto del pipeline (P9/P11), los bloques
+        # aún no tienen RESUMEN y ``tema_a_archivo`` no está poblado con los
+        # temas significativos (esos los extrae el enriquecimiento P14 y los
+        # vuelca P19). El índice se sobrescribe con contenido real en P19,
+        # DESPUÉS del enriquecimiento (P14) y la consolidación de decisiones
+        # (P18), invocando ``_regenerar_indice_tras_enriquecimiento`` desde
+        # ``ContextoPipeline.run()``. La invocación aquí se mantiene para
+        # garantizar que el archivo existe físicamente desde el inicio (los
+        # pasos intermedios que lo lean no fallan por FileNotFoundError).
+        logger.debug("Generando indice (placeholder inicial — P19 lo sobrescribe)")
         # v6.3 F2: pasar workspace_dir para incluir bloques de chats anteriores
         ws_dir = workspace_dir or self._workspace_dir
         indice_content = self._indice_gen.generate(

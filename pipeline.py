@@ -186,6 +186,15 @@ class ContextoPipeline:
             # v6.4 F1: consolidar decisiones del LLM (de _responses/) en 02_decisiones_clave.md
             # v6.14: paso P18 del proceso de 19 pasos.
             _consolidar_decisiones_llm(workspace_dir=workspace_dir)
+            # v6.15 F6 (criterio 33): paso P19 del proceso de 19 pasos.
+            # Regenera ``01_indice_recuperacion.md`` DESPUÉS del enriquecimiento
+            # (P14) y la consolidación de decisiones (P18), cuando los bloques
+            # ya tienen RESUMEN y ``tema_a_archivo`` está poblado con los temas
+            # significativos extraídos de ``_responses/<bloque>_temas.txt``.
+            # En P9 (durante ``RecoveryGenerator.generate_all``), el IndiceGenerator
+            # se invoca como placeholder inicial (sin temas) — P19 lo sobrescribe
+            # con contenido real.
+            _regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
             return result
 
     @staticmethod
@@ -1212,6 +1221,14 @@ class EnriquecimientoOrquestador:
     módulo-nivel son wrappers momentáneos que delegan a estos métodos.
     """
 
+    # v6.15 F5 (criterio 32): flag de clase para señalar a la cascada que
+    # ``_enriquecer_con_proxy_zai()`` falló por HTTP 429 (rate limit). La
+    # gestión del 429 la hace ``CascadaAccesoLLM._nivel2_proxy_zai()`` con
+    # polling de progreso (5s × 3 = 15s), NO la función de enriquecimiento
+    # (que hace un solo intento por llamada y devuelve False inmediatamente
+    # al recibir 429, seteando este flag).
+    _ultimo_error_proxy_429: bool = False
+
     @staticmethod
     def _proxy_zai_disponible() -> bool:
             """v6.2: Hace un ping mínimo al proxy Z.ai. Devuelve True si responde 200.
@@ -1432,85 +1449,72 @@ class EnriquecimientoOrquestador:
         workspace_dir: Path | str,
         chat_label: str = "",
     ) -> list:
-            """v6.13 F4: Arnés de cascada que NUNCA se detiene.
+            """v6.15 F7 (criterios 29-32): Arnés thin que delega a ``CascadaAccesoLLM``.
 
-            1. Identificar bloques sin RESUMEN.
-            2. Nivel 1 (Worker Bun): si proxy disponible, arrancar una vez. Verificar.
-            3. Nivel 2 (proxy Z.ai W1+W2+W3): si proxy disponible, procesar restantes uno por uno.
-            4. Nivel 3 (subagentes): los que queden van a pending_tasks.
-            5. Sincronizar _processed_blocks.json con estado físico.
-            Nunca se detiene. Nunca pausa.
+            Reemplaza la lógica procedural de v6.13 F4 (que procesaba todos los
+            bloques en bloque: Nivel 1 para todos → Nivel 2 para los restantes
+            → Nivel 3 para los que quedaran) por una invocación de
+            ``CascadaAccesoLLM.procesar_tarea()`` por cada bloque individual.
+
+            Una instancia de ``CascadaAccesoLLM`` se crea una vez y se reutiliza
+            por bloque (criterio 30). Las ``pending_tasks`` que publique la
+            cascada (en Nivel 3) se devuelven al llamador para que las propague
+            al ``OrchestratorResult.pending_tasks`` (procesadas por el agente CZAI
+            vía Task tool y reintegradas vía ``collect_responses()``).
+
+            Sigue siendo un arnés que NUNCA se detiene: si un bloque no se
+            completa en la cascada, su pending_task se publica y el control
+            vuelve al llamador (P14 sigue con el siguiente bloque; P17 itera
+            después). Al final, sincroniza ``_processed_blocks.json`` con el
+            estado físico real.
+
+            Args:
+                blocks: Lista de ThematicBlock (típicamente todos los del workspace).
+                workspace_dir: Directorio del workspace.
+                chat_label: Etiqueta del chat (no se usa directamente — la
+                    cascada publica pending_tasks con ``chat_label='cascada_n3'``).
+
+            Returns:
+                Lista de SubagentTask pendientes (publicadas por Nivel 3 de la
+                cascada para los bloques que Ni N1 ni N2 pudieron completar).
             """
-            # 1. Bloques sin RESUMEN
-            bloques_sin_resumen = [b for b in blocks if not b.tiene_resumen(workspace_dir=workspace_dir)]
+            # 1. Bloques sin RESUMEN (filtro rápido para no invocar la cascada
+            # sobre bloques ya completos; la cascada también filtra por idempotencia).
+            bloques_sin_resumen = [
+                b for b in blocks
+                if not b.tiene_resumen(workspace_dir=workspace_dir)
+            ]
 
             if not bloques_sin_resumen:
-                logger.info("v6.13: Todos los bloques ya tienen RESUMEN. Nada que hacer.")
+                logger.info(
+                    "v6.15 F7: Todos los bloques ya tienen RESUMEN. Nada que hacer."
+                )
                 AuditorWorkspace.sincronizar_registro(workspace_dir)
                 return []
 
-            logger.info("v6.13: %d bloque(s) sin RESUMEN. Cascada que nunca se detiene.",
-                        len(bloques_sin_resumen))
+            logger.info(
+                "v6.15 F7: %d bloque(s) sin RESUMEN. CascadaAccesoLLM por bloque.",
+                len(bloques_sin_resumen),
+            )
 
-            pending_tasks = []
-            bloques_para_n3 = []
+            # 2. v6.15 F7: una instancia de CascadaAccesoLLM, reutilizada por bloque.
+            cascada = CascadaAccesoLLM(workspace_dir=workspace_dir)
+            for bloque in bloques_sin_resumen:
+                completado = cascada.procesar_tarea(bloque)
+                if not completado:
+                    # La propia cascada ya publicó la pending_task en Nivel 3
+                    # (no hace falta re-publicarla aquí). Continuar con el
+                    # siguiente bloque: el arnés nunca se detiene.
+                    logger.info(
+                        "v6.15 F7: bloque %s no completado — pending_task publicada "
+                        "en cascada.get_pending_tasks(). Continuando con el siguiente.",
+                        getattr(bloque, "filename", str(bloque)),
+                    )
 
-            # 2. Check proxy Z.ai disponible
-            proxy_ok = _proxy_zai_disponible()
+            # 3. Recoger las pending_tasks acumuladas durante todo P14.
+            pending_tasks = cascada.get_pending_tasks()
 
-            if proxy_ok:
-                # NIVEL 1: Worker Bun (una vez para todos los pendientes)
-                logger.info("v6.13 Nivel 1: Arrancando Worker Bun para %d bloque(s)...",
-                            len(bloques_sin_resumen))
-                try:
-                    EnriquecimientoOrquestador._arrancar_worker_y_esperar(workspace_dir=workspace_dir)
-                except Exception as e:
-                    logger.warning("v6.13 Nivel 1 (Worker Bun) error: %s", e)
-
-                # Verificar cuáles completó
-                bloques_restantes = [
-                    b for b in bloques_sin_resumen
-                    if not EnriquecimientoOrquestador._bloque_esta_completo(b, workspace_dir=workspace_dir)
-                ]
-                completados_n1 = len(bloques_sin_resumen) - len(bloques_restantes)
-                logger.info("v6.13 Nivel 1: Worker Bun completó %d, quedan %d.",
-                            completados_n1, len(bloques_restantes))
-
-                # NIVEL 2: proxy Z.ai directo con W1+W2+W3 (uno por uno, nunca pausa)
-                if bloques_restantes:
-                    logger.info("v6.13 Nivel 2: Intentando %d bloque(s) con proxy Z.ai (W1+W2+W3)...",
-                                len(bloques_restantes))
-                    for bloque in bloques_restantes:
-                        try:
-                            ok = EnriquecimientoOrquestador._enriquecer_con_proxy_zai(
-                                bloque, workspace_dir=workspace_dir
-                            )
-                        except Exception as e:
-                            logger.warning("v6.13 Nivel 2 error en %s: %s", bloque.filename, e)
-                            ok = False
-
-                        if not ok:
-                            bloques_para_n3.append(bloque)
-                        else:
-                            logger.info("v6.13 Nivel 2: %s completado.", bloque.filename)
-
-                    if not bloques_para_n3:
-                        logger.info("v6.13 Nivel 2: Proxy Z.ai completó todos los restantes.")
-                    else:
-                        logger.info("v6.13 Nivel 2: Quedan %d para Nivel 3.", len(bloques_para_n3))
-            else:
-                # Proxy no disponible: saltar Niveles 1 y 2, ir directo a Nivel 3
-                bloques_para_n3 = bloques_sin_resumen
-                logger.info("v6.13: Proxy Z.ai no disponible. Saltando Niveles 1 y 2. %d bloque(s) para Nivel 3.",
-                            len(bloques_para_n3))
-
-            # NIVEL 3: subagentes (último recurso)
-            for bloque in bloques_para_n3:
-                task = _construir_pending_task_para_bloque(bloque, chat_label=chat_label)
-                if task:
-                    pending_tasks.append(task)
-
-            # Sincronizar _processed_blocks.json con estado físico
+            # 4. Sincronizar _processed_blocks.json con el estado físico real.
             AuditorWorkspace.sincronizar_registro(workspace_dir)
 
             return pending_tasks
@@ -1694,13 +1698,17 @@ class EnriquecimientoOrquestador:
             # tiene >2000 chars -> pending_task (return False); si no, aceptar.
             from contexto_zai.config import MAX_ITER_W3 as _MAX_ITER
 
+            # v6.15 F5 (criterio 32): resetear el flag de clase antes de empezar.
+            # La gestión del 429 la hace ``CascadaAccesoLLM._nivel2_proxy_zai()``
+            # con polling de progreso (5s × 3 = 15s), NO esta función. Aquí
+            # solo se setea el flag al recibir 429 y se devuelve False.
+            EnriquecimientoOrquestador._ultimo_error_proxy_429 = False
+
             messages = [{"role": "user", "content": prompt}]
             result = None
             w3_ok = False
             w3_motivo = ""
             intento = 0
-            retries_429 = 0
-            max_retries_429 = 10  # máx reintentos por 429 (no consumen MAX_ITER)
 
             while intento < _MAX_ITER:
                 intento += 1
@@ -1719,18 +1727,19 @@ class EnriquecimientoOrquestador:
                     with _ur.urlopen(req, timeout=PROXY_ZAI_TIMEOUT * 6) as resp:
                         raw = resp.read().decode("utf-8")
                 except _ue.HTTPError as e:
-                    if e.code == 429 and retries_429 < max_retries_429:
-                        # v6.13: HTTP 429 rate-limited. Backoff exponencial
-                        # SIN consumir MAX_ITER (es espera de cuota, no fallo de W3).
-                        retries_429 += 1
-                        wait_s = min(30 * (2 ** (retries_429 - 1)), 600)  # 30, 60, 120, 240, 480, 600, 600, ...
-                        logger.warning("v6.13 Nivel 2: HTTP 429 para %s. Esperando %ds "
-                                       "(reintento 429 %d/%d, no consume MAX_ITER).",
-                                       block_id, wait_s, retries_429, max_retries_429)
-                        time.sleep(wait_s)
-                        # No consumir este intento: retroceder el contador
-                        intento -= 1
-                        continue
+                    if e.code == 429:
+                        # v6.15 F5 (criterio 32): se eliminó el backoff exponencial.
+                        # Setear el flag de clase y devolver False inmediatamente.
+                        # La gestión del 429 (polling de progreso, reintento, o
+                        # caída a Nivel 3) la hace CascadaAccesoLLM._nivel2_proxy_zai().
+                        EnriquecimientoOrquestador._ultimo_error_proxy_429 = True
+                        logger.warning(
+                            "v6.15 F5: HTTP 429 para %s (intento %d/%d). "
+                            "Flag _ultimo_error_proxy_429=True, return False "
+                            "(gestión delegada a CascadaAccesoLLM._nivel2_proxy_zai).",
+                            block_id, intento, _MAX_ITER,
+                        )
+                        return False
                     else:
                         logger.warning("v6.13 Nivel 2: HTTP %d para %s (intento %d/%d).",
                                        e.code, block_id, intento, _MAX_ITER)
@@ -2916,6 +2925,357 @@ def _normalizar_bloques_externos(workspace_dir: Path | str) -> int:
 def _detectar_estructura_contenido(content_bytes: bytes) -> str:
     """v6.14 F6: Wrapper que delega a EnriquecimientoOrquestador._detectar_estructura_contenido()."""
     return EnriquecimientoOrquestador._detectar_estructura_contenido(content_bytes=content_bytes)
+
+
+
+# ============================================================
+# v6.15 F3+F4+F5 (criterios 29-32): CascadaAccesoLLM
+# ============================================================
+
+class CascadaAccesoLLM:
+    """v6.15 F3-F5: Cascada de acceso al LLM por tarea individual.
+
+    La cascada baja niveles 1→2→3. En cada transición de nivel hay un bucle
+    D7 corto que hace polling de progreso (``_esperar_y_verificar_progreso``):
+    intervalo fijo de ``CASCADA_INTERVALO_PROGRESO=5s``, umbral de
+    ``CASCADA_UMBRAL_SIN_PROGRESO=3`` intervalos consecutivos sin progreso
+    = 15s sin progreso = caída del nivel. Se eliminó el backoff exponencial
+    de v6.13 C10 (criterio 32).
+
+    Las ``pending_tasks`` se acumulan en ``self._pending_tasks`` durante
+    todo P14 y se resuelven en P17 (``_bucle_d7_completitud``). El nivel 3
+    (subagentes del agente CZAI) no las ejecuta directamente: las publica
+    para que el agente CZAI las procese con Task tool, llame
+    ``collect_responses()``, y el proceso re-verifique (criterio 31).
+
+    Una instancia se crea una vez y se reutiliza por tarea (criterio 30).
+
+    Flujo (criterios 29, 30, 31, 32):
+
+    1. Nivel 1 (Worker Bun) → si todas completas, return True.
+    2. Nivel 2 (proxy Z.ai directo, 1 intento por tarea) → si todas
+       completas, return True.
+    3. Si Nivel 2 cayó por 429 → ``_esperar_y_verificar_progreso()`` → si
+       hay progreso, reintenta Nivel 2; si no, retry Nivel 1 (Worker Bun).
+       Si el retry Nivel 1 también cae → Nivel 3.
+    4. Nivel 3 (subagentes del agente CZAI): publica pending_tasks en
+       ``self._pending_tasks`` y devuelve False si hay pendientes.
+
+    Filtra tareas ya completas (idempotencia con
+    ``EnriquecimientoOrquestador._bloque_esta_completo``) al inicio y tras
+    cada nivel.
+    """
+
+    def __init__(self, workspace_dir: Path | str) -> None:
+        """Inicializa la cascada con el workspace_dir.
+
+        Args:
+            workspace_dir: Directorio del workspace donde viven los bloques
+                bloque_*.md y el directorio _responses/.
+        """
+        self._workspace_dir = workspace_dir
+        # v6.15 F3 (criterio 31): las pending_tasks se acumulan aquí durante
+        # todo P14 y se resuelven en P17. Se rellenan solo en Nivel 3.
+        self._pending_tasks: list = []
+
+    def procesar_tarea(self, tarea_o_lote) -> bool:
+        """Ejecuta la cascada para una tarea individual o un lote.
+
+        Filtra tareas ya completas (idempotencia con
+        ``_bloque_esta_completo``) al inicio y tras cada nivel.
+
+        Args:
+            tarea_o_lote: ThematicBlock individual o lista de ThematicBlock.
+
+        Returns:
+            True si todas las tareas quedaron completas tras la cascada.
+            False si alguna tarea quedó pendiente (publicada en
+            ``self._pending_tasks`` para que el agente CZAI la procese vía
+            Nivel 3 y P17).
+        """
+        # Normalizar a lista.
+        if isinstance(tarea_o_lote, list):
+            tareas = list(tarea_o_lote)
+        else:
+            tareas = [tarea_o_lote]
+
+        # Idempotencia: filtrar tareas ya completas.
+        tareas = [
+            t for t in tareas
+            if not EnriquecimientoOrquestador._bloque_esta_completo(
+                t, workspace_dir=self._workspace_dir
+            )
+        ]
+        if not tareas:
+            logger.info(
+                "CascadaAccesoLLM: todas las tareas ya completas (idempotencia)."
+            )
+            return True
+
+        # Nivel 1: Worker Bun.
+        if self._nivel1_worker_bun(tareas):
+            logger.info(
+                "CascadaAccesoLLM: Nivel 1 (Worker Bun) completó %d tarea(s).",
+                len(tareas),
+            )
+            return True
+
+        # Filtrar completas tras Nivel 1.
+        tareas_restantes = [
+            t for t in tareas
+            if not EnriquecimientoOrquestador._bloque_esta_completo(
+                t, workspace_dir=self._workspace_dir
+            )
+        ]
+        if not tareas_restantes:
+            return True
+
+        # Nivel 2: proxy Z.ai directo.
+        nivel2_ok = self._nivel2_proxy_zai(tareas_restantes)
+        if nivel2_ok:
+            logger.info(
+                "CascadaAccesoLLM: Nivel 2 (proxy Z.ai) completó %d tarea(s).",
+                len(tareas_restantes),
+            )
+            return True
+
+        # Si Nivel 2 cayó por 429 → retry Nivel 1 (Worker Bun).
+        # El flag lo setea _enriquecer_con_proxy_zai() al recibir HTTP 429.
+        if EnriquecimientoOrquestador._ultimo_error_proxy_429:
+            logger.info(
+                "CascadaAccesoLLM: Nivel 2 cayó por 429. Retry Nivel 1 "
+                "(Worker Bun) para %d tarea(s) restante(s).",
+                len(tareas_restantes),
+            )
+            if self._nivel1_worker_bun(tareas_restantes):
+                return True
+            # Filtrar completas tras retry Nivel 1.
+            tareas_restantes = [
+                t for t in tareas_restantes
+                if not EnriquecimientoOrquestador._bloque_esta_completo(
+                    t, workspace_dir=self._workspace_dir
+                )
+            ]
+            if not tareas_restantes:
+                return True
+
+        # Nivel 3: subagentes del agente CZAI.
+        return self._nivel3_subagentes(tareas_restantes)
+
+    def _nivel1_worker_bun(self, tareas: list) -> bool:
+        """Arranca Worker Bun y monitorea con ``_esperar_y_verificar_progreso()``.
+
+        Args:
+            tareas: Lista de ThematicBlock pendientes.
+
+        Returns:
+            True si todas las tareas quedaron completas. False si el nivel
+            cayó (sin progreso en 15s) o si hay tareas aún incompletas.
+        """
+        if not tareas:
+            return True
+        try:
+            EnriquecimientoOrquestador._arrancar_worker_y_esperar(
+                workspace_dir=self._workspace_dir
+            )
+        except Exception as e:
+            logger.warning(
+                "CascadaAccesoLLM._nivel1_worker_bun: error arrancando Worker Bun: %s",
+                e,
+            )
+        # v6.15 F5: polling de progreso (5s × 3 = 15s sin progreso = caída).
+        self._esperar_y_verificar_progreso()
+        # ¿Todas las tareas completas?
+        completas = [
+            t for t in tareas
+            if EnriquecimientoOrquestador._bloque_esta_completo(
+                t, workspace_dir=self._workspace_dir
+            )
+        ]
+        return len(completas) == len(tareas)
+
+    def _nivel2_proxy_zai(self, tareas: list) -> bool:
+        """Llama ``_enriquecer_con_proxy_zai()`` (1 intento por tarea).
+
+        Si la función devuelve False y el flag de clase
+        ``_ultimo_error_proxy_429`` está activo → ``_esperar_y_verificar_progreso()``.
+        Si hay progreso → reintenta ``_enriquecer_con_proxy_zai()``.
+        Si no hay progreso → return False (caída del nivel, retry Nivel 1
+        o caída a Nivel 3 según ``procesar_tarea``).
+
+        Args:
+            tareas: Lista de ThematicBlock pendientes.
+
+        Returns:
+            True si todas las tareas quedaron completas. False si alguna
+            tarea falló (429 sostenido, W3 fallida tras MAX_ITER_W3, etc.).
+        """
+        if not tareas:
+            return True
+        # Reset del flag 429 antes de empezar (lo gestiona esta función,
+        # no _enriquecer_con_proxy_zai que solo lo setea).
+        EnriquecimientoOrquestador._ultimo_error_proxy_429 = False
+
+        for tarea in tareas:
+            # Idempotencia: saltar si ya está completa.
+            if EnriquecimientoOrquestador._bloque_esta_completo(
+                tarea, workspace_dir=self._workspace_dir
+            ):
+                continue
+
+            try:
+                ok = EnriquecimientoOrquestador._enriquecer_con_proxy_zai(
+                    tarea, workspace_dir=self._workspace_dir
+                )
+            except Exception as e:
+                logger.warning(
+                    "CascadaAccesoLLM._nivel2_proxy_zai: excepción %s para %s",
+                    e, getattr(tarea, "filename", str(tarea)),
+                )
+                ok = False
+
+            if not ok:
+                if EnriquecimientoOrquestador._ultimo_error_proxy_429:
+                    # 429: polling de progreso (15s).
+                    progreso = self._esperar_y_verificar_progreso()
+                    if progreso:
+                        logger.info(
+                            "CascadaAccesoLLM._nivel2_proxy_zai: progreso "
+                            "detectado tras 429, reintentando %s.",
+                            getattr(tarea, "filename", str(tarea)),
+                        )
+                        # Reset del flag antes de reintentar.
+                        EnriquecimientoOrquestador._ultimo_error_proxy_429 = False
+                        try:
+                            ok = EnriquecimientoOrquestador._enriquecer_con_proxy_zai(
+                                tarea, workspace_dir=self._workspace_dir
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                "CascadaAccesoLLM._nivel2_proxy_zai (retry): %s", e
+                            )
+                            ok = False
+                    else:
+                        logger.info(
+                            "CascadaAccesoLLM._nivel2_proxy_zai: sin progreso "
+                            "tras 429, return False (caída del Nivel 2)."
+                        )
+                        return False
+                else:
+                    # Falló por otra razón (W3, JSON parse, HTTP != 429, etc.)
+                    # → return False (caída a Nivel 3 vía procesar_tarea).
+                    logger.info(
+                        "CascadaAccesoLLM._nivel2_proxy_zai: %s falló por razón "
+                        "distinta a 429, return False (caída a Nivel 3).",
+                        getattr(tarea, "filename", str(tarea)),
+                    )
+                    return False
+
+        # Verificar que todas las tareas quedaron completas.
+        completas = [
+            t for t in tareas
+            if EnriquecimientoOrquestador._bloque_esta_completo(
+                t, workspace_dir=self._workspace_dir
+            )
+        ]
+        return len(completas) == len(tareas)
+
+    def _nivel3_subagentes(self, tareas: list) -> bool:
+        """Nivel 3: el agente CZAI lanza subagentes con Task tool.
+
+        El proceso NO puede invocar el Task tool directamente. Publica
+        ``pending_tasks`` (vía ``_construir_pending_task_para_bloque``) en
+        ``self._pending_tasks`` y devuelve False si hay pendientes. El
+        agente CZAI las procesa, llama ``collect_responses()`` para
+        integrar las respuestas, y el proceso re-verifica (criterio 31).
+
+        Args:
+            tareas: Lista de ThematicBlock pendientes que Ni Nivel 1 ni
+                Nivel 2 pudieron completar.
+
+        Returns:
+            False si hay pending_tasks publicadas (la cascada no pudo
+            completarlas aquí). True si no había tareas (vacío).
+        """
+        if not tareas:
+            return True
+        for tarea in tareas:
+            task = _construir_pending_task_para_bloque(
+                tarea, chat_label="cascada_n3"
+            )
+            if task is not None:
+                self._pending_tasks.append(task)
+                logger.info(
+                    "CascadaAccesoLLM._nivel3_subagentes: pending_task publicada "
+                    "para %s (procesar vía agente CZAI + collect_responses).",
+                    getattr(tarea, "filename", str(tarea)),
+                )
+        # Si hay pendientes, return False (la cascada no pudo completarlas aquí).
+        return len(self._pending_tasks) == 0
+
+    def _esperar_y_verificar_progreso(self) -> bool:
+        """Polling fijo de ``CASCADA_INTERVALO_PROGRESO``s × ``CASCADA_UMBRAL_SIN_PROGRESO``.
+
+        Usa ``AuditorWorkspace.auditar_completitud()`` para contar completados.
+        Si en 3 intervalos consecutivos (5s cada uno = 15s total) no hay
+        nuevo bloque completo → devuelve False (nivel caído). Si hay
+        progreso en algún intervalo → devuelve True inmediatamente.
+
+        Returns:
+            True si se detectó progreso (al menos un bloque nuevo completo).
+            False si tras 15s no hay progreso (caída del nivel).
+        """
+        from contexto_zai.config import (
+            CASCADA_INTERVALO_PROGRESO as _INTERVALO,
+            CASCADA_UMBRAL_SIN_PROGRESO as _UMBRAL,
+        )
+        try:
+            audit = AuditorWorkspace.auditar_completitud(self._workspace_dir)
+        except Exception as e:
+            logger.warning(
+                "CascadaAccesoLLM._esperar_y_verificar_progreso: audit inicial falló: %s",
+                e,
+            )
+            return False
+        prev_completos = set(audit.get("completos", []))
+        for i in range(_UMBRAL):
+            time.sleep(_INTERVALO)
+            try:
+                audit = AuditorWorkspace.auditar_completitud(self._workspace_dir)
+            except Exception as e:
+                logger.warning(
+                    "CascadaAccesoLLM._esperar_y_verificar_progreso: audit falló: %s",
+                    e,
+                )
+                return False
+            curr_completos = set(audit.get("completos", []))
+            nuevos = curr_completos - prev_completos
+            if nuevos:
+                logger.info(
+                    "CascadaAccesoLLM: progreso detectado (+%d completos): %s",
+                    len(nuevos), sorted(nuevos),
+                )
+                return True
+            prev_completos = curr_completos
+        logger.info(
+            "CascadaAccesoLLM: sin progreso tras %d×%ds = %ds. Caída del nivel.",
+            _UMBRAL, _INTERVALO, _UMBRAL * _INTERVALO,
+        )
+        return False
+
+    def get_pending_tasks(self) -> list:
+        """Devuelve las ``pending_tasks`` acumuladas durante P14.
+
+        Se rellenan en Nivel 3 (subagentes). El llamador (típicamente
+        ``_enriquecer_bloques_con_fallback`` o ``_enriquecer_bloques_post_run``)
+        las propaga al ``OrchestratorResult.pending_tasks`` para que el
+        agente CZAI las ejecute con Task tool.
+
+        Returns:
+            Lista de SubagentTask pendientes (vacía si todas las tareas
+            se completaron en Nivel 1 o Nivel 2).
+        """
+        return self._pending_tasks
 
 
 
