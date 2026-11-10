@@ -168,7 +168,12 @@ def test_flujo_completo_collect_responses():
         recogedor.escribir_respuesta("subdivider_nombre_general_2026sep09", "autenticacion_jwt")
 
         # 4. collect_responses() integra todo
-        resultado = collect_responses(workspace_dir=tmpdir)
+        # v6.16.1 fix: mockear proxy como no disponible para que la cascada
+        # caiga a Nivel 3 sin intentar conexión real al proxy Z.ai.
+        # En Windows del Director no hay proxy Z.ai disponible.
+        from unittest.mock import patch as _patch_e2e
+        with _patch_e2e("contexto_zai.pipeline._proxy_zai_disponible", return_value=False):
+            resultado = collect_responses(workspace_dir=tmpdir)
         assert resultado["total_leidas"] == 3
         assert resultado["total_aplicadas"] == 3
         assert len(resultado["errores"]) == 0

@@ -1,6 +1,6 @@
-MANIFIESTO DE ENTREGA — contexto_zai v6.16
-Fecha: 2026-11-10 02:05:13
-Versión: 6.16
+MANIFIESTO DE ENTREGA — contexto_zai v6.16.1
+Fecha: 2026-11-10 02:29:32
+Versión: 6.16.1
 Total: 627
 
 # ruta|sha256|bytes
@@ -627,8 +627,8 @@ tests/test_recovery_cycle.py|83c3d87bd6026e4b003ada839aeb0a578fa2256b507a3b6d5e4
 tests/test_subagent_lifecycle.py|b5dff5dfa7df4548a4973be9599f5ef8a84c8d77041b47bb27957d1e559518ed|11391
 tests/test_v35_attachments.py|a215a9b645da3d9528d076d6618d8e262aa47a9263100a3122cad0c59ad31dd7|37355
 tests/test_v36_e2e.py|cc40dca8ae0739f00f449aa9c7d40bae55ac178a88d707a8dd1ae819e5445328|14400
-tests/test_v42_e2e.py|49a2643f75885cf6b5f71f450dab6250e5a4f3c8b1f96729fa56a3211053deb6|54591
+tests/test_v42_e2e.py|d4797cc5d78d6f988b03dc045cc3d42f7d60f86f83942b1839e2ae5f249a3b35|54950
 tests/test_version_graph.py|62b082acdc91846a8ff3a63ae345e46c985718e8e668865049b0d465dff7ebec|8707
-update_czai.ps1|2334a65bba503f9e2d0ae114b87e776e385661c1bfb65cff400b8bd79bdd13c2|28684
+update_czai.ps1|863e4ed9b2f983db6eeab2d4444290d4a7d71bfc00c2ccbcc1eab72be05377fe|28719
 verification/__init__.py|8f09428ccb70500316ef793dca59fc79a3d3f3f88c9acb19dd55e4f494255f34|1251
 verification/verifier.py|491456f769414a018885bb64bd059101480fe043feea05385494022ff307fb38|10999

@@ -69,7 +69,7 @@ $ErrorActionPreference = "Stop"
 # ============================================================
 
 $NombreProyecto    = "contexto_zai"           # p. ej. APA
-$VersionEntrega    = "6.16"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
+$VersionEntrega    = "6.16.1"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
 $RutaLocalProyecto = "C:\Python\Proyectos\contexto_zai"       # raiz local del repo del proyecto
 $RepoGitHub        = "https://github.com/Juank6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
 $RamaPrincipal     = "main"            # p. ej. main
@@ -95,7 +95,7 @@ $SentenciasPrueba = @(
     "cd /d $RutaLocalProyecto && python -c `"from config import PROXY_ZAI_URL; print('OK PROXY_ZAI_URL=' + PROXY_ZAI_URL)`"",
     "cd /d $RutaLocalProyecto && python -c `"import processing.block_packer; print('OK BlockPacker')`"",
     "cd /d $RutaLocalProyecto && python -c `"f=open('generation/bloque_generator.py').read(); assert 'Bloque cronologico' in f or 'Bloque cronológico' in f; print('OK cabecera cronológica')`"",
-    "cd /d $RutaLocalProyecto && python -c `"import os; assert not any('proxy APA' in open(os.path.join(r,f)).read() for r,d,fs in os.walk('.') for f in fs if f.endswith('.py')); print('OK 0 menciones proxy APA')`"",
+    "cd /d $RutaLocalProyecto && python -c `"import os; assert not any('proxy APA' in open(os.path.join(r,f),encoding='utf-8',errors='ignore').read() for r,d,fs in os.walk('.') for f in fs if f.endswith('.py')); print('OK 0 menciones proxy APA')`"",
     "cd /d $RutaLocalProyecto && python pipeline.py",
     "cd /d $RutaLocalProyecto && python coordinador\integrador_respuestas.py"
 )
