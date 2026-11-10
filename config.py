@@ -9,6 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# -- v6.16 F7 (criterio 40): versión del pipeline (invalidación de caché) ----
+# El hash de caché de ``_enriquecer_con_proxy_zai`` incluye la versión del
+# pipeline. Si la versión cambia, el hash cambia y la caché se invalida,
+# forzando re-generación de RESUMEN+artefactos con el prompt vigente.
+PIPELINE_VERSION = "6.16"
+
 # -- Rutas por defecto ----------------------------------------------
 
 DEFAULT_OUTPUT_DIR = Path("contexto_recuperacion")

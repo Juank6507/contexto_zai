@@ -768,6 +768,14 @@ class IntegradorRespuestas:
             bloque_filename, len(contenido_literal), block_temp.estimated_tokens / 1000,
         )
 
+        # v6.16 F4 (criterio 38): generar/actualizar _pending_blocks.json tras
+        # escribir cada bloque externo. El Worker Bun y la cascada leen este
+        # archivo para saber qué bloques faltan por enriquecer. Antes solo lo
+        # generaba RecoveryCycle, así que los bloques externos (de
+        # ampliar_contexto / index_document) quedaban fuera del radar del
+        # Worker Bun. Ahora _integrar_documento también lo mantiene.
+        self._actualizar_pending_blocks(ws, bloque_filename)
+
         # v6.7 F2: Los temas tentativos se registran en tema_a_archivo.
         # v6.8.4 re-aplicado (v6.10 F4): NO registrar el tema provisional
         # documento_externo_NN en tema_a_archivo. Antes se registraba y eso
@@ -826,6 +834,60 @@ class IntegradorRespuestas:
         self._regenerar_indice_recuperacion(ws, metadata)
 
         return True
+
+    @staticmethod
+    def _actualizar_pending_blocks(ws: Path, bloque_filename: str) -> None:
+        """v6.16 F4 (criterio 38): mantiene ``_pending_blocks.json`` al día.
+
+        Tras escribir cada bloque externo a disco (``_integrar_documento``),
+        añade su entrada a ``_pending_blocks.json`` para que el Worker Bun y
+        la cascada de acceso LLM lo descubran como pendiente de enriquecer.
+
+        Lee el archivo existente (si existe), añade el bloque si no está ya
+        (idempotencia por ``block_id``), y lo escribe de vuelta. Mismo
+        formato que ``process/recovery_cycle.py``:
+        ``{"blocks": [{"block_id", "filename", "path"}, ...]}``.
+
+        Args:
+            ws: Path del workspace.
+            bloque_filename: Nombre del archivo del bloque (ej: ``bloque_07.md``).
+        """
+        path = ws / "_pending_blocks.json"
+        data: dict = {"blocks": []}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or "blocks" not in data:
+                    data = {"blocks": []}
+                if not isinstance(data.get("blocks"), list):
+                    data["blocks"] = []
+            except Exception as e:
+                logger.warning(
+                    "v6.16 F4: _pending_blocks.json corrupto, se reinicia: %s", e
+                )
+                data = {"blocks": []}
+        # Idempotencia: no añadir si ya existe el block_id.
+        block_id = bloque_filename.replace(".md", "")
+        if any(b.get("block_id") == block_id for b in data["blocks"]):
+            return
+        data["blocks"].append({
+            "block_id": block_id,
+            "filename": bloque_filename,
+            "path": str(ws / bloque_filename),
+        })
+        try:
+            path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            logger.info(
+                "v6.16 F4: _pending_blocks.json actualizado con %s (%d entradas)",
+                bloque_filename, len(data["blocks"]),
+            )
+        except Exception as e:
+            logger.warning(
+                "v6.16 F4: no se pudo escribir _pending_blocks.json: %s", e
+            )
 
     @staticmethod
     def _resolver_clave_tema(
