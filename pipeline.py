@@ -1260,6 +1260,7 @@ class EnriquecimientoOrquestador:
                 logger.info("v6.2 _proxy_zai_disponible(): error %s", e)
                 return False
 
+
     @staticmethod
     def _arrancar_worker_y_esperar(
         workspace_dir: Path | str,
@@ -3179,24 +3180,6 @@ class CascadaAccesoLLM:
                 )
             return True
 
-        # v6.16 fix: si el proxy está en 429 sostenido (flag activo de bloques
-        # anteriores), saltar directo a Nivel 3 sin intentar Nivel 1 ni Nivel 2.
-        # No tiene sentido esperar 30s (15s N1 + 15s N2) por bloque cuando ya
-        # sabemos que el proxy no tiene cuota.
-        if EnriquecimientoOrquestador._ultimo_error_proxy_429:
-            logger.info(
-                "CascadaAccesoLLM: proxy en 429 sostenido — saltando Nivel 1 y 2, "
-                "directo a Nivel 3 (subagentes) para %d tarea(s).",
-                len(tareas),
-            )
-            self._nivel3_subagentes(tareas)
-            self._escribir_checkpoint()
-            for bloque in tareas_originales:
-                EnriquecimientoOrquestador._post_bloque(
-                    self._workspace_dir, bloque, False, self
-                )
-            return False
-
         # Nivel 1: Worker Bun.
         if self._nivel1_worker_bun(tareas):
             logger.info(
@@ -4313,8 +4296,6 @@ if __name__ == "__main__":
         # Limpieza
         if indexed_anterior.exists():
             indexed_anterior.unlink()
-
-    # === Tests v4.2 (unificación): query_context encuentra bloques externos ===
 
     # Test 24 (v4.2): query_context en workspace SOLO con bloque externo (sin 01_indice)
     # Simula: ampliar_contexto() corrió, subagente indexador respondió con temas reales,
