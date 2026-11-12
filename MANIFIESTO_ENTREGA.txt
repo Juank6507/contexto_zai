@@ -1,5 +1,5 @@
 MANIFIESTO DE ENTREGA — contexto_zai v6.17
-Fecha: 2026-11-12 00:39:05
+Fecha: 2026-11-12 02:24:03
 Versión: 6.17
 Total: 630
 
@@ -110,7 +110,7 @@ mini-services/worker-cascade/setup.ps1|faa1146020f37d4198d9d078779f0b59c4ca10595
 mini-services/worker-cascade/setup.sh|59ebb2081d070f88dc704050ed1b030bf8269b8a53551ddf07a92c2052532c46|4768
 mini-services/worker-cascade/tests/self_test.ts|bc6c62ca46190093c016aa14de409eb0901a837dbc4b8fdf1f2cc9c8fac35012|14837
 models.py|fb720087a22c76ce39ad0abcc6d92a6970576e52338aebb1be1017c28fc124f4|35068
-pipeline.py|d471dfa613c25e96fdd0fabb94da3d2bc901f2ce627a3e85754b38a7f5443030|238560
+pipeline.py|9bd9ef89ad5a397564cadfeae12848a5f2956b500a1fbaa98f3339990343d68b|229645
 procesadores/__init__.py|adb35543ce16281ff5ec4ef072e7af73cca95b712134a1657f8438ab29901c41|1061
 procesadores/procesador_consulta.py|3bb67a9fd628468911384b1625c1103873bfeafb5dc0ca674236d8361c3aed4e|17949
 procesadores/procesador_documento.py|3d6e3d262dc94bdf3b46006b3bdc83108e647d23d48dd12322759d8cce6c221f|20882

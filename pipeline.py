@@ -1484,9 +1484,7 @@ class EnriquecimientoOrquestador:
     def _descubrir_bloques_incompletos(workspace_dir: Path | str) -> list:
             """v6.17 F1 (criterio 7): función única que detecta bloques incompletos.
 
-            Unifica ``_descubrir_bloques_sin_resumen()`` y
-            ``_bloque_esta_completo()`` en una sola función que verifica los
-            4 artefactos:
+            Verifica los 4 artefactos de cada ``bloque_*.md``:
 
             1. RESUMEN al inicio del ``bloque_*.md``.
             2. ``_responses/{block_id}_nombre.txt``.
@@ -1579,62 +1577,6 @@ class EnriquecimientoOrquestador:
                 len(incompletos),
             )
             return incompletos
-
-    @staticmethod
-    def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
-            """v6.6 F3 (Bug 7 fix): Descubre los bloques del workspace que NO tienen RESUMEN al inicio.
-
-            Usado por collect_responses() para saber qué bloques enriquecer.
-            Lee cada bloque_*.md del workspace y verifica si la primera línea
-            empieza con "RESUMEN:". Los que no lo tengan se devuelven como
-            ThematicBlock (con temas y external_size_chars poblados).
-
-            Args:
-                workspace_dir: Directorio del workspace.
-
-            Returns:
-                Lista de ThematicBlock sin RESUMEN, listos para enriquecer.
-            """
-            from contexto_zai.models import ThematicBlock as _TB
-            ws = Path(workspace_dir)
-            if not ws.exists():
-                return []
-
-            bloques_sin_resumen: list = []
-            for p in sorted(ws.glob("bloque_*.md")):
-                try:
-                    content = p.read_text(encoding="utf-8")
-                    if len(content) < 100:
-                        continue  # bloque vacío
-                    # Verificar si ya tiene RESUMEN al inicio
-                    first_line = content.split("\n", 1)[0].strip()
-                    if first_line.startswith("RESUMEN:"):
-                        continue  # ya tiene resumen, no necesita enriquecer
-                    # Extraer temas del header
-                    temas: list[str] = []
-                    for line in content.split("\n"):
-                        if line.startswith("# Bloque tematico:") or line.startswith("# Bloque temático:"):
-                            temas_str = line.split(":", 1)[1].strip()
-                            temas = [t.strip() for t in temas_str.split(",") if t.strip()]
-                            break
-                        elif line.startswith("# Bloque externo:"):
-                            # Compatibilidad con bloques pre-v6.6
-                            nombre = line.split(":", 1)[1].strip()
-                            temas = [nombre.lower().replace(" ", "_")[:50]]
-                            break
-                    if not temas:
-                        temas = ["contexto_externo"]
-                    block = _TB(
-                        filename=p.name,
-                        temas=temas,
-                        external_size_chars=len(content),
-                    )
-                    bloques_sin_resumen.append(block)
-                except Exception as e:
-                    logger.warning("v6.6 F3: no se pudo leer bloque %s: %s", p.name, e)
-
-            logger.info("v6.6 F3: %d bloques sin RESUMEN descubiertos", len(bloques_sin_resumen))
-            return bloques_sin_resumen
 
     @staticmethod
     def collect_responses(
@@ -1741,6 +1683,87 @@ class EnriquecimientoOrquestador:
             return resultado
 
     @staticmethod
+    def _persistir_pending_task_en_disco(
+        workspace_dir: Path | str, task,
+    ) -> None:
+        """v6.17 F11 (criterio 11): función única para persistir pending_tasks.
+
+        Usada por:
+        - ``EnriquecimientoOrquestador._post_bloque`` — llamado cuando un
+          bloque cae a Nivel 3 desde la cascada.
+        - ``CascadaAccesoLLM._nivel3_subagentes`` — llamado para cada
+          pending_task publicada por Nivel 3.
+        - ``EnriquecimientoOrquestador._bucle_d7_completitud`` (F12) —
+          llamado para cada pending_task corregida que publica el bucle D7.
+
+        Las pending_tasks pueden caer desde cualquier nivel de la cascada
+        (N1, N2 o N3). Esta función es idempotente en cuanto al archivo:
+        lee, añade, escribe (append, no sobrescribir).
+
+        Args:
+            workspace_dir: Directorio del workspace.
+            task: SubagentTask (pydantic BaseModel) o dict a persistir.
+        """
+        import json as _json
+        ws = Path(workspace_dir)
+        path = ws / "_pending_tasks.json"
+        data: dict = {"tasks": []}
+        if path.exists():
+            try:
+                data = _json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict) or "tasks" not in data:
+                    data = {"tasks": []}
+                if not isinstance(data.get("tasks"), list):
+                    data["tasks"] = []
+            except Exception as e:
+                logger.warning(
+                    "v6.17 F11: _pending_tasks.json corrupto, se reinicia: %s", e
+                )
+                data = {"tasks": []}
+        # Serializar la task — pydantic BaseModel usa model_dump(), otros
+        # objetos se caen a default=str para no romper el JSON.
+        try:
+            if hasattr(task, "model_dump"):
+                task_data = task.model_dump(mode="json")
+            elif isinstance(task, dict):
+                task_data = task
+            else:
+                task_data = _json.loads(_json.dumps(task, default=str))
+        except Exception as e:
+            logger.warning(
+                "v6.17 F11: no se pudo serializar pending_task (%s): %s",
+                type(task).__name__, e,
+            )
+            return
+        # Idempotencia: si la task ya está en el saco (mismo task_id), no
+        # añadir de nuevo. Esto permite que _post_bloque y el D7 llamen a
+        # esta función sin duplicar entradas.
+        new_task_id = task_data.get("task_id", "") if isinstance(task_data, dict) else ""
+        if new_task_id:
+            existing_ids = {
+                t.get("task_id", "")
+                for t in data["tasks"]
+                if isinstance(t, dict)
+            }
+            if new_task_id in existing_ids:
+                logger.info(
+                    "v6.17 F11: pending_task %s ya persistida — idempotencia (no duplicar).",
+                    new_task_id,
+                )
+                return
+        data["tasks"].append(task_data)
+        data["total"] = len(data["tasks"])
+        try:
+            path.write_text(
+                _json.dumps(data, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning(
+                "v6.17 F11: no se pudo escribir _pending_tasks.json: %s", e
+            )
+
+    @staticmethod
     def _post_bloque(
         workspace_dir: Path | str,
         bloque,
@@ -1755,7 +1778,8 @@ class EnriquecimientoOrquestador:
         1. Escribir checkpoint (``_cascada_checkpoint.json``) — refresca el
            estado físico real.
         2. Si el bloque cayó a Nivel 3 (``resultado == False``) → persistir
-           pending_task en ``_pending_tasks.json`` (idempotente por block_id).
+           pending_task en ``_pending_tasks.json`` (idempotente por block_id)
+           vía ``_persistir_pending_task_en_disco`` (F11).
         3. Actualizar ``_processed_blocks.json`` (marcar completed o pending)
            vía ``AuditorWorkspace.sincronizar_registro``.
         4. Actualizar ``_pending_blocks.json`` (quitar el bloque de pendientes
@@ -1772,7 +1796,7 @@ class EnriquecimientoOrquestador:
             resultado: True si el bloque quedó completo; False si cayó a
                 Nivel 3 (pending_task publicada en ``cascada._pending_tasks``).
             cascada: Instancia de ``CascadaAccesoLLM`` con los métodos
-                ``_escribir_checkpoint`` y ``_persistir_pending_task``.
+                ``_escribir_checkpoint`` y ``_pending_tasks``.
         """
         import json as _json
         ws = Path(workspace_dir)
@@ -1787,6 +1811,7 @@ class EnriquecimientoOrquestador:
                 logger.warning("v6.16 F8: _escribir_checkpoint falló: %s", e)
 
         # 2. Si el bloque cayó a Nivel 3 → persistir pending_task (idempotente).
+        #    v6.17 F11: usar la función única _persistir_pending_task_en_disco.
         if not resultado and cascada is not None:
             pending_path = ws / "_pending_tasks.json"
             ya_persistida = False
@@ -1818,10 +1843,12 @@ class EnriquecimientoOrquestador:
                     ctx = getattr(task, "context", {}) or {}
                     if task_id == f"enriquecer_{block_id}" or ctx.get("filename") == filename:
                         try:
-                            cascada._persistir_pending_task(task)
+                            EnriquecimientoOrquestador._persistir_pending_task_en_disco(
+                                workspace_dir=workspace_dir, task=task
+                            )
                         except Exception as e:
                             logger.warning(
-                                "v6.16 F8: _persistir_pending_task falló: %s", e
+                                "v6.16 F8: _persistir_pending_task_en_disco falló: %s", e
                             )
                         break
 
@@ -2928,8 +2955,8 @@ class EnriquecimientoOrquestador:
             # 7. Publicar pending_tasks corregidas en _pending_tasks.json
             #    (reemplaza el saco viejo por el corregido).
             # v6.17 F11 (criterio 11): usar _persistir_pending_task_en_disco
-            # (la misma función que usa _post_bloque) para que la persistencia
-            # sea consistente entre el bucle D7 y la cascada. Las pending_tasks
+            # (la misma función que usa _post_bloque y _nivel3_subagentes)
+            # para que la persistencia sea consistente. Las pending_tasks
             # pueden caer desde cualquier nivel de la cascada (N1, N2 o N3).
             try:
                 ws_path_d7 = Path(workspace_dir)
@@ -2939,7 +2966,7 @@ class EnriquecimientoOrquestador:
                     pending_path_d7.unlink()
                 # Persistir cada nueva pending_task con la función única.
                 for task in new_pending_tasks:
-                    CascadaAccesoLLM._persistir_pending_task_en_disco(
+                    EnriquecimientoOrquestador._persistir_pending_task_en_disco(
                         workspace_dir=workspace_dir, task=task
                     )
             except Exception as e:
@@ -3660,18 +3687,6 @@ def _construir_pending_task_para_bloque(
     return EnriquecimientoOrquestador._construir_pending_task_para_bloque(bloque=bloque, chat_label=chat_label)
 
 
-def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
-    """v6.11 F5 → v6.17 F1: Wrapper DEPRECATED que delega a
-    ``EnriquecimientoOrquestador._descubrir_bloques_sin_resumen()``.
-
-    v6.17 F1 (criterio 7): la función única de bloques incompletos es
-    ``_descubrir_bloques_incompletos()``. Este wrapper se mantiene por
-    compatibilidad con código externo que aún lo invoque, pero la lógica
-    interna de pipeline.py usa la nueva función.
-    """
-    return EnriquecimientoOrquestador._descubrir_bloques_sin_resumen(workspace_dir=workspace_dir)
-
-
 def _descubrir_bloques_incompletos(workspace_dir: Path | str) -> list:
     """v6.17 F1: Wrapper que delega a
     ``EnriquecimientoOrquestador._descubrir_bloques_incompletos()``.
@@ -3767,16 +3782,20 @@ class CascadaAccesoLLM:
 
     Una instancia se crea una vez y se reutiliza por tarea (criterio 30).
 
-    Flujo (criterios 29, 30, 31, 32):
+    Flujo (criterios 29, 30, 31, 32) — v6.17 D3+D5: cascada secuencial,
+    sin reintentos dentro de la cascada:
 
     1. Nivel 1 (Worker Bun) → si todas completas, return True.
     2. Nivel 2 (proxy Z.ai directo, 1 intento por tarea) → si todas
        completas, return True.
-    3. Si Nivel 2 cayó por 429 → ``_esperar_y_verificar_progreso()`` → si
-       hay progreso, reintenta Nivel 2; si no, retry Nivel 1 (Worker Bun).
-       Si el retry Nivel 1 también cae → Nivel 3.
+    3. Si Nivel 2 cayó (429 u otra causa) → cae directo a Nivel 3. NO se
+       reintenta Nivel 1 dentro de la cascada (conciliado: "Si Nivel 1 cae
+       por 429, no tiene sentido probar Nivel 2 (mismo proxy). Caer a
+       Nivel 3.").
     4. Nivel 3 (subagentes del agente CZAI): publica pending_tasks en
        ``self._pending_tasks`` y devuelve False si hay pendientes.
+       Los reintentos los hace el bucle D7 (F12) sobre pending_tasks, no
+       la cascada. El D7 no baja niveles.
 
     Filtra tareas ya completas (idempotencia con
     ``EnriquecimientoOrquestador._bloque_esta_completo``) al inicio y tras
@@ -3794,20 +3813,15 @@ class CascadaAccesoLLM:
         # v6.15 F3 (criterio 31): las pending_tasks se acumulan aquí durante
         # todo P14 y se resuelven en P17. Se rellenan solo en Nivel 3.
         self._pending_tasks: list = []
-        # v6.17 F8 (criterio 8): flag de 429 persistente entre tareas. Si la
-        # tarea anterior recibió 429 y el ping confirma que persiste, la
-        # siguiente tarea empieza directo en Nivel 3 (sin probar N1 ni N2).
-        self._429_persistente: bool = False
 
     def procesar_tarea(self, tarea_o_lote) -> bool:
         """Ejecuta la cascada para una tarea individual o un lote.
 
-        v6.17 F8 (criterio 8): manejo del 429 entre tareas. Antes de
-        procesar la siguiente tarea, hace un ping al proxy Z.ai
-        (``_proxy_zai_disponible()``). Si el 429 persiste, la siguiente
-        tarea va directo a Nivel 3. Si no, empieza en Nivel 1.
-
-        Si Nivel 1 cae por causa que NO es 429 → Nivel 2 SÍ se prueba.
+        v6.17 F8 (criterio 8) — conciliado P19: NO se hacen pings al proxy.
+        La llamada de enriquecimiento ES la verificación: si Nivel 2 recibe
+        429 o error al llamar ``_enriquecer_con_proxy_zai()``, la tarea cae
+        a Nivel 3. Si Nivel 1 cae por causa que NO es 429 → Nivel 2 SÍ se
+        prueba.
 
         Filtra tareas ya completas (idempotencia con
         ``_bloque_esta_completo``) al inicio y tras cada nivel.
@@ -3846,33 +3860,7 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
-            # v6.17 F8: ping al proxy antes de la siguiente tarea.
-            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
-
-        # v6.17 F8 (criterio 8): si el 429 persiste de la tarea anterior,
-        # la siguiente tarea va directo a Nivel 3 (sin probar N1 ni N2).
-        # El flag lo setea el ping al proxy que se hace al final de
-        # procesar_tarea (ver abajo).
-        if self._429_persistente:
-            logger.info(
-                "CascadaAccesoLLM: 429 persistente — saltando N1 y N2, "
-                "yendo directo a Nivel 3 para %d tarea(s).",
-                len(tareas),
-            )
-            ok = self._nivel3_subagentes(tareas)
-            self._escribir_checkpoint()
-            for bloque in tareas_originales:
-                bloque_ok = EnriquecimientoOrquestador._bloque_esta_completo(
-                    bloque, workspace_dir=self._workspace_dir
-                )
-                EnriquecimientoOrquestador._post_bloque(
-                    self._workspace_dir, bloque, bloque_ok, self
-                )
-            # v6.17 F8: antes de la siguiente tarea, hacer ping al proxy.
-            # Si el 429 ya no persiste, resetear el flag.
-            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
-            return ok
 
         # Nivel 1: Worker Bun.
         if self._nivel1_worker_bun(tareas):
@@ -3887,8 +3875,6 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
-            # v6.17 F8: ping al proxy antes de la siguiente tarea.
-            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
 
         # Filtrar completas tras Nivel 1.
@@ -3906,14 +3892,12 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
-            # v6.17 F8: ping al proxy antes de la siguiente tarea.
-            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
 
-        # Nivel 2: proxy Z.ai directo.
-        # v6.17 F8: Nivel 2 se prueba SIEMPRE que N1 cayó (sea por 429 o no),
-        # a menos que el 429 ya esté persistente (en cuyo caso saltamos N2
-        # y vamos a N3 — ese caso se maneja arriba).
+        # Nivel 2: proxy Z.ai directo. Se prueba SIEMPRE que N1 cayó
+        # (sea por 429 o por otra causa). Si N2 recibe 429 o error, la
+        # verificación la hace la propia llamada de enriquecimiento
+        # (conciliado P19: no hay ping previo).
         nivel2_ok = self._nivel2_proxy_zai(tareas_restantes)
         if nivel2_ok:
             logger.info(
@@ -3927,49 +3911,14 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
-            # v6.17 F8: ping al proxy antes de la siguiente tarea.
-            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
 
-        # Si Nivel 2 cayó por 429 → retry Nivel 1 (Worker Bun).
-        # El flag lo setea _enriquecer_con_proxy_zai() al recibir HTTP 429.
-        if EnriquecimientoOrquestador._ultimo_error_proxy_429:
-            logger.info(
-                "CascadaAccesoLLM: Nivel 2 cayó por 429. Retry Nivel 1 "
-                "(Worker Bun) para %d tarea(s) restante(s).",
-                len(tareas_restantes),
-            )
-            if self._nivel1_worker_bun(tareas_restantes):
-                # v6.16 F2 (criterio 35): checkpoint.
-                self._escribir_checkpoint()
-                # v6.16 F8: post-bloque para todas las tareas (completas tras retry N1).
-                for bloque in tareas_originales:
-                    EnriquecimientoOrquestador._post_bloque(
-                        self._workspace_dir, bloque, True, self
-                    )
-                # v6.17 F8: ping al proxy antes de la siguiente tarea.
-                self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
-                return True
-            # Filtrar completas tras retry Nivel 1.
-            tareas_restantes = [
-                t for t in tareas_restantes
-                if not EnriquecimientoOrquestador._bloque_esta_completo(
-                    t, workspace_dir=self._workspace_dir
-                )
-            ]
-            if not tareas_restantes:
-                # v6.16 F2 (criterio 35): checkpoint.
-                self._escribir_checkpoint()
-                # v6.16 F8: post-bloque para todas las tareas (completas tras retry N1).
-                for bloque in tareas_originales:
-                    EnriquecimientoOrquestador._post_bloque(
-                        self._workspace_dir, bloque, True, self
-                    )
-                # v6.17 F8: ping al proxy antes de la siguiente tarea.
-                self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
-                return True
-
         # Nivel 3: subagentes del agente CZAI.
+        # v6.17 D3: si Nivel 2 cayó (por 429 o por otra causa), cae directo a
+        # Nivel 3 — no se reintenta Nivel 1 (conciliado: 'Si Nivel 1 cae por
+        # 429, no tiene sentido probar Nivel 2 (mismo proxy). Caer a Nivel 3').
+        # La cascada queda secuencial: N1 → N2 → N3 sin reintentos dentro de
+        # la cascada. Los reintentos los hace el D7 sobre pending_tasks.
         ok = self._nivel3_subagentes(tareas_restantes)
         # v6.16 F2 (criterio 35): checkpoint tras procesar el bloque (haya
         # ido o no a Nivel 3 — el estado fisico pudo cambiar).
@@ -3983,10 +3932,6 @@ class CascadaAccesoLLM:
             EnriquecimientoOrquestador._post_bloque(
                 self._workspace_dir, bloque, bloque_ok, self
             )
-        # v6.17 F8 (criterio 8): ping al proxy antes de la siguiente tarea.
-        # Si el 429 ya no persiste, resetear el flag. Si persiste, la
-        # siguiente tarea irá directo a Nivel 3.
-        self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
         return ok
 
     def _escribir_checkpoint(self) -> None:
@@ -4314,207 +4259,96 @@ class CascadaAccesoLLM:
         return (bool(ok), was_429_retry)
 
     def _nivel3_subagentes(self, tareas: list) -> bool:
-        """Nivel 3: subagentes del agente CZAI — v6.17 F2 PROCESA los bloques.
+        """Nivel 3: subagentes del agente CZAI — v6.17 F2 + D1.
 
-        v6.17 F2 (criterio 1): Nivel 3 es funcionalidad de la cascada
-        (algoritmo, no promesa). Los bloques que llegan a Nivel 3 se
-        procesan automáticamente dentro del proceso. No se dejan como
-        pending_tasks sin procesar.
-
-        El proceso Python NO puede invocar el Task tool directamente, así
-        que Nivel 3 procesa los bloques usando ``_enriquecer_con_proxy_zai``
-        (que ya hace la llamada al LLM con ``PROMPT_FUSIONADO_W1W2W3``).
-        Si el proxy Z.ai no está disponible, los bloques van a pending_task.
+        El proceso Python NO puede invocar el Task tool directamente. Pero
+        puede publicar pending_tasks y devolver el control al agente CZAI
+        para que las ejecute. Ese es el "mecanismo que el proceso tenga
+        para invocar subagentes" (plan F2).
 
         Para cada bloque en Nivel 3:
 
-        1. Llama a ``_enriquecer_con_proxy_zai()`` (Nivel 3 también puede
-           usar el proxy si está disponible — el proxy es compartido entre
-           Niveles 2 y 3 del algoritmo).
-        2. Verifica si el bloque se completó (4 artefactos con
-           ``_descubrir_bloques_incompletos()`` de F1).
-        3. Si completó → fuera del saco.
-        4. Si no completó → pending_task (persistida en
-           ``_pending_tasks.json`` vía ``_persistir_pending_task()``).
+        1. Construir el prompt con ``PROMPT_FUSIONADO_W1W2W3`` (el mismo
+           prompt fusionado W1+W2+W3 que usa Nivel 2 al llamar al proxy).
+        2. Publicar la pending_task en ``_pending_tasks.json`` (con el
+           prompt construido) vía ``_persistir_pending_task_en_disco``.
+        3. Devolver False (indicando que el agente CZAI debe procesar las
+           pending_tasks).
 
-        Si tras el procesamiento de Nivel 3 quedan bloques sin completar,
-        esos van a pending_task para que el bucle D7 (F12) los reintente.
+        Nivel 3 no llama al proxy: si lo hiciera, sería Nivel 2. Nivel 3
+        publica pending_tasks para que el agente CZAI las resuelva con
+        Task tool.
 
         Args:
             tareas: Lista de ThematicBlock pendientes que Ni Nivel 1 ni
                 Nivel 2 pudieron completar.
 
         Returns:
-            True si todas las tareas quedaron completas tras el
-            procesamiento de Nivel 3. False si alguna quedó pendiente
-            (publicada en ``self._pending_tasks`` para que el bucle D7
-            las reintente con feedback hasta ``MAX_ITER_D7=5``).
+            True si no hay tareas que procesar. False si hay pending_tasks
+            publicadas en ``self._pending_tasks`` para que el agente CZAI
+            las procese con Task tool (y el bucle D7 las reintente con
+            feedback hasta ``MAX_ITER_D7=5``).
         """
         if not tareas:
             return True
 
-        # v6.17 F2 (criterio 1): Nivel 3 PROCESA los bloques automáticamente.
-        # El proceso Python no puede invocar el Task tool, pero puede usar
-        # _enriquecer_con_proxy_zai() para llamar al LLM. Si el proxy no está
-        # disponible, los bloques van a pending_task. Pero Nivel 3 INTENTA
-        # procesar antes de mandar a pending_task.
-        proxy_disponible = EnriquecimientoOrquestador._proxy_zai_disponible()
+        from contexto_zai.models import SubagentTask
+
+        ws = Path(self._workspace_dir)
+
+        # v6.17 F2 + D1: Nivel 3 publica pending_tasks con el prompt
+        # construido con PROMPT_FUSIONADO_W1W2W3. El agente CZAI las procesa
+        # con Task tool (mecanismo que el proceso tiene para invocar
+        # subagentes). Nivel 3 no llama al proxy directamente.
         for tarea in tareas:
-            bloque_completo = False
-            if proxy_disponible:
-                try:
-                    ok = EnriquecimientoOrquestador._enriquecer_con_proxy_zai(
-                        tarea, workspace_dir=self._workspace_dir
-                    )
-                    # Verificar con la función única de F1: si todos los 4
-                    # artefactos están presentes, el bloque está completo.
-                    if ok:
-                        incompletos = EnriquecimientoOrquestador._descubrir_bloques_incompletos(
-                            self._workspace_dir
-                        )
-                        block_id = getattr(tarea, "filename", "").replace(".md", "")
-                        if not any(
-                            inc.get("block_id") == block_id for inc in incompletos
-                        ):
-                            bloque_completo = True
-                            logger.info(
-                                "v6.17 F2: Nivel 3 PROCESÓ %s vía proxy (4 artefactos OK).",
-                                getattr(tarea, "filename", str(tarea)),
-                            )
-                        else:
-                            logger.info(
-                                "v6.17 F2: Nivel 3 llamó al proxy para %s pero el bloque sigue incompleto.",
-                                getattr(tarea, "filename", str(tarea)),
-                            )
-                except Exception as e:
-                    logger.warning(
-                        "v6.17 F2: Nivel 3 excepción procesando %s: %s",
-                        getattr(tarea, "filename", str(tarea)), e,
-                    )
-            else:
-                logger.info(
-                    "v6.17 F2: Nivel 3 — proxy Z.ai no disponible para %s, va a pending_task.",
-                    getattr(tarea, "filename", str(tarea)),
-                )
+            filename = getattr(tarea, "filename", "")
+            block_id = filename.replace(".md", "")
+            bloque_path = ws / filename
 
-            if not bloque_completo:
-                # Si Nivel 3 no pudo procesar, publicar pending_task (la
-                # resolverá el bucle D7 de F12, no la cascada).
-                task = _construir_pending_task_para_bloque(
-                    tarea, chat_label="cascada_n3"
-                )
-                if task is not None:
-                    self._pending_tasks.append(task)
-                    # v6.16 F3 (criterio 37): persistir la pending_task en
-                    # _pending_tasks.json inmediatamente (append, no sobrescribir).
-                    # v6.17 F11: la persistencia se hace vía _persistir_pending_task
-                    # (mismo código que el bucle D7).
-                    self._persistir_pending_task(task)
-                    logger.info(
-                        "v6.17 F2: Nivel 3 no pudo procesar %s — pending_task "
-                        "publicada en _pending_tasks.json (para bucle D7).",
-                        getattr(tarea, "filename", str(tarea)),
-                    )
-
-        # Si hay pendientes, return False (la cascada no pudo completarlas aquí).
-        return len(self._pending_tasks) == 0
-
-    def _persistir_pending_task(self, task) -> None:
-        """v6.16 F3 (criterio 37): persiste una pending_task en ``_pending_tasks.json``.
-
-        v6.17 F11 (criterio 11): delega a la función única
-        ``_persistir_pending_task_en_disco(workspace_dir, task)`` para que
-        el bucle D7 (F12) y ``_post_bloque`` usen el mismo código. Las
-        pending_tasks pueden caer desde cualquier nivel de la cascada.
-
-        Lee el archivo existente (si existe), añade la task al array ``tasks``
-        y lo escribe de vuelta (append, no sobrescribir). Actualiza ``total``.
-
-        Args:
-            task: SubagentTask (pydantic BaseModel) a persistir.
-        """
-        CascadaAccesoLLM._persistir_pending_task_en_disco(
-            workspace_dir=self._workspace_dir, task=task
-        )
-
-    @staticmethod
-    def _persistir_pending_task_en_disco(
-        workspace_dir: Path | str, task,
-    ) -> None:
-        """v6.17 F11 (criterio 11): función única para persistir pending_tasks.
-
-        Usada por:
-        - ``CascadaAccesoLLM._persistir_pending_task`` (instancia) — llamado
-          desde ``_nivel3_subagentes`` y ``_post_bloque``.
-        - ``EnriquecimientoOrquestador._bucle_d7`` (F12) — llamado para
-          cada pending_task corregida que publica el bucle D7.
-
-        Las pending_tasks pueden caer desde cualquier nivel de la cascada
-        (N1, N2 o N3). Esta función es idempotente en cuanto al archivo:
-        lee, añade, escribe (append, no sobrescribir).
-
-        Args:
-            workspace_dir: Directorio del workspace.
-            task: SubagentTask (pydantic BaseModel) o dict a persistir.
-        """
-        import json as _json
-        ws = Path(workspace_dir)
-        path = ws / "_pending_tasks.json"
-        data: dict = {"tasks": []}
-        if path.exists():
+            # 1. Construir el prompt con PROMPT_FUSIONADO_W1W2W3.
+            #    Leer el bloque del disco para incluir su contenido en el prompt.
+            bloque_content = ""
             try:
-                data = _json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(data, dict) or "tasks" not in data:
-                    data = {"tasks": []}
-                if not isinstance(data.get("tasks"), list):
-                    data["tasks"] = []
+                if bloque_path.exists():
+                    bloque_content = bloque_path.read_text(
+                        encoding="utf-8", errors="ignore"
+                    )
+                    max_chars = 50000
+                    if len(bloque_content) > max_chars:
+                        bloque_content = (
+                            bloque_content[:max_chars]
+                            + "\n...(contenido truncado)..."
+                        )
             except Exception as e:
                 logger.warning(
-                    "v6.17 F11: _pending_tasks.json corrupto, se reinicia: %s", e
+                    "v6.17 F2: Nivel 3 no pudo leer bloque %s: %s", filename, e,
                 )
-                data = {"tasks": []}
-        # Serializar la task — pydantic BaseModel usa model_dump(), otros
-        # objetos se caen a default=str para no romper el JSON.
-        try:
-            if hasattr(task, "model_dump"):
-                task_data = task.model_dump(mode="json")
-            elif isinstance(task, dict):
-                task_data = task
-            else:
-                task_data = _json.loads(_json.dumps(task, default=str))
-        except Exception as e:
-            logger.warning(
-                "v6.17 F11: no se pudo serializar pending_task (%s): %s",
-                type(task).__name__, e,
+
+            prompt = PROMPT_FUSIONADO_W1W2W3.format(bloque_content=bloque_content)
+
+            # 2. Publicar la pending_task en _pending_tasks.json (con el
+            #    prompt construido).
+            task = SubagentTask(
+                task_id=f"enriquecer_{block_id}",
+                purpose=f"v6.17.nivel3.{filename}",
+                prompt=prompt,
+                context={"filename": filename, "chat_label": "cascada_n3"},
             )
-            return
-        # Idempotencia: si la task ya está en el saco (mismo task_id), no
-        # añadir de nuevo. Esto permite que _post_bloque y el D7 llamen a
-        # esta función sin duplicar entradas.
-        new_task_id = task_data.get("task_id", "") if isinstance(task_data, dict) else ""
-        if new_task_id:
-            existing_ids = {
-                t.get("task_id", "")
-                for t in data["tasks"]
-                if isinstance(t, dict)
-            }
-            if new_task_id in existing_ids:
-                logger.info(
-                    "v6.17 F11: pending_task %s ya persistida — idempotencia (no duplicar).",
-                    new_task_id,
-                )
-                return
-        data["tasks"].append(task_data)
-        data["total"] = len(data["tasks"])
-        try:
-            path.write_text(
-                _json.dumps(data, indent=2, ensure_ascii=False, default=str),
-                encoding="utf-8",
+            self._pending_tasks.append(task)
+            # v6.17 F11: persistencia vía _persistir_pending_task_en_disco
+            # (la misma función que usa _post_bloque y el bucle D7).
+            EnriquecimientoOrquestador._persistir_pending_task_en_disco(
+                workspace_dir=self._workspace_dir, task=task
             )
-        except Exception as e:
-            logger.warning(
-                "v6.17 F11: no se pudo escribir _pending_tasks.json: %s", e
+            logger.info(
+                "v6.17 F2: Nivel 3 publicó pending_task para %s con "
+                "PROMPT_FUSIONADO_W1W2W3 (para que el agente CZAI la "
+                "procese con Task tool).",
+                filename,
             )
+
+        # 3. Devolver False (el agente CZAI debe procesar las pending_tasks).
+        return False
 
     def _esperar_y_verificar_progreso(self) -> bool:
         """Polling fijo de ``CASCADA_INTERVALO_PROGRESO``s × ``CASCADA_UMBRAL_SIN_PROGRESO``.
