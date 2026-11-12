@@ -4663,11 +4663,11 @@ class AuditorWorkspace:
                 if isinstance(archivo, list):
                     for a in archivo:
                         if a not in bloques_fisicos and not (ws / a).exists():
-                            logger.warning("AuditorWorkspace: metadata referencia %s que no existe", a)
+                            logger.info("AuditorWorkspace: metadata referencia %s que no existe", a)
                             return False
                 elif isinstance(archivo, str):
                     if archivo not in bloques_fisicos and not (ws / archivo).exists():
-                        logger.warning("AuditorWorkspace: metadata referencia %s que no existe", archivo)
+                        logger.info("AuditorWorkspace: metadata referencia %s que no existe", archivo)
                         return False
             
             return True
