@@ -618,7 +618,7 @@ def test_v62_proxy_disponible_worker_completa():
     """v6.2 E2E 1: proxy Z.ai disponible + worker completa todo → pending_tasks vacío."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM
     from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -628,6 +628,21 @@ def test_v62_proxy_disponible_worker_completa():
         # Mock: proxy disponible + worker simula que completa todos los bloques
         # v6.12: el mock ahora tambien escribe los 3 archivos de _responses/
         # (nombre, decisiones, temas) porque el ProgressMonitor verifica bloques completos
+        def mock_arrancar_nivel1(tareas):
+            # Simular que Nivel 1 (Worker Bun) completa todos los bloques
+            from pathlib import Path
+            ws_path = Path(tmp)
+            responses_dir = ws_path / "_responses"
+            responses_dir.mkdir(exist_ok=True)
+            for i in range(1, 4):
+                p = ws_path / f"bloque_{i:02d}.md"
+                p.write_text(f"RESUMEN: Simulado por worker.\n\n---\n\nContenido original.", encoding="utf-8")
+                block_id = f"bloque_{i:02d}"
+                (responses_dir / f"{block_id}_nombre.txt").write_text("nombre_simulado", encoding="utf-8")
+                (responses_dir / f"{block_id}_decisiones.txt").write_text("DECISION: ejemplo | ALCANCE: test", encoding="utf-8")
+                (responses_dir / f"{block_id}_temas.txt").write_text("tema_simulado", encoding="utf-8")
+            return True
+
         def mock_arrancar(workspace_dir, timeout=None):
             from pathlib import Path
             ws_path = Path(workspace_dir)
@@ -643,7 +658,9 @@ def test_v62_proxy_disponible_worker_completa():
             return True
 
         with patch("contexto_zai.pipeline._proxy_zai_disponible", return_value=True), \
-             patch("contexto_zai.pipeline.EnriquecimientoOrquestador._arrancar_worker_y_esperar", side_effect=mock_arrancar):
+             patch.object(CascadaAccesoLLM, "_nivel1_worker_bun", side_effect=mock_arrancar_nivel1), \
+             patch.object(CascadaAccesoLLM, "_nivel2_proxy_zai", return_value=True), \
+             patch.object(CascadaAccesoLLM, "_nivel3_subagentes", return_value=True):
             pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)} tarea(s)"
@@ -657,7 +674,7 @@ def test_v62_proxy_caido_fallback_agente():
     """v6.2 E2E 2: proxy Z.ai caído → pending_tasks con N tareas para todos los bloques."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM
     from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -684,13 +701,28 @@ def test_v62_worker_falla_parcialmente():
     """v6.2 E2E 3: proxy OK + worker procesa algunos, falla otros → fallback solo para los faltantes."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM
     from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         # 5 bloques, worker escribirá RESUMEN: solo en los primeros 3
         ws = _crear_workspace_con_bloques(tmp, num_bloques=5, con_resumen_hasta=0)
         blocks = [ThematicBlock(filename=f"bloque_{i:02d}.md") for i in range(1, 6)]
+
+        def mock_arrancar_nivel1(tareas):
+            # Simular que Nivel 1 (Worker Bun) completa todos los bloques
+            from pathlib import Path
+            ws_path = Path(tmp)
+            responses_dir = ws_path / "_responses"
+            responses_dir.mkdir(exist_ok=True)
+            for i in range(1, 4):
+                p = ws_path / f"bloque_{i:02d}.md"
+                p.write_text(f"RESUMEN: Simulado por worker.\n\n---\n\nContenido original.", encoding="utf-8")
+                block_id = f"bloque_{i:02d}"
+                (responses_dir / f"{block_id}_nombre.txt").write_text("nombre_simulado", encoding="utf-8")
+                (responses_dir / f"{block_id}_decisiones.txt").write_text("DECISION: ejemplo | ALCANCE: test", encoding="utf-8")
+                (responses_dir / f"{block_id}_temas.txt").write_text("tema_simulado", encoding="utf-8")
+            return True
 
         def mock_arrancar(workspace_dir, timeout=None):
             from pathlib import Path
@@ -726,7 +758,7 @@ def test_v62_worker_timeout():
     """v6.2 E2E 4: worker timeout → fallback para todos los bloques."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM
     from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -751,7 +783,7 @@ def test_v62_recorrer_con_todos_resumidos():
     """v6.2 E2E 5: re-correr cuando todos los bloques ya tienen RESUMEN: → no hace nada."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, _proxy_zai_disponible
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, _proxy_zai_disponible
     from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:

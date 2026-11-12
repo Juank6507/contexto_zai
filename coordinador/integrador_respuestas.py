@@ -809,11 +809,20 @@ class IntegradorRespuestas:
         # Registrar el source (información de procedencia, no de tema)
         if "archivo_a_source" not in metadata:
             metadata["archivo_a_source"] = {}
+        # v6.17 F10 (criterio 10): propagar estructura desde ampliar_contexto
+        # (que la detecta en P4.2 y la guarda en metadata["_estructura_externa"]).
+        # Si no hay estructura registrada, default "arbitrario" (los bloques
+        # externos SIN marcadores cronológicos no generan 00_estado_actual ni
+        # 02_decisiones_clave). Si la estructura es "cronologico", collect_responses
+        # consolida decisiones y regenera índice (igual que chat cronológico).
+        estructura_externa = metadata.get("_estructura_externa", "arbitrario")
         metadata["archivo_a_source"][bloque_filename] = {
             "source_type": "file",
             "filename": filename,
             "lote": lote_idx,
             "temas": temas_registrados,  # v6.8.4: vacío — el enriquecimiento los poblará
+            # v6.17 F10: estructura propagada desde P4.2.
+            "estructura": estructura_externa,
         }
 
         metadata_path.write_text(

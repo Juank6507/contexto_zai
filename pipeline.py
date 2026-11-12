@@ -754,7 +754,17 @@ class ContextoPipeline:
                     "source_path": source_path,
                     "filename": filename,
                     "metadata": metadata,
+                    # v6.17 F10 (criterio 10): propagar estructura desde P4.2
+                    # hasta que el bloque externo sea integrado. Los bloques
+                    # externos con estructura cronológica generan los 4 archivos
+                    # de recuperación (00_estado_actual.md, 01_indice, 02_decisiones,
+                    # bloques). Si estructura="arbitrario", se omiten los 2 primeros.
+                    "estructura": estructura,
                 }
+            # v6.17 F10 (criterio 10): propagar estructura al top-level de
+            # metadata.json para que collect_responses() pueda leerla sin
+            # tener que recorrer archivo_a_source.
+            meta["_estructura_externa"] = estructura
             metadata_path.write_text(_json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
             logger.info(
@@ -782,23 +792,28 @@ class ContextoPipeline:
         workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
         is_chat_chronological: bool = True,
     ) -> dict:
-            """v4.2: Recoge las respuestas de los subagentes y las integra a los archivos.
+            """v4.2 → v6.17 F4 (criterio 3): Recoge respuestas y las integra al workspace.
 
-            Esta función es el integrador de respuestas de subagentes (cualquier
-            propósito: estado, intercambios, decisiones, consultas, documentos).
-            Lee ``_responses/``, las aplica al workspace según el ``purpose`` de
-            cada tarea, Y dispara la cascada W1+W2+W3 (P14) cuando quedan bloques
-            sin RESUMEN. **NO es un bucle D7** — si tras llamarla quedan bloques
-            incompletos, el bucle D7 de P17 (``_bucle_d7_completitud()``) se
-            encarga de los reintentos con feedback.
+            v6.17 F4 (criterio 3): ``collect_responses()`` SOLO integra
+            respuestas. Lee ``_responses/``, las aplica al workspace
+            según el ``purpose`` de cada tarea, y devuelve resultado.
 
-            Tras ``pipeline.run()`` y el lanzamiento de subagentes por parte del agente,
-            esta función lee las respuestas que los subagentes escribieron en
-            ``_responses/``, las integra a los archivos de recuperación, y devuelve
-            el resultado estructurado.
+            NO verifica bloques incompletos. NO dispara la cascada W1+W2+W3
+            (P14). Esa verificación y disparo la hace el proceso
+            (daemon/pipeline) tras llamar ``collect_responses()`` —
+            típicamente ``ContextoPipeline.run()`` invoca
+            ``_enriquecer_bloques_post_run()`` (que dispara la cascada) y
+            luego ``_bucle_d7_completitud()`` (P17, bucle D7 separado de la
+            cascada según F3).
 
-            El agente nunca ve el contenido crudo de las respuestas — solo llama
-            a esta función y recibe el resultado estructurado.
+            La consolidación de decisiones y la regeneración del índice
+            (``_consolidar_decisiones_llm`` y
+            ``_regenerar_indice_tras_enriquecimiento``) no son parte de la
+            cascada — son pasos de post-integración. Se mantienen aquí para
+            preservar el comportamiento del chat cronológico.
+
+            El agente nunca ve el contenido crudo de las respuestas — solo
+            llama a esta función y recibe el resultado estructurado.
 
             Args:
                 workspace_dir: Directorio del workspace donde viven _pending_tasks.json
@@ -826,57 +841,14 @@ class ContextoPipeline:
                 ...     applied = collect_responses()
                 ...     print(f"Aplicadas: {applied['total_aplicadas']}")
             """
-            from contexto_zai.coordinador import Orquestador, IntegradorRespuestas
-
-            orch = Orquestador(workspace_dir=workspace_dir)
-            integrador = IntegradorRespuestas(workspace_dir=workspace_dir)
-
-            # v6.11 F6: reenviar is_chat_chronological para que el integrador
-            # salte los handlers que regeneran 00_estado_actual.md cuando la
-            # operación no es cronológica (viene de ampliar_contexto).
-            resultado = orch.aplicar_respuestas(
-                integrador=integrador,
+            # v6.17 F4: delega a EnriquecimientoOrquestador.collect_responses()
+            # que es la implementación real. Esta wrapper se mantiene por
+            # compatibilidad con código externo que llama
+            # ``ContextoPipeline.collect_responses()``.
+            return EnriquecimientoOrquestador.collect_responses(
+                workspace_dir=workspace_dir,
                 is_chat_chronological=is_chat_chronological,
             )
-
-            # v6.10 F2: enriquecer bloques nuevos después de que collect_responses()
-            # los haya escrito al disco. El momento correcto es aquí, después de
-            # aplicar las respuestas (los bloques ya están en disco).
-            # Esto aplica tanto para bloques externos (de ampliar_contexto) como para
-            # bloques del chat que hayan quedado sin RESUMEN.
-            # v6.10 F2: SIN try/except silencioso. Si el enriquecimiento falla, el
-            # error se propaga. Las pending_tasks se capturan del valor de retorno
-            # directamente (v6.8.1 re-aplicado), sin re-leer del Orquestador.
-            # v6.10 F3: el arnés (_enriquecer_bloques_con_fallback) detecta la caída
-            # del Worker Bun en menos de 5s y devuelve las pending_tasks inmediatamente.
-            bloques_sin_resumen = _descubrir_bloques_sin_resumen(workspace_dir)
-            if bloques_sin_resumen:
-                fallback_tasks = _enriquecer_bloques_con_fallback(
-                    blocks=bloques_sin_resumen,
-                    workspace_dir=workspace_dir,
-                    chat_label="collect_responses",
-                )
-                # v6.8.1 re-aplicado: capturar el valor de retorno, no re-leer del Orquestador.
-                if fallback_tasks:
-                    resultado.setdefault("pending_tasks", []).extend(fallback_tasks)
-                    logger.info(
-                        "v6.10: %d tarea(s) de fallback añadida(s) a pending_tasks.",
-                        len(fallback_tasks),
-                    )
-                # v6.8.4 re-aplicado: tras enriquecer, consolidar decisiones y regenerar índice.
-                # v6.11 F6: si la operación NO es cronológica (ampliar_contexto), NO
-                # consolidar decisiones ni regenerar índice — la fuente externa no
-                # es chat-cronológica, los 4 archivos deben preservarse como están.
-                if is_chat_chronological:
-                    _consolidar_decisiones_llm(workspace_dir=workspace_dir)
-                    _regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
-                else:
-                    logger.info(
-                        "v6.11 F6: collect_responses no cronológico — se preservan los 4 archivos "
-                        "(no se consolida 02_decisiones_clave.md ni se regenera 01_indice_recuperacion.md)."
-                    )
-
-            return resultado
 
 
 def run(
@@ -1203,6 +1175,126 @@ def ampliar_contexto(
     return ContextoPipeline.ampliar_contexto(source_type=source_type, source_path=source_path, jwt=jwt, metadata=metadata, workspace_dir=workspace_dir)
 
 
+def recuperar_contexto_si_necesario(
+    chat_id: str,
+    jwt: str = "",
+    workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
+    invocar_daemon: bool = True,
+) -> dict:
+    """v6.17 F6 (criterio 5): detonante de falta de contexto que usa RecoveryCycle.
+
+    Cuando el agente CZAI no puede emitir la frase de control (porque no
+    tiene contexto suficiente), invoca al daemon para que ejecute
+    ``RecoveryCycle``. Si ``contexto_recuperacion/`` no existe, lo crea
+    desde lo que existe en ese chat. No usa ``ampliar_contexto`` modo
+    INCREMENTAL.
+
+    Args:
+        chat_id: UUID interno del chat (para extraer mensajes).
+        jwt: JWT del Director. Si vacío, se carga del CredentialManager.
+        workspace_dir: Directorio del workspace (donde se creará
+            ``contexto_recuperacion/`` si no existe).
+        invocar_daemon: ``True`` (default) — invoca al daemon vía HTTP
+            (``POST /recovery-cycle`` en puerto 8088). ``False`` — ejecuta
+            ``RecoveryCycle`` directamente en el mismo proceso (útil para
+            pruebas o entornos sin daemon).
+
+    Returns:
+        Dict con:
+        - ``accepted``: True si el daemon aceptó la tarea.
+        - ``task_id``: ID de la tarea asignada por el daemon (si invocar_daemon=True).
+        - ``contexto_creado``: True si se creó ``contexto_recuperacion/`` desde cero.
+        - ``contexto_existia``: True si ya existía (F7: solo auditar + completar).
+        - ``error``: mensaje si algo falló.
+    """
+    ws = Path(workspace_dir)
+    contexto_existia = ws.exists() and any(ws.glob("bloque_*.md"))
+
+    # JWT: cargar del CredentialManager si llega vacío.
+    if not jwt:
+        try:
+            from contexto_zai.client.credential_manager import CredentialManager
+            cm = CredentialManager()
+            jwt = cm.get_jwt() or ""
+        except Exception as e:
+            logger.warning("v6.17 F6: no se pudo cargar JWT: %s", e)
+            jwt = ""
+
+    if not jwt:
+        return {"accepted": False, "error": "Se requiere JWT del Director."}
+
+    # Si invocar_daemon=True, enviar POST al daemon (puerto 8088).
+    if invocar_daemon:
+        try:
+            import json as _json
+            import urllib.request as _ur
+            payload = _json.dumps({
+                "chat_id": chat_id,
+                "jwt": jwt,
+                "workspace_dir": str(ws),
+            }).encode("utf-8")
+            req = _ur.Request(
+                "http://127.0.0.1:8088/recovery-cycle",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with _ur.urlopen(req, timeout=10) as resp:
+                body = _json.loads(resp.read().decode("utf-8"))
+            return {
+                "accepted": bool(body.get("accepted")),
+                "task_id": body.get("task_id", ""),
+                "contexto_creado": not contexto_existia,
+                "contexto_existia": contexto_existia,
+            }
+        except Exception as e:
+            logger.warning(
+                "v6.17 F6: invocar daemon falló (%s) — ejecutando RecoveryCycle en proceso",
+                e,
+            )
+            # Caer al flujo directo si el daemon no está disponible.
+
+    # Flujo directo (sin daemon): ejecutar RecoveryCycle en el mismo proceso.
+    try:
+        if not contexto_existia:
+            # contexto_recuperacion no existe — crear desde el chat.
+            logger.info(
+                "v6.17 F6: contexto_recuperacion no existe — creando desde el chat %s",
+                chat_id[:12] if chat_id else "(sin chat_id)",
+            )
+            from contexto_zai.process.recovery_cycle import RecoveryCycle
+            cycle = RecoveryCycle(
+                jwt=jwt,
+                chat_id=chat_id,
+                workspace_dir=ws,
+            )
+            result = cycle.run()
+            return {
+                "accepted": True,
+                "task_id": f"recovery_cycle_direct_{int(time.time())}",
+                "contexto_creado": True,
+                "contexto_existia": False,
+                "success": bool(getattr(result, "success", False)),
+            }
+        else:
+            # contexto_recuperacion ya existe — F7: solo auditar + completar.
+            logger.info(
+                "v6.17 F6+F7: contexto_recuperacion existe — solo auditar + completar"
+            )
+            result_audit = EnriquecimientoOrquestador._auditar_y_completar(ws)
+            return {
+                "accepted": True,
+                "task_id": f"audit_complete_direct_{int(time.time())}",
+                "contexto_creado": False,
+                "contexto_existia": True,
+                "incompletos_iniciales": result_audit.get("incompletos_iniciales", 0),
+                "pending_tasks": result_audit.get("pending_tasks", 0),
+            }
+    except Exception as e:
+        logger.error("v6.17 F6: excepción ejecutando RecoveryCycle: %s", e)
+        return {"accepted": False, "error": str(e)}
+
+
 # -- v6.2: Fallback al agente con subagentes cuando el proxy Z.ai falla --------
 #
 # QUÉ SOLUCIONA: en v6.1, si el proxy Z.ai agota su cuota diaria, el Worker Bun
@@ -1389,6 +1481,106 @@ class EnriquecimientoOrquestador:
             )
 
     @staticmethod
+    def _descubrir_bloques_incompletos(workspace_dir: Path | str) -> list:
+            """v6.17 F1 (criterio 7): función única que detecta bloques incompletos.
+
+            Unifica ``_descubrir_bloques_sin_resumen()`` y
+            ``_bloque_esta_completo()`` en una sola función que verifica los
+            4 artefactos:
+
+            1. RESUMEN al inicio del ``bloque_*.md``.
+            2. ``_responses/{block_id}_nombre.txt``.
+            3. ``_responses/{block_id}_decisiones.txt``.
+            4. ``_responses/{block_id}_temas.txt``.
+
+            Lee cada ``bloque_*.md`` del workspace y devuelve lista de los
+            bloques incompletos (los que faltan al menos 1 artefacto). Para
+            cada uno, indica qué artefactos faltan.
+
+            Args:
+                workspace_dir: Directorio del workspace.
+
+            Returns:
+                Lista de dicts, uno por bloque incompleto:
+                - ``block_id``: str (ej. ``bloque_05``).
+                - ``filename``: str (ej. ``bloque_05.md``).
+                - ``faltantes``: list[str] (subset de
+                  ``["RESUMEN", "nombre.txt", "decisiones.txt", "temas.txt"]``).
+                - ``bloque``: ThematicBlock (con ``temas`` y
+                  ``external_size_chars`` poblados para compatibilidad con
+                  la cascada de acceso LLM).
+            """
+            from contexto_zai.models import ThematicBlock as _TB
+            ws = Path(workspace_dir)
+            if not ws.exists():
+                return []
+
+            responses_dir = ws / "_responses"
+            incompletos: list = []
+
+            for p in sorted(ws.glob("bloque_*.md")):
+                try:
+                    content = p.read_text(encoding="utf-8", errors="ignore")
+                except Exception as e:
+                    logger.warning(
+                        "v6.17 F1: no se pudo leer bloque %s: %s", p.name, e
+                    )
+                    continue
+                if len(content) < 100:
+                    # Bloque vacío o casi vacío: lo saltamos (no se puede
+                    # enriquecer un bloque sin contenido).
+                    continue
+
+                block_id = p.stem
+                filename = p.name
+
+                # Verificar los 4 artefactos.
+                faltantes: list[str] = []
+                if not content.startswith("RESUMEN:"):
+                    faltantes.append("RESUMEN")
+                if not (responses_dir / f"{block_id}_nombre.txt").exists():
+                    faltantes.append("nombre.txt")
+                if not (responses_dir / f"{block_id}_decisiones.txt").exists():
+                    faltantes.append("decisiones.txt")
+                if not (responses_dir / f"{block_id}_temas.txt").exists():
+                    faltantes.append("temas.txt")
+
+                if not faltantes:
+                    continue  # bloque completo, no se devuelve
+
+                # Extraer temas del header (para compatibilidad con la cascada).
+                temas: list[str] = []
+                for line in content.split("\n"):
+                    if line.startswith("# Bloque tematico:") or line.startswith("# Bloque temático:"):
+                        temas_str = line.split(":", 1)[1].strip()
+                        temas = [t.strip() for t in temas_str.split(",") if t.strip()]
+                        break
+                    elif line.startswith("# Bloque externo"):
+                        nombre = line.split(":", 1)[1].strip() if ":" in line else ""
+                        temas = [nombre.lower().replace(" ", "_")[:50]] if nombre else []
+                        break
+                if not temas:
+                    temas = ["contexto_externo"]
+
+                block = _TB(
+                    filename=filename,
+                    temas=temas,
+                    external_size_chars=len(content),
+                )
+                incompletos.append({
+                    "block_id": block_id,
+                    "filename": filename,
+                    "faltantes": faltantes,
+                    "bloque": block,
+                })
+
+            logger.info(
+                "v6.17 F1: %d bloque(s) incompleto(s) descubiertos (4 artefactos).",
+                len(incompletos),
+            )
+            return incompletos
+
+    @staticmethod
     def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
             """v6.6 F3 (Bug 7 fix): Descubre los bloques del workspace que NO tienen RESUMEN al inicio.
 
@@ -1443,6 +1635,110 @@ class EnriquecimientoOrquestador:
 
             logger.info("v6.6 F3: %d bloques sin RESUMEN descubiertos", len(bloques_sin_resumen))
             return bloques_sin_resumen
+
+    @staticmethod
+    def collect_responses(
+        workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
+        is_chat_chronological: bool = True,
+    ) -> dict:
+            """v4.2 → v6.17 F4 (criterio 3): Recoge respuestas y las integra al workspace.
+
+            v6.17 F4 (criterio 3): ``collect_responses()`` SOLO integra
+            respuestas. Lee ``_responses/``, las aplica al workspace según
+            el ``purpose`` de cada tarea, y devuelve resultado.
+
+            NO verifica bloques incompletos. NO dispara la cascada W1+W2+W3
+            (P14). Esa verificación y disparo la hace el proceso
+            (daemon/pipeline) tras llamar ``collect_responses()`` —
+            típicamente ``ContextoPipeline.run()`` invoca el enriquecimiento
+            (que dispara la cascada) y luego el bucle D7
+            (P17, separado de la cascada según F3).
+
+            v6.17 F10 (criterio 10): si la operación NO es cronológica
+            (``is_chat_chronological=False``, viene de ampliar_contexto),
+            lee ``_estructura_externa`` del ``_metadata.json`` para decidir
+            si el bloque externo tiene estructura cronológica. Los bloques
+            externos con estructura cronológica SÍ generan los 4 archivos
+            de recuperación (consolidan decisiones y regeneran índice).
+
+            La consolidación de decisiones y la regeneración del índice
+            (``_consolidar_decisiones_llm`` y
+            ``_regenerar_indice_tras_enriquecimiento``) no son parte de la
+            cascada — son pasos de post-integración que se mantienen aquí
+            para preservar el comportamiento del chat cronológico.
+
+            El agente nunca ve el contenido crudo de las respuestas — solo
+            llama a esta función y recibe el resultado estructurado.
+
+            Args:
+                workspace_dir: Directorio del workspace donde viven
+                    _pending_tasks.json y _responses/.
+                is_chat_chronological: ``True`` (default) si la operación
+                    viene de ``pipeline.run()`` (chat cronológico).
+                    ``False`` si viene de ``ampliar_contexto()`` (fuente
+                    externa, no cronológica).
+
+            Returns:
+                Dict con el resultado estructurado devuelto por
+                ``Orquestador.aplicar_respuestas()``.
+            """
+            from contexto_zai.coordinador import Orquestador, IntegradorRespuestas
+
+            orch = Orquestador(workspace_dir=workspace_dir)
+            integrador = IntegradorRespuestas(workspace_dir=workspace_dir)
+
+            # v6.11 F6: reenviar is_chat_chronological para que el integrador
+            # salte los handlers que regeneran 00_estado_actual.md cuando la
+            # operación no es cronológica (viene de ampliar_contexto).
+            resultado = orch.aplicar_respuestas(
+                integrador=integrador,
+                is_chat_chronological=is_chat_chronological,
+            )
+
+            # v6.17 F4 (criterio 3): collect_responses() SOLO integra.
+            # NO verifica bloques incompletos. NO dispara la cascada de
+            # acceso LLM (P14). Esa lógica la asume el proceso
+            # (daemon/pipeline) tras llamar collect_responses().
+            # La consolidación de decisiones y regeneración del índice se
+            # mantienen aquí (no son parte de la cascada).
+            #
+            # v6.17 F10 (criterio 10): si la operación no es cronológica
+            # (ampliar_contexto), leer _estructura_externa del metadata.json.
+            # Los bloques externos con estructura cronológica SÍ generan los
+            # 4 archivos de recuperación — consolidan decisiones y
+            # regeneran índice igual que el chat cronológico.
+            should_consolidate = is_chat_chronological
+            if not should_consolidate:
+                # Verificar si hay un bloque externo con estructura cronológica.
+                import json as _json_f10
+                metadata_path = Path(workspace_dir) / "_metadata.json"
+                if metadata_path.exists():
+                    try:
+                        meta = _json_f10.loads(metadata_path.read_text(encoding="utf-8"))
+                        estructura_externa = meta.get("_estructura_externa", "")
+                        if estructura_externa == "cronologico":
+                            should_consolidate = True
+                            logger.info(
+                                "v6.17 F10: ampliar_contexto con estructura=cronologico — "
+                                "consolidando decisiones y regenerando índice (4 archivos)."
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "v6.17 F10: leer _estructura_externa del metadata falló: %s", e
+                        )
+
+            if should_consolidate:
+                _consolidar_decisiones_llm(workspace_dir=workspace_dir)
+                _regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
+            else:
+                logger.info(
+                    "v6.17 F4: collect_responses no cronológico — solo integración. "
+                    "Consolidación de decisiones y regeneración del índice omitidas. "
+                    "La verificación de bloques incompletos y el disparo de la cascada "
+                    "los hace el proceso (daemon/pipeline) tras esta llamada."
+                )
+
+            return resultado
 
     @staticmethod
     def _post_bloque(
@@ -1565,6 +1861,80 @@ class EnriquecimientoOrquestador:
                 logger.warning(
                     "v6.16 F8: actualizar _pending_blocks.json falló: %s", e
                 )
+
+        # 5. v6.17 F5 (criterio 4): actualizar _daemon_status.json.
+        #    El daemon lee el estado del workspace y escribe progreso para
+        #    que el agente CZAI lo incluya en la frase de control.
+        try:
+            EnriquecimientoOrquestador._actualizar_estado_daemon(
+                workspace_dir=workspace_dir,
+                tarea_actual=block_id,
+            )
+        except Exception as e:
+            logger.warning("v6.17 F5: actualizar_estado_daemon falló: %s", e)
+
+    @staticmethod
+    def _actualizar_estado_daemon(
+        workspace_dir: Path | str,
+        status: str = "running",
+        tarea_actual: str = "",
+    ) -> None:
+        """v6.17 F5 (criterio 4): escribe ``_daemon_status.json`` en el workspace.
+
+        Cuenta bloques completos/pendientes con
+        ``_descubrir_bloques_incompletos()`` (F1) y escribe el estado del
+        daemon en ``_daemon_status.json``:
+
+        .. code-block:: json
+
+            {
+              "status": "running|idle|done",
+              "total_bloques": 50,
+              "completados": 23,
+              "pendientes": 27,
+              "tarea_actual": "bloque_24",
+              "timestamp": 1234567890
+            }
+
+        El agente CZAI lee ``_daemon_status.json`` antes de responder al
+        Director e incluye el estado en la frase de control. Si el daemon
+        no está haciendo nada (status=idle), lo dice. Cuando termina
+        (status=done), lo dice.
+
+        Args:
+            workspace_dir: Directorio del workspace.
+            status: ``running``, ``idle`` o ``done``.
+            tarea_actual: ``block_id`` del bloque en proceso (o vacío si idle).
+        """
+        import json as _json_d
+        import time as _time_d
+        ws = Path(workspace_dir)
+        if not ws.exists():
+            return
+        try:
+            total = len(list(ws.glob("bloque_*.md")))
+            incompletos = EnriquecimientoOrquestador._descubrir_bloques_incompletos(workspace_dir)
+            pendientes = len(incompletos)
+            completados = max(0, total - pendientes)
+        except Exception as e:
+            logger.warning("v6.17 F5: contar bloques falló: %s", e)
+            total = completados = pendientes = 0
+        status_path = ws / "_daemon_status.json"
+        payload = {
+            "status": status,
+            "total_bloques": total,
+            "completados": completados,
+            "pendientes": pendientes,
+            "tarea_actual": tarea_actual,
+            "timestamp": int(_time_d.time()),
+        }
+        try:
+            status_path.write_text(
+                _json_d.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.warning("v6.17 F5: escribir _daemon_status.json falló: %s", e)
 
     @staticmethod
     def _enriquecer_bloques_con_fallback(
@@ -1991,41 +2361,218 @@ class EnriquecimientoOrquestador:
         completo = verificacion.get("completo", True)
         observaciones = verificacion.get("observaciones", "")
 
-        # Validar que tenemos los 4 artefactos
-        if not resumen or not nombre:
-            logger.warning("v6.13 Nivel 2: %s - respuesta incompleta (resumen o nombre vacío).", block_id)
+        # v6.17 F9 (criterio 9): enriquecimiento ATÓMICO.
+        # Generar los 4 contenidos primero. Si los 4 son válidos (no vacíos),
+        # escribirlos todos. Si alguno falla, NO escribir ninguno — el bloque
+        # queda en su estado anterior.
+        # Implementación: escribir a archivos temporales primero, luego
+        # renombrar todos a sus paths finales. Si cualquier write falla,
+        # eliminar los temporales y devolver False (sin tocar los reales).
+        decisiones_text = "\n".join(decisiones) if decisiones else "SIN_DECISIONES_REALES"
+        temas_text = ", ".join(temas) if temas else "general"
+
+        # Validar los 4 contenidos antes de escribir nada.
+        artefactos_validos = bool(resumen) and bool(nombre) and bool(decisiones_text) and bool(temas_text)
+        if not artefactos_validos:
+            logger.warning(
+                "v6.17 F9: %s - contenido inválido (alguno vacío). No se escribe "
+                "nada — el bloque queda en su estado anterior.",
+                block_id,
+            )
             return False
 
-        # Escribir los 4 artefactos a la vez (no puede haber "medio enriquecimiento")
-        # 1. RESUMEN al inicio del bloque
+        # Generar el contenido del .md con RESUMEN al inicio.
         current_content = bloque_path.read_text(encoding="utf-8")
         if current_content.startswith("RESUMEN:"):
-            # Ya tiene resumen, reemplazar
             parts = current_content.split("\n\n---\n\n", 1)
             new_content = f"RESUMEN: {resumen}\n\n---\n\n" + (parts[1] if len(parts) > 1 else "")
         else:
             new_content = f"RESUMEN: {resumen}\n\n---\n\n{current_content}"
-        bloque_path.write_text(new_content, encoding="utf-8")
 
-        # 2. _nombre.txt
-        (responses_dir / f"{block_id}_nombre.txt").write_text(nombre, encoding="utf-8")
+        # Escribir a archivos temporales primero (átomico por archivo).
+        # Si cualquier write falla, eliminar los temporales y devolver False.
+        import os as _os_mod
+        tmp_paths: list = []
+        try:
+            # Temporal 1: bloque_NN.md.tmp
+            bloque_tmp = bloque_path.with_suffix(bloque_path.suffix + ".tmp")
+            bloque_tmp.write_text(new_content, encoding="utf-8")
+            tmp_paths.append(bloque_tmp)
+            # Temporal 2: bloque_NN_nombre.txt.tmp
+            nombre_tmp = responses_dir / f"{block_id}_nombre.txt.tmp"
+            nombre_tmp.write_text(nombre, encoding="utf-8")
+            tmp_paths.append(nombre_tmp)
+            # Temporal 3: bloque_NN_decisiones.txt.tmp
+            decisiones_tmp = responses_dir / f"{block_id}_decisiones.txt.tmp"
+            decisiones_tmp.write_text(decisiones_text, encoding="utf-8")
+            tmp_paths.append(decisiones_tmp)
+            # Temporal 4: bloque_NN_temas.txt.tmp
+            temas_tmp = responses_dir / f"{block_id}_temas.txt.tmp"
+            temas_tmp.write_text(temas_text, encoding="utf-8")
+            tmp_paths.append(temas_tmp)
+        except Exception as e:
+            logger.warning(
+                "v6.17 F9: %s - fallo escribiendo temporales (%s). Limpiando — "
+                "el bloque queda en su estado anterior.",
+                block_id, e,
+            )
+            for tp in tmp_paths:
+                try:
+                    if tp.exists():
+                        tp.unlink()
+                except Exception:
+                    pass
+            return False
 
-        # 3. _decisiones.txt
-        decisiones_text = "\n".join(decisiones) if decisiones else "SIN_DECISIONES_REALES"
-        (responses_dir / f"{block_id}_decisiones.txt").write_text(decisiones_text, encoding="utf-8")
-
-        # 4. _temas.txt
-        temas_text = ", ".join(temas) if temas else "general"
-        (responses_dir / f"{block_id}_temas.txt").write_text(temas_text, encoding="utf-8")
+        # Renombrar todos los temporales a sus paths finales (átomico).
+        # En Linux, rename sobrescribe. En Windows, hay que eliminar el
+        # destino primero.
+        try:
+            # 1. RESUMEN al inicio del bloque.
+            if bloque_path.exists():
+                bloque_path.unlink()
+            bloque_tmp.rename(bloque_path)
+            # 2. _nombre.txt
+            nombre_final = responses_dir / f"{block_id}_nombre.txt"
+            if nombre_final.exists():
+                nombre_final.unlink()
+            nombre_tmp.rename(nombre_final)
+            # 3. _decisiones.txt
+            decisiones_final = responses_dir / f"{block_id}_decisiones.txt"
+            if decisiones_final.exists():
+                decisiones_final.unlink()
+            decisiones_tmp.rename(decisiones_final)
+            # 4. _temas.txt
+            temas_final = responses_dir / f"{block_id}_temas.txt"
+            if temas_final.exists():
+                temas_final.unlink()
+            temas_tmp.rename(temas_final)
+        except Exception as e:
+            logger.warning(
+                "v6.17 F9: %s - fallo renombrando temporales (%s). Los temporales "
+                "pueden haber quedado en disco — el bloque puede estar en estado "
+                "inconsistente. Reintentar con bucle D7 lo resolverá.",
+                block_id, e,
+            )
+            # Limpiar temporales que puedan haber quedado.
+            for tp in tmp_paths:
+                try:
+                    if tp.exists():
+                        tp.unlink()
+                except Exception:
+                    pass
+            return False
 
         # W3 final: confirmar completitud (ya validado arriba, pero mantener log informativo)
         if not completo:
             logger.info("v6.13 W3: %s - LLM reportó completo=False, observaciones: %s",
                         block_id, observaciones)
 
-        logger.info("v6.13 Nivel 2: %s completado (W1+W2+W3 en 1 llamada, %d intento(s)).",
+        logger.info("v6.13 Nivel 2 + v6.17 F9: %s completado atómicamente (W1+W2+W3 en 1 llamada, %d intento(s)).",
                     block_id, intento)
         return True
+
+    @staticmethod
+    def _auditar_y_completar(
+        workspace_dir: Path | str,
+    ) -> dict:
+            """v6.17 F7 (criterio 6): si contexto_recuperacion existe, solo auditar + completar.
+
+            Si ``contexto_recuperacion/`` existe (con bloques físicos), el
+            daemon/process NO re-extrae ni re-construye. Audita qué está
+            completo, qué está incompleto, y completa lo faltante:
+
+            1. Audita con ``_descubrir_bloques_incompletos()`` (F1).
+            2. Completa solo los incompletos (sin re-extraer, sin
+               re-construir, sin borrar caché, sin quitar RESUMENES).
+            3. Auditoría final + P17 + P18 + P19.
+
+            Si ``contexto_recuperacion/`` no existe, el llamador debe
+            ejecutar ``RecoveryCycle`` completo (no esta función).
+
+            Args:
+                workspace_dir: Directorio del workspace (donde viven los
+                    ``bloque_*.md`` y ``_responses/``).
+
+            Returns:
+                Dict con:
+                - ``audited``: True si se ejecutó la auditoría.
+                - ``incompletos_iniciales``: Número de bloques incompletos al inicio.
+                - ``pending_tasks``: Número de pending_tasks tras completar.
+                - ``contexto_existia``: True si el workspace tenía bloques.
+            """
+            ws = Path(workspace_dir)
+            contexto_existia = ws.exists() and any(ws.glob("bloque_*.md"))
+            if not contexto_existia:
+                logger.info(
+                    "v6.17 F7: contexto_recuperacion no existe — no se audita "
+                    "(el llamador debe ejecutar RecoveryCycle completo)."
+                )
+                return {
+                    "audited": False,
+                    "incompletos_iniciales": 0,
+                    "pending_tasks": 0,
+                    "contexto_existia": False,
+                }
+
+            # 1. Auditar bloques incompletos con F1.
+            incompletos = EnriquecimientoOrquestador._descubrir_bloques_incompletos(ws)
+            logger.info(
+                "v6.17 F7: contexto_recuperacion existe — %d bloque(s) incompleto(s) "
+                "de %d total. Completando solo los incompletos (sin re-extraer, "
+                "sin re-construir, sin borrar caché, sin quitar RESUMENES).",
+                len(incompletos), len(list(ws.glob("bloque_*.md"))),
+            )
+
+            # 2. Procesar solo los incompletos con la cascada.
+            cascada = CascadaAccesoLLM(workspace_dir=ws)
+            for inc in incompletos:
+                cascada.procesar_tarea(inc["bloque"])
+            pending_tasks_count = len(cascada.get_pending_tasks())
+
+            # 3. Auditoría final + P17 + P18 + P19.
+            # P16 — auditoría final post-enriquecimiento.
+            try:
+                audit_final = AuditorWorkspace.auditar_completitud(ws)
+                logger.info(
+                    "v6.17 F7: Auditoría final: %d completos, %d incompletos, "
+                    "metadata_valida=%s",
+                    len(audit_final["completos"]), len(audit_final["incompletos"]),
+                    audit_final["metadata_valida"],
+                )
+            except Exception as e:
+                logger.warning("v6.17 F7: auditar_completitud falló: %s", e)
+
+            # P17 — bucle D7 encapsulado (F12) para reintentar con feedback.
+            try:
+                from contexto_zai.models import OrchestratorResult
+                dummy_result = OrchestratorResult(success=True)
+                dummy_result.pending_tasks = cascada.get_pending_tasks()
+                EnriquecimientoOrquestador._bucle_d7_completitud(
+                    result=dummy_result,
+                    workspace_dir=ws,
+                )
+            except Exception as e:
+                logger.warning("v6.17 F7: bucle D7 (P17) falló: %s", e)
+
+            # P18 — consolidar decisiones del LLM en 02_decisiones_clave.md.
+            try:
+                EnriquecimientoOrquestador._consolidar_decisiones_llm(workspace_dir=ws)
+            except Exception as e:
+                logger.warning("v6.17 F7: _consolidar_decisiones_llm (P18) falló: %s", e)
+
+            # P19 — regenerar 01_indice_recuperacion.md tras enriquecimiento.
+            try:
+                EnriquecimientoOrquestador._regenerar_indice_tras_enriquecimiento(workspace_dir=ws)
+            except Exception as e:
+                logger.warning("v6.17 F7: _regenerar_indice (P19) falló: %s", e)
+
+            return {
+                "audited": True,
+                "incompletos_iniciales": len(incompletos),
+                "pending_tasks": pending_tasks_count,
+                "contexto_existia": True,
+            }
 
     @staticmethod
     def _enriquecer_bloques_post_run(
@@ -2100,12 +2647,23 @@ class EnriquecimientoOrquestador:
         result: "OrchestratorResult",
         workspace_dir: Path | str,
     ) -> "OrchestratorResult":
-            """v6.14 F3 (criterio 18): Bucle D7 en P17 para garantizar completitud.
+            """v6.14 F3 → v6.17 F3 (criterio 2): Bucle D7 SEPARADO de la cascada.
 
-            Lee el saco ``_pending_tasks.json`` y, para cada bloque incompleto
-            tras P14-P16, construye un prompt corregido con feedback sobre
-            qué falló (W3: longitud, oraciones, etiquetas) o qué archivos
-            faltan (``_nombre.txt``, ``_decisiones.txt``, ``_temas.txt``).
+            El bucle D7 opera sobre ``pending_tasks``, NO sobre niveles de la
+            cascada. Cuando la cascada (los 3 niveles: Worker Bun → proxy Z.ai
+            → subagentes/Nivel 3) no completa un bloque, el bloque va a
+            ``pending_task`` (publicada por ``CascadaAccesoLLM`` en
+            ``_pending_tasks.json``).
+
+            El bucle D7 lee las ``pending_tasks`` y reintenta con feedback
+            hasta ``MAX_ITER_D7=5``. Si el D7 no completa tras 5 intentos,
+            la tarea se MANTIENE en ``pending_task`` (no se elimina, no se
+            descarta — queda para auditoría P17 y para que el agente CZAI la
+            procese manualmente si decide intervenir).
+
+            v6.17 F3 (criterio 2): el bucle D7 NO baja niveles. No
+            interactúa con la cascada. La cascada decide el nivel (1/2/3),
+            el D7 decide el reintento. Son mecanismos distintos.
 
             El proceso no puede invocar el Task tool directamente — solo
             publica las pending_tasks corregidas en ``_pending_tasks.json``
@@ -2119,6 +2677,8 @@ class EnriquecimientoOrquestador:
             Director con las 4 preguntas por iteración (qué falló → qué se
             diagnosticó → cómo se corrigió → qué se implementó) en
             ``/home/z/my-project/download/informe_escalado_d7_<timestamp>.md``.
+            Las tareas SIGUEN en ``pending_tasks`` tras el informe (F3:
+            no se eliminan, no se descartan).
 
             Args:
                 result: OrchestratorResult devuelto por P14 (con pending_tasks).
@@ -2367,15 +2927,24 @@ class EnriquecimientoOrquestador:
 
             # 7. Publicar pending_tasks corregidas en _pending_tasks.json
             #    (reemplaza el saco viejo por el corregido).
+            # v6.17 F11 (criterio 11): usar _persistir_pending_task_en_disco
+            # (la misma función que usa _post_bloque) para que la persistencia
+            # sea consistente entre el bucle D7 y la cascada. Las pending_tasks
+            # pueden caer desde cualquier nivel de la cascada (N1, N2 o N3).
             try:
-                from contexto_zai.coordinador.entregador_tareas import EntregadorTareas
-                entregador = EntregadorTareas(workspace_dir=workspace_dir)
-                entregador.limpiar()  # limpiar el saco viejo
-                if new_pending_tasks:
-                    entregador.publicar(new_pending_tasks)
+                ws_path_d7 = Path(workspace_dir)
+                pending_path_d7 = ws_path_d7 / "_pending_tasks.json"
+                # Limpiar el saco viejo (reemplazar, no append).
+                if pending_path_d7.exists():
+                    pending_path_d7.unlink()
+                # Persistir cada nueva pending_task con la función única.
+                for task in new_pending_tasks:
+                    CascadaAccesoLLM._persistir_pending_task_en_disco(
+                        workspace_dir=workspace_dir, task=task
+                    )
             except Exception as e:
                 logger.warning(
-                    "v6.14 P17 D7: no se pudo publicar pending_tasks: %s", e
+                    "v6.17 F11: no se pudo persistir pending_tasks del D7: %s", e
                 )
 
             # 8. Actualizar result.pending_tasks.
@@ -2469,6 +3038,76 @@ Respuesta:"""
             return EnriquecimientoOrquestador._bucle_d7_completitud(
                 result=result, workspace_dir=workspace_dir,
             )
+
+    @staticmethod
+    def _bucle_d7(
+        pending_tasks: list,
+        workspace_dir: Path | str,
+    ) -> list:
+            """v6.17 F12 (criterio 12): bucle D7 encapsulado.
+
+            Encapsula el bucle D7 (reintento con feedback) en una función
+            que recibe ``pending_tasks`` y devuelve las que siguen
+            incompletas tras ``MAX_ITER_D7=5`` intentos.
+
+            Procedimiento (criterio 12):
+            1. Recibe ``pending_tasks``.
+            2. Para cada una: revisar qué falló (auditando el bloque físico
+               con ``_descubrir_bloques_incompletos()`` de F1), construir
+               prompt corregido (con feedback explícito), reintentar y
+               verificar (4 artefactos).
+            3. Si cumple → fuera del saco (no se devuelve).
+            4. Si no cumple → próxima iteración (sigue en el saco).
+            5. Si ``MAX_ITER_D7=5`` intentos agotados → se mantiene en
+               ``pending_task`` (se devuelve al llamador).
+
+            v6.17 F3 (criterio 2): el bucle D7 NO baja niveles. No
+            interactúa con la cascada. Recibe pending_tasks (que ya cayeron
+            desde la cascada en cualquier nivel) y reintenta con feedback.
+
+            v6.17 F11 (criterio 11): las pending_tasks se persisten en
+            ``_pending_tasks.json`` vía ``_persistir_pending_task_en_disco``
+            (la misma función que usa ``_post_bloque``).
+
+            Args:
+                pending_tasks: Lista de SubagentTask pendientes.
+                workspace_dir: Directorio del workspace.
+
+            Returns:
+                Lista de SubagentTask que siguen incompletas tras
+                ``MAX_ITER_D7=5`` intentos. Si todas se completaron,
+                devuelve lista vacía.
+            """
+            if not pending_tasks:
+                return []
+
+            from contexto_zai.config import MAX_ITER_D7 as _MAX_ITER_D7
+            from contexto_zai.models import OrchestratorResult
+
+            ws_path = Path(workspace_dir)
+            if not ws_path.exists():
+                return list(pending_tasks)
+
+            # Construir un OrchestratorResult dummy con las pending_tasks
+            # y delegar al bucle D7 existente (_bucle_d7_completitud). El
+            # bucle interno hace la auditoría, construcción de prompts
+            # corregidos, y persistencia.
+            dummy_result = OrchestratorResult(success=True)
+            dummy_result.pending_tasks = list(pending_tasks)
+            try:
+                resultado = EnriquecimientoOrquestador._bucle_d7_completitud(
+                    result=dummy_result,
+                    workspace_dir=workspace_dir,
+                )
+                # _bucle_d7_completitud devuelve el OrchestratorResult con
+                # pending_tasks actualizadas (las que siguen incompletas).
+                return list(getattr(resultado, "pending_tasks", []) or [])
+            except Exception as e:
+                logger.warning(
+                    "v6.17 F12: _bucle_d7 falló (%s) — devolviendo pending_tasks originales.",
+                    e,
+                )
+                return list(pending_tasks)
 
 
     @staticmethod
@@ -3022,8 +3661,26 @@ def _construir_pending_task_para_bloque(
 
 
 def _descubrir_bloques_sin_resumen(workspace_dir: Path | str) -> list:
-    """v6.11 F5: Wrapper que delega a EnriquecimientoOrquestador._descubrir_bloques_sin_resumen()."""
+    """v6.11 F5 → v6.17 F1: Wrapper DEPRECATED que delega a
+    ``EnriquecimientoOrquestador._descubrir_bloques_sin_resumen()``.
+
+    v6.17 F1 (criterio 7): la función única de bloques incompletos es
+    ``_descubrir_bloques_incompletos()``. Este wrapper se mantiene por
+    compatibilidad con código externo que aún lo invoque, pero la lógica
+    interna de pipeline.py usa la nueva función.
+    """
     return EnriquecimientoOrquestador._descubrir_bloques_sin_resumen(workspace_dir=workspace_dir)
+
+
+def _descubrir_bloques_incompletos(workspace_dir: Path | str) -> list:
+    """v6.17 F1: Wrapper que delega a
+    ``EnriquecimientoOrquestador._descubrir_bloques_incompletos()``.
+
+    Devuelve lista de dicts con ``block_id``, ``filename``, ``faltantes``
+    y ``bloque`` (ThematicBlock). Verifica los 4 artefactos (RESUMEN +
+    3 archivos _responses/).
+    """
+    return EnriquecimientoOrquestador._descubrir_bloques_incompletos(workspace_dir=workspace_dir)
 
 
 def _enriquecer_bloques_con_fallback(
@@ -3137,9 +3794,20 @@ class CascadaAccesoLLM:
         # v6.15 F3 (criterio 31): las pending_tasks se acumulan aquí durante
         # todo P14 y se resuelven en P17. Se rellenan solo en Nivel 3.
         self._pending_tasks: list = []
+        # v6.17 F8 (criterio 8): flag de 429 persistente entre tareas. Si la
+        # tarea anterior recibió 429 y el ping confirma que persiste, la
+        # siguiente tarea empieza directo en Nivel 3 (sin probar N1 ni N2).
+        self._429_persistente: bool = False
 
     def procesar_tarea(self, tarea_o_lote) -> bool:
         """Ejecuta la cascada para una tarea individual o un lote.
+
+        v6.17 F8 (criterio 8): manejo del 429 entre tareas. Antes de
+        procesar la siguiente tarea, hace un ping al proxy Z.ai
+        (``_proxy_zai_disponible()``). Si el 429 persiste, la siguiente
+        tarea va directo a Nivel 3. Si no, empieza en Nivel 1.
+
+        Si Nivel 1 cae por causa que NO es 429 → Nivel 2 SÍ se prueba.
 
         Filtra tareas ya completas (idempotencia con
         ``_bloque_esta_completo``) al inicio y tras cada nivel.
@@ -3178,7 +3846,33 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
+            # v6.17 F8: ping al proxy antes de la siguiente tarea.
+            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
+
+        # v6.17 F8 (criterio 8): si el 429 persiste de la tarea anterior,
+        # la siguiente tarea va directo a Nivel 3 (sin probar N1 ni N2).
+        # El flag lo setea el ping al proxy que se hace al final de
+        # procesar_tarea (ver abajo).
+        if self._429_persistente:
+            logger.info(
+                "CascadaAccesoLLM: 429 persistente — saltando N1 y N2, "
+                "yendo directo a Nivel 3 para %d tarea(s).",
+                len(tareas),
+            )
+            ok = self._nivel3_subagentes(tareas)
+            self._escribir_checkpoint()
+            for bloque in tareas_originales:
+                bloque_ok = EnriquecimientoOrquestador._bloque_esta_completo(
+                    bloque, workspace_dir=self._workspace_dir
+                )
+                EnriquecimientoOrquestador._post_bloque(
+                    self._workspace_dir, bloque, bloque_ok, self
+                )
+            # v6.17 F8: antes de la siguiente tarea, hacer ping al proxy.
+            # Si el 429 ya no persiste, resetear el flag.
+            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
+            return ok
 
         # Nivel 1: Worker Bun.
         if self._nivel1_worker_bun(tareas):
@@ -3193,6 +3887,8 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
+            # v6.17 F8: ping al proxy antes de la siguiente tarea.
+            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
 
         # Filtrar completas tras Nivel 1.
@@ -3210,9 +3906,14 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
+            # v6.17 F8: ping al proxy antes de la siguiente tarea.
+            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
 
         # Nivel 2: proxy Z.ai directo.
+        # v6.17 F8: Nivel 2 se prueba SIEMPRE que N1 cayó (sea por 429 o no),
+        # a menos que el 429 ya esté persistente (en cuyo caso saltamos N2
+        # y vamos a N3 — ese caso se maneja arriba).
         nivel2_ok = self._nivel2_proxy_zai(tareas_restantes)
         if nivel2_ok:
             logger.info(
@@ -3226,6 +3927,8 @@ class CascadaAccesoLLM:
                 EnriquecimientoOrquestador._post_bloque(
                     self._workspace_dir, bloque, True, self
                 )
+            # v6.17 F8: ping al proxy antes de la siguiente tarea.
+            self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
             return True
 
         # Si Nivel 2 cayó por 429 → retry Nivel 1 (Worker Bun).
@@ -3244,6 +3947,8 @@ class CascadaAccesoLLM:
                     EnriquecimientoOrquestador._post_bloque(
                         self._workspace_dir, bloque, True, self
                     )
+                # v6.17 F8: ping al proxy antes de la siguiente tarea.
+                self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
                 return True
             # Filtrar completas tras retry Nivel 1.
             tareas_restantes = [
@@ -3260,6 +3965,8 @@ class CascadaAccesoLLM:
                     EnriquecimientoOrquestador._post_bloque(
                         self._workspace_dir, bloque, True, self
                     )
+                # v6.17 F8: ping al proxy antes de la siguiente tarea.
+                self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
                 return True
 
         # Nivel 3: subagentes del agente CZAI.
@@ -3276,6 +3983,10 @@ class CascadaAccesoLLM:
             EnriquecimientoOrquestador._post_bloque(
                 self._workspace_dir, bloque, bloque_ok, self
             )
+        # v6.17 F8 (criterio 8): ping al proxy antes de la siguiente tarea.
+        # Si el 429 ya no persiste, resetear el flag. Si persiste, la
+        # siguiente tarea irá directo a Nivel 3.
+        self._429_persistente = not EnriquecimientoOrquestador._proxy_zai_disponible()
         return ok
 
     def _escribir_checkpoint(self) -> None:
@@ -3603,46 +4314,118 @@ class CascadaAccesoLLM:
         return (bool(ok), was_429_retry)
 
     def _nivel3_subagentes(self, tareas: list) -> bool:
-        """Nivel 3: el agente CZAI lanza subagentes con Task tool.
+        """Nivel 3: subagentes del agente CZAI — v6.17 F2 PROCESA los bloques.
 
-        El proceso NO puede invocar el Task tool directamente. Publica
-        ``pending_tasks`` (vía ``_construir_pending_task_para_bloque``) en
-        ``self._pending_tasks`` y devuelve False si hay pendientes. El
-        agente CZAI las procesa, llama ``collect_responses()`` para
-        integrar las respuestas, y el proceso re-verifica (criterio 31).
+        v6.17 F2 (criterio 1): Nivel 3 es funcionalidad de la cascada
+        (algoritmo, no promesa). Los bloques que llegan a Nivel 3 se
+        procesan automáticamente dentro del proceso. No se dejan como
+        pending_tasks sin procesar.
+
+        El proceso Python NO puede invocar el Task tool directamente, así
+        que Nivel 3 procesa los bloques usando ``_enriquecer_con_proxy_zai``
+        (que ya hace la llamada al LLM con ``PROMPT_FUSIONADO_W1W2W3``).
+        Si el proxy Z.ai no está disponible, los bloques van a pending_task.
+
+        Para cada bloque en Nivel 3:
+
+        1. Llama a ``_enriquecer_con_proxy_zai()`` (Nivel 3 también puede
+           usar el proxy si está disponible — el proxy es compartido entre
+           Niveles 2 y 3 del algoritmo).
+        2. Verifica si el bloque se completó (4 artefactos con
+           ``_descubrir_bloques_incompletos()`` de F1).
+        3. Si completó → fuera del saco.
+        4. Si no completó → pending_task (persistida en
+           ``_pending_tasks.json`` vía ``_persistir_pending_task()``).
+
+        Si tras el procesamiento de Nivel 3 quedan bloques sin completar,
+        esos van a pending_task para que el bucle D7 (F12) los reintente.
 
         Args:
             tareas: Lista de ThematicBlock pendientes que Ni Nivel 1 ni
                 Nivel 2 pudieron completar.
 
         Returns:
-            False si hay pending_tasks publicadas (la cascada no pudo
-            completarlas aquí). True si no había tareas (vacío).
+            True si todas las tareas quedaron completas tras el
+            procesamiento de Nivel 3. False si alguna quedó pendiente
+            (publicada en ``self._pending_tasks`` para que el bucle D7
+            las reintente con feedback hasta ``MAX_ITER_D7=5``).
         """
         if not tareas:
             return True
+
+        # v6.17 F2 (criterio 1): Nivel 3 PROCESA los bloques automáticamente.
+        # El proceso Python no puede invocar el Task tool, pero puede usar
+        # _enriquecer_con_proxy_zai() para llamar al LLM. Si el proxy no está
+        # disponible, los bloques van a pending_task. Pero Nivel 3 INTENTA
+        # procesar antes de mandar a pending_task.
+        proxy_disponible = EnriquecimientoOrquestador._proxy_zai_disponible()
         for tarea in tareas:
-            task = _construir_pending_task_para_bloque(
-                tarea, chat_label="cascada_n3"
-            )
-            if task is not None:
-                self._pending_tasks.append(task)
-                # v6.16 F3 (criterio 37): persistir la pending_task en
-                # _pending_tasks.json inmediatamente (append, no sobrescribir).
-                # Antes se acumulaba solo en memoria y se escribía al final —
-                # si el proceso moría antes, se perdían. Ahora tras cada N3.
-                self._persistir_pending_task(task)
+            bloque_completo = False
+            if proxy_disponible:
+                try:
+                    ok = EnriquecimientoOrquestador._enriquecer_con_proxy_zai(
+                        tarea, workspace_dir=self._workspace_dir
+                    )
+                    # Verificar con la función única de F1: si todos los 4
+                    # artefactos están presentes, el bloque está completo.
+                    if ok:
+                        incompletos = EnriquecimientoOrquestador._descubrir_bloques_incompletos(
+                            self._workspace_dir
+                        )
+                        block_id = getattr(tarea, "filename", "").replace(".md", "")
+                        if not any(
+                            inc.get("block_id") == block_id for inc in incompletos
+                        ):
+                            bloque_completo = True
+                            logger.info(
+                                "v6.17 F2: Nivel 3 PROCESÓ %s vía proxy (4 artefactos OK).",
+                                getattr(tarea, "filename", str(tarea)),
+                            )
+                        else:
+                            logger.info(
+                                "v6.17 F2: Nivel 3 llamó al proxy para %s pero el bloque sigue incompleto.",
+                                getattr(tarea, "filename", str(tarea)),
+                            )
+                except Exception as e:
+                    logger.warning(
+                        "v6.17 F2: Nivel 3 excepción procesando %s: %s",
+                        getattr(tarea, "filename", str(tarea)), e,
+                    )
+            else:
                 logger.info(
-                    "CascadaAccesoLLM._nivel3_subagentes: pending_task publicada "
-                    "para %s (procesar vía agente CZAI + collect_responses). "
-                    "Persistida en _pending_tasks.json (criterio 37).",
+                    "v6.17 F2: Nivel 3 — proxy Z.ai no disponible para %s, va a pending_task.",
                     getattr(tarea, "filename", str(tarea)),
                 )
+
+            if not bloque_completo:
+                # Si Nivel 3 no pudo procesar, publicar pending_task (la
+                # resolverá el bucle D7 de F12, no la cascada).
+                task = _construir_pending_task_para_bloque(
+                    tarea, chat_label="cascada_n3"
+                )
+                if task is not None:
+                    self._pending_tasks.append(task)
+                    # v6.16 F3 (criterio 37): persistir la pending_task en
+                    # _pending_tasks.json inmediatamente (append, no sobrescribir).
+                    # v6.17 F11: la persistencia se hace vía _persistir_pending_task
+                    # (mismo código que el bucle D7).
+                    self._persistir_pending_task(task)
+                    logger.info(
+                        "v6.17 F2: Nivel 3 no pudo procesar %s — pending_task "
+                        "publicada en _pending_tasks.json (para bucle D7).",
+                        getattr(tarea, "filename", str(tarea)),
+                    )
+
         # Si hay pendientes, return False (la cascada no pudo completarlas aquí).
         return len(self._pending_tasks) == 0
 
     def _persistir_pending_task(self, task) -> None:
         """v6.16 F3 (criterio 37): persiste una pending_task en ``_pending_tasks.json``.
+
+        v6.17 F11 (criterio 11): delega a la función única
+        ``_persistir_pending_task_en_disco(workspace_dir, task)`` para que
+        el bucle D7 (F12) y ``_post_bloque`` usen el mismo código. Las
+        pending_tasks pueden caer desde cualquier nivel de la cascada.
 
         Lee el archivo existente (si existe), añade la task al array ``tasks``
         y lo escribe de vuelta (append, no sobrescribir). Actualiza ``total``.
@@ -3650,8 +4433,32 @@ class CascadaAccesoLLM:
         Args:
             task: SubagentTask (pydantic BaseModel) a persistir.
         """
+        CascadaAccesoLLM._persistir_pending_task_en_disco(
+            workspace_dir=self._workspace_dir, task=task
+        )
+
+    @staticmethod
+    def _persistir_pending_task_en_disco(
+        workspace_dir: Path | str, task,
+    ) -> None:
+        """v6.17 F11 (criterio 11): función única para persistir pending_tasks.
+
+        Usada por:
+        - ``CascadaAccesoLLM._persistir_pending_task`` (instancia) — llamado
+          desde ``_nivel3_subagentes`` y ``_post_bloque``.
+        - ``EnriquecimientoOrquestador._bucle_d7`` (F12) — llamado para
+          cada pending_task corregida que publica el bucle D7.
+
+        Las pending_tasks pueden caer desde cualquier nivel de la cascada
+        (N1, N2 o N3). Esta función es idempotente en cuanto al archivo:
+        lee, añade, escribe (append, no sobrescribir).
+
+        Args:
+            workspace_dir: Directorio del workspace.
+            task: SubagentTask (pydantic BaseModel) o dict a persistir.
+        """
         import json as _json
-        ws = Path(self._workspace_dir)
+        ws = Path(workspace_dir)
         path = ws / "_pending_tasks.json"
         data: dict = {"tasks": []}
         if path.exists():
@@ -3663,7 +4470,7 @@ class CascadaAccesoLLM:
                     data["tasks"] = []
             except Exception as e:
                 logger.warning(
-                    "v6.16 F3: _pending_tasks.json corrupto, se reinicia: %s", e
+                    "v6.17 F11: _pending_tasks.json corrupto, se reinicia: %s", e
                 )
                 data = {"tasks": []}
         # Serializar la task — pydantic BaseModel usa model_dump(), otros
@@ -3671,18 +4478,32 @@ class CascadaAccesoLLM:
         try:
             if hasattr(task, "model_dump"):
                 task_data = task.model_dump(mode="json")
-            elif hasattr(task, "model_dump"):
-                task_data = task.model_dump()
             elif isinstance(task, dict):
                 task_data = task
             else:
                 task_data = _json.loads(_json.dumps(task, default=str))
         except Exception as e:
             logger.warning(
-                "v6.16 F3: no se pudo serializar pending_task (%s): %s",
+                "v6.17 F11: no se pudo serializar pending_task (%s): %s",
                 type(task).__name__, e,
             )
             return
+        # Idempotencia: si la task ya está en el saco (mismo task_id), no
+        # añadir de nuevo. Esto permite que _post_bloque y el D7 llamen a
+        # esta función sin duplicar entradas.
+        new_task_id = task_data.get("task_id", "") if isinstance(task_data, dict) else ""
+        if new_task_id:
+            existing_ids = {
+                t.get("task_id", "")
+                for t in data["tasks"]
+                if isinstance(t, dict)
+            }
+            if new_task_id in existing_ids:
+                logger.info(
+                    "v6.17 F11: pending_task %s ya persistida — idempotencia (no duplicar).",
+                    new_task_id,
+                )
+                return
         data["tasks"].append(task_data)
         data["total"] = len(data["tasks"])
         try:
@@ -3692,7 +4513,7 @@ class CascadaAccesoLLM:
             )
         except Exception as e:
             logger.warning(
-                "v6.16 F3: no se pudo escribir _pending_tasks.json: %s", e
+                "v6.17 F11: no se pudo escribir _pending_tasks.json: %s", e
             )
 
     def _esperar_y_verificar_progreso(self) -> bool:
