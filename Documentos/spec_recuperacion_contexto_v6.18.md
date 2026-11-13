@@ -23,18 +23,20 @@ El pipeline se mantiene en 19 pasos. v6.18 corrige la orquestación del flujo.
 
 ## 3. Decisiones conciliadas
 
-### 1. ampliar_contexto con estructura cronológica pasa por RecoveryCycle
+### 1. ampliar_contexto con estructura cronológica pasa por RecoveryCycle y continúa el pipeline completo
 
-Cuando `ampliar_contexto()` detecta `estructura = "cronologico"`, el flujo debe pasar por `RecoveryCycle` que ya construye intercambios (P5), clasifica por tema (P6), y usa `BlockPacker` para ordenar bloques por timestamp descendente (P7). Reusar código vía RecoveryCycle, no duplicar la lógica.
+Cuando `ampliar_contexto()` detecta `estructura = "cronologico"`, el flujo debe pasar por `RecoveryCycle` que ya construye intercambios (P5), clasifica por tema (P6), y usa `BlockPacker` para ordenar bloques por timestamp descendente (P7). Tras RecoveryCycle, el proceso debe continuar automáticamente con el resto del pipeline: `collect_responses()` → verificar bloques incompletos → disparar cascada → P16 + P17 + P18 + P19.
 
 El flujo completo cuando `contexto_recuperacion/` no existe:
 1. `ampliar_contexto()` detecta estructura (P4.2).
-2. Si `estructura = "cronologico"`: pasa por RecoveryCycle (construye intercambios, clasifica, BlockPacker ordena descendente).
+2. Si `estructura = "cronologico"`: pasa por RecoveryCycle (construye intercambios, clasifica, BlockPacker ordena descendente, genera bloques físicos + archivos 00-03).
 3. Si `estructura = "arbitrario"`: va por ProcesadorDocumento (sin RecoveryCycle, sin BlockPacker).
-4. Tras generar los bloques físicos, el proceso publica pending_tasks de extracción si el archivo es grande.
-5. Cuando los subagentes terminan, el proceso llama `collect_responses()` para integrar.
-6. Tras integrar, el proceso verifica bloques incompletos y dispara la cascada.
-7. P16 (auditoría final) + P17 (bucle D7) + P18 + P19.
+4. Tras generar los bloques físicos, el proceso continúa: `collect_responses()` integra → verifica bloques incompletos → dispara cascada → P16 + P17 + P18 + P19.
+5. Si el archivo es grande y hay pending_tasks de extracción (caso arbitrario), los subagentes extraen antes de `collect_responses()`.
+
+**Fix v6.18:** `ampliar_contexto()` con estructura cronológica NO debe hacer `return` tras RecoveryCycle. Debe continuar con el resto del pipeline.
+
+**Nota sobre número de bloques:** RecoveryCycle agrupa por tamaño de tokens (hasta 70K por bloque). 649 intercambios en bloques de ~70K tokens = 22 bloques (no 50). Esto es correcto: ProcesadorDocumento dividía por líneas fijas (~30K tokens/bloque = 50 bloques). RecoveryCycle divide por tokens (~70K tokens/bloque = 22 bloques).
 
 ### 2. BlockPacker para bloques externos cronológicos
 

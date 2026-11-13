@@ -812,18 +812,121 @@ class ContextoPipeline:
 
                 logger.info(
                     "v6.18 F1: ampliar_contexto cronológico procesado — "
-                    "%d bloques, %d intercambios, %d pending_tasks",
+                    "%d bloques, %d intercambios, %d pending_tasks. "
+                    "Continuando pipeline (collect_responses → cascada → P16-P19).",
                     cycle_result.blocks_count,
                     cycle_result.exchanges_count,
                     len(cycle_result.pending_tasks or []),
                 )
+
+                # v6.18 Fix (spec §3.1): NO retornar aquí. Tras RecoveryCycle,
+                # ampliar_contexto() continúa el pipeline completo:
+                #   collect_responses → descubrir incompletos → cascada →
+                #   P16 (auditoría final) + P17 (bucle D7) + P18 (consolidar
+                #   decisiones) + P19 (regenerar índice).
+                # Antes hacía ``return`` tras RecoveryCycle y se saltaba
+                # todo el enriquecimiento posterior (bloques externos
+                # cronológicos se quedaban sin RESUMEN ni archivos
+                # _responses/).
+
+                # (1) collect_responses: integra respuestas de pending_tasks
+                # de extracción (puede no haber — RecoveryCycle ya generó
+                # los bloques directamente). En ese caso collect_responses
+                # no hace nada pero no falla.
+                try:
+                    ContextoPipeline.collect_responses(
+                        workspace_dir=workspace,
+                        is_chat_chronological=False,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "v6.18 Fix: collect_responses tras RecoveryCycle falló: %s", e
+                    )
+
+                # (2) Verificar bloques incompletos con F1.
+                incompletos = EnriquecimientoOrquestador._descubrir_bloques_incompletos(
+                    workspace
+                )
+
+                # (3) Si hay incompletos, disparar la cascada W1+W2+W3
+                # (_enriquecer_bloques_con_fallback) sobre los ThematicBlock
+                # descubiertos.
+                cascada_pending_tasks: list = []
+                if incompletos:
+                    bloques_para_cascada = [inc["bloque"] for inc in incompletos]
+                    try:
+                        cascada_pending_tasks = (
+                            EnriquecimientoOrquestador._enriquecer_bloques_con_fallback(
+                                blocks=bloques_para_cascada,
+                                workspace_dir=workspace,
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "v6.18 Fix: _enriquecer_bloques_con_fallback falló: %s", e
+                        )
+
+                # (4) P16 — auditoría final post-enriquecimiento (criterio 4:
+                # P16 SIEMPRE se ejecuta tras procesar).
+                try:
+                    audit_final = AuditorWorkspace.auditar_completitud(workspace)
+                    logger.info(
+                        "v6.18 P16: Auditoría final (post RecoveryCycle+cascada): "
+                        "%d completos, %d incompletos, metadata_valida=%s",
+                        len(audit_final["completos"]),
+                        len(audit_final["incompletos"]),
+                        audit_final["metadata_valida"],
+                    )
+                except Exception as e:
+                    logger.warning("v6.18 P16: auditar_completitud falló: %s", e)
+
+                # (5) P17 — bucle D7 con feedback para los bloques que
+                # quedaron incompletos. Construir un OrchestratorResult
+                # dummy con las pending_tasks de RecoveryCycle + las de la
+                # cascada (Nivel 3). _bucle_d7_completitud devuelve el
+                # resultado con las pending_tasks actualizadas (las que
+                # siguen incompletas tras MAX_ITER_D7=5).
+                pending_tasks_acumuladas = list(cycle_result.pending_tasks or [])
+                pending_tasks_acumuladas.extend(cascada_pending_tasks or [])
+                dummy_result = OrchestratorResult(success=True)
+                dummy_result.pending_tasks = pending_tasks_acumuladas
+                try:
+                    dummy_result = EnriquecimientoOrquestador._bucle_d7_completitud(
+                        result=dummy_result,
+                        workspace_dir=workspace,
+                    )
+                    pending_tasks_acumuladas = list(
+                        getattr(dummy_result, "pending_tasks", []) or []
+                    )
+                except Exception as e:
+                    logger.warning("v6.18 P17: _bucle_d7_completitud falló: %s", e)
+
+                # (6) P18 — consolidar decisiones del LLM en 02_decisiones_clave.md.
+                try:
+                    EnriquecimientoOrquestador._consolidar_decisiones_llm(
+                        workspace_dir=workspace
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "v6.18 P18: _consolidar_decisiones_llm falló: %s", e
+                    )
+
+                # (7) P19 — regenerar 01_indice_recuperacion.md tras enriquecimiento.
+                try:
+                    EnriquecimientoOrquestador._regenerar_indice_tras_enriquecimiento(
+                        workspace_dir=workspace
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "v6.18 P19: _regenerar_indice_tras_enriquecimiento falló: %s", e
+                    )
 
                 return {
                     "needs_agent_read": False,
                     "indexed": True,
                     "filename": filename,
                     "path": str(indexed_path),
-                    "pending_tasks": cycle_result.pending_tasks or [],
+                    "pending_tasks": pending_tasks_acumuladas,
                     "tokens_estimados": int(estimated_tokens),
                     "flujo": "recovery_cycle_cronologico",
                     "num_lotes": cycle_result.blocks_count,
