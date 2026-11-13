@@ -1,5 +1,5 @@
 # contexto_zai/mini-services/pipeline-daemon/index.py -- Daemon del pipeline contexto_zai: ejecuta pipeline.run() en background, escribe progreso en _daemon_status.json.
-"""Daemon del pipeline contexto_zai (v6.17 F5, criterio 4).
+"""Daemon del pipeline contexto_zai (v6.17 F5, criterio 4 → v6.18 F5, criterio 5).
 
 Proceso que corre el pipeline en background. Escribe progreso en
 ``_daemon_status.json`` (en el workspace_dir) con el formato:
@@ -22,8 +22,22 @@ Endpoints HTTP (puerto 8088):
   Body JSON: ``{"chat_id": "...", "chat_label": "...", "jwt": "..."}``.
   Respuesta: ``{"accepted": true, "task_id": "..."}``.
 
-- ``POST /ampliar-contexto``: arranca ``ampliar_contexto()`` en background.
-  Body JSON: ``{"source_type": "file|url", "source_path": "...", "jwt": "..."}``.
+- ``POST /ampliar-contexto`` (v6.18 F5, criterio 5): arranca
+  ``ampliar_contexto()`` en background. Body JSON:
+  ``{"source_type": "file|url", "source_path": "...", "jwt": "...",
+     "workspace_dir": "..."}``.
+
+  Orquesta el flujo ampliar_contexto → RecoveryCycle (o
+  ProcesadorDocumento) → collect_responses → cascada → P16+P17+P18+P19.
+
+  - Si ``contexto_recuperacion/`` no existe: invoca ``ampliar_contexto()``
+    que crea los bloques desde la fuente externa (estructura cronológica
+    → RecoveryCycle con BlockPacker descendente; arbitraria →
+    ProcesadorDocumento). El agente ejecuta subagentes, llama
+    ``collect_responses()``, y luego re-invoca ``/ampliar-contexto``.
+
+  - Si ``contexto_recuperacion/`` ya existe: ejecuta
+    ``_auditar_y_completar()`` (cascada + P16+P17+P18+P19).
 
 - ``GET /daemon-status``: lee ``_daemon_status.json`` del workspace.
 
@@ -169,7 +183,13 @@ def _run_pipeline_in_background(
     workspace_dir: Path | str,
     task_id: str,
 ) -> None:
-    """Hilo que ejecuta ``pipeline.run()`` en background y actualiza el status."""
+    """Hilo que ejecuta ``pipeline.run()`` en background y actualiza el status.
+
+    v6.18 F3 (criterio 3): si ``contexto_recuperacion/`` no existe, P2
+    (auditoría inicial + completar) NO se realiza. El daemon va directo a
+    ejecutar ``pipeline.run()`` completo. Si existe, se llama
+    ``_auditar_y_completar()`` (P2 = auditar + completar lo faltante).
+    """
     global _daemon_thread, _daemon_task_id
     try:
         log.info("v6.17 F5: arrancando pipeline.run() (task_id=%s)", task_id)
@@ -179,10 +199,13 @@ def _run_pipeline_in_background(
         # Importar aquí para que el daemon arranque rápido.
         from contexto_zai.models import DetectionTrigger
         from contexto_zai.pipeline import run
-        # Si contexto_recuperacion ya existe, F7: solo auditar + completar.
+        # v6.18 F3 (criterio 3): si contexto_recuperacion/ no existe, P2
+        # no se realiza. El daemon NO llama _auditar_y_completar ni
+        # AuditorWorkspace.auditar_completitud — va directo a procesar la
+        # fuente. Si existe, se realiza P2 normalmente.
         ws = Path(workspace_dir)
         if ws.exists() and any(ws.glob("bloque_*.md")):
-            log.info("v6.17 F7: contexto_recuperacion ya existe — solo auditar + completar")
+            log.info("v6.18 F3: contexto_recuperacion existe — P2 (auditar + completar)")
             # F7: usar la función única _auditar_y_completar que reutiliza F1.
             from contexto_zai.pipeline import EnriquecimientoOrquestador
             result_audit = EnriquecimientoOrquestador._auditar_y_completar(workspace_dir)
@@ -227,6 +250,11 @@ def _run_recovery_cycle_in_background(
 
     Si ``contexto_recuperacion/`` no existe, lo crea desde lo que existe en
     ese chat. No usa ``ampliar_contexto`` modo INCREMENTAL.
+
+    v6.18 F3 (criterio 3): si ``contexto_recuperacion/`` no existe, P2
+    (auditoría inicial) NO se realiza — el daemon va directo a crear el
+    contexto con ``RecoveryCycle.run()``. Si existe, se llama
+    ``_auditar_y_completar()`` (P2 = auditar + completar lo faltante).
     """
     global _daemon_thread, _daemon_task_id
     try:
@@ -234,6 +262,10 @@ def _run_recovery_cycle_in_background(
         total, compl, pend = _contar_bloques(workspace_dir)
         escribir_status(workspace_dir, "running", total, compl, pend, "")
         ws = Path(workspace_dir)
+        # v6.18 F3 (criterio 3): si contexto_recuperacion/ no existe, P2
+        # no se realiza — el daemon NO llama _auditar_y_completar ni
+        # AuditorWorkspace.auditar_completitud. Va directo a crear el
+        # contexto con RecoveryCycle.run().
         if not ws.exists() or not any(ws.glob("bloque_*.md")):
             # contexto_recuperacion no existe — crear desde el chat.
             log.info("v6.17 F6: contexto_recuperacion no existe — creando desde el chat")
@@ -260,6 +292,112 @@ def _run_recovery_cycle_in_background(
         escribir_status(workspace_dir, "done", total, compl, pend, "")
     except Exception as e:
         log.error("v6.17 F6: excepción en hilo RecoveryCycle: %s", e)
+        log.error("Traceback:\n%s", traceback.format_exc())
+        escribir_status(workspace_dir, "done", 0, 0, 0, "")
+    finally:
+        with _daemon_lock:
+            _daemon_thread = None
+            _daemon_task_id = ""
+
+
+def _run_ampliar_contexto_in_background(
+    source_type: str,
+    source_path: str,
+    jwt: str,
+    workspace_dir: Path | str,
+    task_id: str,
+) -> None:
+    """v6.18 F5 (criterio 5): hilo que ejecuta ``ampliar_contexto()`` en background.
+
+    Orquesta el flujo ampliar_contexto → RecoveryCycle (o ProcesadorDocumento)
+    → collect_responses → cascada → P16+P17+P18+P19.
+
+    Si ``contexto_recuperacion/`` ya existe, el daemon solo audita y completa
+    (F3 de v6.17 — _auditar_y_completar) que ejecuta P2 + cascada +
+    P16+P17+P18+P19 en una sola pasada. Esto cubre el caso en que el
+    agente ya ejecutó los subagentes y llamó ``collect_responses()``
+    — el daemon entra por la rama "existe" y dispara cascada + P16-P19.
+
+    Si ``contexto_recuperacion/`` no existe, el daemon invoca
+    ``ampliar_contexto()``:
+
+    - Si estructura="cronologica": pasa por RecoveryCycle (F1) que construye
+      intercambios, clasifica, BlockPacker ordena descendente, genera
+      bloques + archivos 00-03.
+    - Si estructura="arbitrario": pasa por ProcesadorDocumento que
+      divide en lotes y publica pending_tasks.
+
+    El hilo termina tras generar los bloques y publicar las pending_tasks.
+    El agente CZAI ejecuta los subagentes, llama ``collect_responses()``
+    (que integra respuestas), y luego invoca nuevamente
+    ``POST /ampliar-contexto`` (o ``/recovery-cycle``) — en esa segunda
+    invocación el daemon ve contexto_recuperacion existe y ejecuta
+    _auditar_y_completar (cascada + P16+P17+P18+P19).
+
+    v6.18 F3 (criterio 3): si contexto_recuperacion/ no existe, P2
+    (auditoría inicial) NO se realiza.
+    """
+    global _daemon_thread, _daemon_task_id
+    try:
+        log.info(
+            "v6.18 F5: arrancando ampliar_contexto (task_id=%s, source_type=%s)",
+            task_id, source_type,
+        )
+        total, compl, pend = _contar_bloques(workspace_dir)
+        escribir_status(workspace_dir, "running", total, compl, pend, "")
+        ws = Path(workspace_dir)
+        # v6.18 F3 (criterio 3): si contexto_recuperacion/ no existe, P2
+        # no se realiza — el daemon NO llama _auditar_y_completar ni
+        # AuditorWorkspace.auditar_completitud. Va directo a ampliar_contexto.
+        if ws.exists() and any(ws.glob("bloque_*.md")):
+            # contexto_recuperacion ya existe — F3 de v6.17: solo auditar
+            # + completar. Esto cubre la segunda invocación del agente
+            # (tras ejecutar subagentes y collect_responses) — el daemon
+            # entra aquí y dispara cascada + P16+P17+P18+P19.
+            log.info(
+                "v6.18 F5: contexto_recuperacion existe — auditando + completando "
+                "(cascada + P16+P17+P18+P19)"
+            )
+            from contexto_zai.pipeline import EnriquecimientoOrquestador
+            result_audit = EnriquecimientoOrquestador._auditar_y_completar(workspace_dir)
+            log.info(
+                "v6.18 F5: auditoría+completar terminó — incompletos_iniciales=%d, "
+                "pending_tasks=%d, contexto_existia=%s",
+                result_audit.get("incompletos_iniciales", 0),
+                result_audit.get("pending_tasks", 0),
+                result_audit.get("contexto_existia", False),
+            )
+        else:
+            # contexto_recuperacion no existe — ampliar_contexto crea los
+            # bloques desde la fuente externa.
+            log.info(
+                "v6.18 F5: contexto_recuperacion no existe — invocando ampliar_contexto "
+                "(estructura cronológica → RecoveryCycle; arbitraria → ProcesadorDocumento)"
+            )
+            from contexto_zai.pipeline import ampliar_contexto
+            result = ampliar_contexto(
+                source_type=source_type,
+                source_path=source_path,
+                jwt=jwt,
+                workspace_dir=workspace_dir,
+            )
+            if "error" in result:
+                log.error("v6.18 F5: ampliar_contexto falló: %s", result["error"])
+            else:
+                log.info(
+                    "v6.18 F5: ampliar_contexto terminó — indexed=%s, estructura=%s, "
+                    "flujo=%s, %d pending_tasks (el agente debe ejecutar subagentes, "
+                    "llamar collect_responses(), y luego re-invocar /ampliar-contexto "
+                    "para cascada + P16+P17+P18+P19)",
+                    result.get("indexed", False),
+                    result.get("estructura", ""),
+                    result.get("flujo", ""),
+                    len(result.get("pending_tasks", [])),
+                )
+        total, compl, pend = _contar_bloques(workspace_dir)
+        escribir_status(workspace_dir, "done", total, compl, pend, "")
+    except Exception as e:
+        log.error("v6.18 F5: excepción en hilo ampliar_contexto: %s", e)
         log.error("Traceback:\n%s", traceback.format_exc())
         escribir_status(workspace_dir, "done", 0, 0, 0, "")
     finally:
@@ -327,6 +465,9 @@ class DaemonHandler(BaseHTTPRequestHandler):
         jwt = body.get("jwt", "")
         chat_label = body.get("chat_label", "daemon")
         workspace_dir = body.get("workspace_dir", str(DEFAULT_WORKSPACE))
+        # v6.18 F5: parámetros específicos de ampliar-contexto.
+        source_type = body.get("source_type", "file")
+        source_path = body.get("source_path", "")
         # Estado inicial.
         escribir_status(workspace_dir, "running", 0, 0, 0, "")
         if kind == "pipeline-run":
@@ -341,9 +482,23 @@ class DaemonHandler(BaseHTTPRequestHandler):
                 args=(chat_id, jwt, workspace_dir, task_id),
                 daemon=True,
             )
+        elif kind == "ampliar-contexto":
+            # v6.18 F5 (criterio 5): validación mínima de parámetros.
+            if not source_path:
+                self._send_json(400, {
+                    "error": "ampliar-contexto requiere 'source_path' en el body.",
+                })
+                # Restaurar estado idle porque no arrancamos hilo.
+                with _daemon_lock:
+                    _daemon_task_id = ""
+                escribir_status(workspace_dir, "idle", 0, 0, 0, "")
+                return
+            t = threading.Thread(
+                target=_run_ampliar_contexto_in_background,
+                args=(source_type, source_path, jwt, workspace_dir, task_id),
+                daemon=True,
+            )
         else:
-            # ampliar-contexto — no implementado aquí todavía (F6 enfocado en
-            # RecoveryCycle). Responder con 501 para no romper el daemon.
             self._send_json(501, {"error": f"kind {kind} no implementado en daemon"})
             return
         with _daemon_lock:

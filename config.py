@@ -13,7 +13,7 @@ from pathlib import Path
 # El hash de caché de ``_enriquecer_con_proxy_zai`` incluye la versión del
 # pipeline. Si la versión cambia, el hash cambia y la caché se invalida,
 # forzando re-generación de RESUMEN+artefactos con el prompt vigente.
-PIPELINE_VERSION = "6.17"
+PIPELINE_VERSION = "6.18"
 
 # -- Rutas por defecto ----------------------------------------------
 

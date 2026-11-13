@@ -212,6 +212,183 @@ class RecoveryCycle:
 
     # -- API pública ------------------------------------------------
 
+    def run_from_messages(
+        self,
+        messages: list,
+        chat_label: str = "",
+    ) -> RecoveryCycleResult:
+        """v6.18 F1 (criterio 1): Ejecuta el ciclo desde mensajes pre-extraídos.
+
+        Acepta una lista de ``Message`` ya construida (p.ej. parseada desde
+        un archivo externo con ``## Exchange N -- [timestamp]``) y ejecuta
+        los pasos 6-9 del ciclo: construcción de intercambios (ExchangeBuilder),
+        clasificación por capas (MessageClassifier), empaquetado con
+        ``BlockPacker`` (que ordena por timestamp descendente cuando
+        ``origen != "externo"``), generación de los archivos de recuperación
+        y escritura en workspace/download.
+
+        Se usa desde ``ampliar_contexto()`` cuando la estructura del archivo
+        externo es ``cronologico`` — reusar ``RecoveryCycle`` sin duplicar
+        la lógica de clasificación/empaquetado/generación. ``RecoveryCycle``
+        ya hace P5 (construir intercambios) + P6 (clasificar) + P7
+        (BlockPacker) + generación de los 4 archivos (00-03).
+
+        Diferencias con ``run()``:
+        - Salta P5 (extracción de chat Z.ai vía MessageExtractor).
+        - Salta el indexado de attachments (no hay raw_messages).
+        - Recibe ``messages`` ya construidos por el llamador.
+
+        Args:
+            messages: Lista de ``Message`` pre-extraídos (con ``seq``,
+                ``role``, ``timestamp`` y ``content`` poblados).
+            chat_label: Etiqueta opcional del chat.
+
+        Returns:
+            RecoveryCycleResult con el resultado del ciclo.
+        """
+        try:
+            if not messages:
+                return RecoveryCycleResult(
+                    success=False,
+                    error="No se pasaron mensajes a run_from_messages.",
+                )
+
+            logger.info(
+                "v6.18 F1 run_from_messages: %d mensajes — construyendo intercambios...",
+                len(messages),
+            )
+
+            # PASO 6: Clasificación por capas y empaquetado.
+            exchanges = self._exchange_builder.build(messages)
+            self._classifier.classify_exchanges(exchanges)
+
+            # Agrupar por tema
+            by_topic: dict = {}
+            for ex in exchanges:
+                by_topic.setdefault(ex.topic, []).append(ex)
+
+            # v6.0: Capa 3 eliminada — los temas grandes se reparten en
+            # multi-bloque vía BlockPacker.
+            expanded = by_topic
+
+            # Empaquetar en bloques por tamaño.
+            # v6.18 F1+F2 (criterios 1, 2): para estructura="cronologico"
+            # el packer usa default origen="cronologico" → ordena por
+            # start_timestamp descendente (bloque_01 = más reciente).
+            # Los intercambios parseados del archivo externo llevan
+            # start_timestamp poblado por ExchangeBuilder a partir del
+            # timestamp parseado del ``## Exchange N -- [timestamp]``.
+            blocks = self._packer.pack(expanded)
+
+            # Actualizar metadata con mapeo tema->archivo.
+            metadata = self._metadata_mgr.read()
+            metadata.chat_id = self._chat_id
+            metadata.share_id = ""
+            metadata.total_exchanges = len(exchanges)
+            for block in blocks:
+                for tema in block.temas:
+                    metadata.registrar_tema(tema, block.filename)
+            try:
+                metadata.ultimo_timestamp = max(m.timestamp for m in messages)
+            except (ValueError, TypeError):
+                metadata.ultimo_timestamp = 0.0
+            from datetime import datetime, timezone
+            metadata.ultima_activacion = datetime.now(timezone.utc).isoformat()
+            self._metadata_mgr.write(metadata)
+
+            # PASO 6b (v3.3): Detectar y versionar scripts.
+            self._detect_and_version_scripts(exchanges)
+
+            # PASO 7: Generación de los 3 archivos + bloques.
+            logger.info(
+                "v6.18 F1 run_from_messages: generando archivos de recuperación..."
+            )
+            recovery_files = self._recovery_gen.generate_all(
+                exchanges=exchanges,
+                blocks=blocks,
+                chat_label=chat_label or (self._chat_id[:8] if self._chat_id else "externo"),
+                metadata=metadata,
+                attachments_indexados=[],
+                origen=self._origen,
+                estructura=self._estructura,
+            )
+
+            # Escribir archivos en workspace y download.
+            self._write_files(recovery_files, self._workspace_dir)
+            self._write_files(recovery_files, self._download_dir)
+
+            # v6.0 Fix 9: copiar 03_objetivo_proyecto.md a download si existe.
+            objetivo_ws = self._workspace_dir / "03_objetivo_proyecto.md"
+            objetivo_dl = self._download_dir / "03_objetivo_proyecto.md"
+            if objetivo_ws.exists() and not objetivo_dl.exists():
+                try:
+                    objetivo_dl.write_text(
+                        objetivo_ws.read_text(encoding="utf-8"),
+                        encoding="utf-8",
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "v6.18 F1: no se pudo copiar 03_objetivo_proyecto.md a download: %s", e
+                    )
+
+            # v6.0: generar _pending_blocks.json (1 entrada por bloque).
+            try:
+                pending_blocks_data = {"blocks": []}
+                for block in blocks:
+                    block_path = self._workspace_dir / block.filename
+                    pending_blocks_data["blocks"].append({
+                        "block_id": block.filename.replace(".md", ""),
+                        "filename": block.filename,
+                        "path": str(block_path),
+                    })
+                pending_blocks_path = self._workspace_dir / "_pending_blocks.json"
+                pending_blocks_path.write_text(
+                    json.dumps(pending_blocks_data, indent=2),
+                    encoding="utf-8",
+                )
+                logger.info(
+                    "v6.18 F1: _pending_blocks.json generado con %d bloques",
+                    len(blocks),
+                )
+            except Exception as e:
+                logger.warning(
+                    "v6.18 F1: no se pudo generar _pending_blocks.json: %s", e
+                )
+
+            # F4 v4.2: recolectar pending_tasks del Orquestador (si hay).
+            pending_tasks: list = []
+            try:
+                from contexto_zai.coordinador.orquestador import Orquestador
+                from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+                if isinstance(self._launcher, ProcesadorIntercambios):
+                    orquestador = self._launcher._orquestador
+                    if orquestador is not None:
+                        pending_tasks = orquestador.leer_tareas_pendientes()
+            except Exception as e:
+                logger.warning(
+                    "v6.18 F1: no se pudieron recolectar pending_tasks: %s", e
+                )
+
+            logger.info(
+                "v6.18 F1 run_from_messages: ciclo completado — %d archivos, "
+                "%d bloques, %d intercambios",
+                len(recovery_files), len(blocks), len(exchanges),
+            )
+
+            return RecoveryCycleResult(
+                success=True,
+                messages_count=len(messages),
+                exchanges_count=len(exchanges),
+                blocks_count=len(blocks),
+                files_count=len(recovery_files),
+                share_id="",
+                attachments_indexados=[],
+                pending_tasks=pending_tasks,
+            )
+        except Exception as e:
+            logger.exception("v6.18 F1: error en run_from_messages")
+            return RecoveryCycleResult(success=False, error=str(e))
+
     def run(
         self,
         chat_label: str = "",

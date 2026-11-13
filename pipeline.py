@@ -165,6 +165,13 @@ class ContextoPipeline:
             # Verifica el estado real del workspace tras el enriquecimiento y
             # reporta cuántos bloques están completos/incompletos. Lo que siga
             # incompleto se vierte al saco _pending_tasks.json (lo gestiona P17).
+            #
+            # v6.18 F4 (criterio 4): P16 SIEMPRE se ejecuta tras procesar,
+            # sin importar si el contexto existía previamente o se creó desde
+            # cero. Si el proceso va por ampliar_contexto → RecoveryCycle →
+            # collect_responses → cascada, P16 se ejecuta al final de la
+            # cascada vía ``_auditar_y_completar()`` (que también invoca
+            # ``AuditorWorkspace.auditar_completitud()``).
             try:
                 audit_final = AuditorWorkspace.auditar_completitud(workspace_dir)
                 logger.info(
@@ -691,9 +698,144 @@ class ContextoPipeline:
                     "origen": origen,
                 }
 
-            # 5. Si es grande, usar ProcesadorDocumento (patrón diferido v4.2)
-            # El ProcesadorDocumento decide según tamaño (mediano=un subagente, grande=3 niveles)
-            # y publica las tareas vía el Orquestador. No intenta descargar de la API de Z.ai.
+            # v6.18 F1 (criterio 1): si estructura="cronologico", pasar por
+            # RecoveryCycle. RecoveryCycle construye intercambios (P5),
+            # clasifica por tema (P6), usa BlockPacker para ordenar bloques
+            # por timestamp descendente (P7, bloque_01 = más reciente), y
+            # genera bloques físicos + archivos 00-03. Reusar RecoveryCycle,
+            # no duplicar lógica.
+            #
+            # v6.18 F2 (criterio 2): BlockPacker ordena descendente
+            # automáticamente cuando pack() se llama con origen="cronologico"
+            # (default). Los intercambios parseados del archivo externo llevan
+            # start_timestamp poblado por ExchangeBuilder a partir del
+            # timestamp parseado del ``## Exchange N -- [timestamp]``.
+            #
+            # Si estructura="arbitrario": sigue el flujo actual
+            # (ProcesadorDocumento).
+            if estructura == "cronologico":
+                from contexto_zai.process.recovery_cycle import RecoveryCycle
+
+                # Parsear intercambios desde el contenido del archivo externo.
+                messages = EnriquecimientoOrquestador._parsear_intercambios_desde_contenido(
+                    content_bytes
+                )
+                if not messages:
+                    return {
+                        "error": (
+                            "Estructura cronológica detectada pero no se pudieron "
+                            "parsear intercambios del archivo (formato esperado: "
+                            "'## Exchange N -- [YYYY-MM-DD HH:MM]' + '### Director:' "
+                            "+ '### Agente:')."
+                        ),
+                    }
+
+                logger.info(
+                    "v6.18 F1: ampliar_contexto con estructura=cronologico — "
+                    "pasando por RecoveryCycle (%d mensajes parseados)",
+                    len(messages),
+                )
+
+                # safe_filename se usa tanto en el flujo cronológico como en
+                # el arbitrario para indexar el archivo original.
+                safe_filename = filename.replace(" ", "_").replace("/", "_")
+
+                # Crear RecoveryCycle con origen="externo" y
+                # estructura="cronologico". El packer.pack() usa default
+                # origen="cronologico" → ordena descendente (criterio 2).
+                cycle = RecoveryCycle(
+                    jwt=jwt or "",
+                    chat_id="",
+                    workspace_dir=workspace,
+                    origen="externo",
+                    estructura="cronologico",
+                    enable_attachments=False,  # no hay attachments en archivo externo
+                )
+                cycle_result = cycle.run_from_messages(
+                    messages, chat_label=filename,
+                )
+
+                if not cycle_result.success:
+                    return {
+                        "error": (
+                            f"v6.18 F1: RecoveryCycle falló: {cycle_result.error}"
+                        ),
+                    }
+
+                # Guardar el archivo original en indexed para referencia
+                # (no necesita temp_path: los intercambios ya están
+                # materializados como bloques en el workspace).
+                from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
+                ATTACHMENTS_INDEXED_DIR.mkdir(parents=True, exist_ok=True)
+                indexed_path = ATTACHMENTS_INDEXED_DIR / safe_filename
+                try:
+                    if indexed_path.exists():
+                        indexed_path.unlink()
+                    indexed_path.write_bytes(content_bytes)
+                except Exception as e:
+                    logger.warning(
+                        "v6.18 F1: no se pudo guardar el archivo original en indexed: %s", e
+                    )
+
+                # Actualizar _metadata.json con source (mismo esquema que
+                # el flujo arbitrario, para que collect_responses y la
+                # cascada puedan leer la estructura externa).
+                metadata_path = workspace / "_metadata.json"
+                if metadata_path.exists():
+                    try:
+                        meta = _json.loads(metadata_path.read_text(encoding="utf-8"))
+                    except (_json.JSONDecodeError, ValueError):
+                        meta = {}
+                else:
+                    meta = {}
+
+                if "archivo_a_source" not in meta:
+                    meta["archivo_a_source"] = {}
+                ampliar_origin = (
+                    metadata.pop("_ampliar_origin", None)
+                    if isinstance(metadata, dict) else None
+                )
+                if ampliar_origin:
+                    meta["archivo_a_source"][safe_filename] = ampliar_origin
+                else:
+                    meta["archivo_a_source"][safe_filename] = {
+                        "source_type": source_type,
+                        "source_path": source_path,
+                        "filename": filename,
+                        "metadata": metadata,
+                        "estructura": estructura,
+                    }
+                meta["_estructura_externa"] = estructura
+                metadata_path.write_text(
+                    _json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+
+                logger.info(
+                    "v6.18 F1: ampliar_contexto cronológico procesado — "
+                    "%d bloques, %d intercambios, %d pending_tasks",
+                    cycle_result.blocks_count,
+                    cycle_result.exchanges_count,
+                    len(cycle_result.pending_tasks or []),
+                )
+
+                return {
+                    "needs_agent_read": False,
+                    "indexed": True,
+                    "filename": filename,
+                    "path": str(indexed_path),
+                    "pending_tasks": cycle_result.pending_tasks or [],
+                    "tokens_estimados": int(estimated_tokens),
+                    "flujo": "recovery_cycle_cronologico",
+                    "num_lotes": cycle_result.blocks_count,
+                    "estructura": estructura,
+                    "origen": origen,
+                    "bloques_nuevos": cycle_result.blocks_count,
+                }
+
+            # 5. Si es grande (estructura="arbitrario"), usar ProcesadorDocumento
+            # (patrón diferido v4.2). El ProcesadorDocumento decide según tamaño
+            # (mediano=un subagente, grande=3 niveles) y publica las tareas vía
+            # el Orquestador. No intenta descargar de la API de Z.ai.
             from contexto_zai.coordinador import Orquestador
             from contexto_zai.procesadores import ProcesadorDocumento
 
@@ -1171,7 +1313,13 @@ def ampliar_contexto(
     metadata: Optional[dict] = None,
     workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
 ) -> dict:
-    """v6.11 F5: Wrapper que delega a ContextoPipeline.ampliar_contexto()."""
+    """v6.11 F5 → v6.18 F1: Wrapper que delega a ContextoPipeline.ampliar_contexto().
+
+    v6.18 F1: si la estructura del archivo externo es ``cronologico``
+    (marcadores ``## Exchange N -- [timestamp]``), el flujo pasa por
+    ``RecoveryCycle`` (reusar, no duplicar lógica). Si es ``arbitrario``,
+    sigue por ``ProcesadorDocumento``.
+    """
     return ContextoPipeline.ampliar_contexto(source_type=source_type, source_path=source_path, jwt=jwt, metadata=metadata, workspace_dir=workspace_dir)
 
 
@@ -2503,7 +2651,12 @@ class EnriquecimientoOrquestador:
     def _auditar_y_completar(
         workspace_dir: Path | str,
     ) -> dict:
-            """v6.17 F7 (criterio 6): si contexto_recuperacion existe, solo auditar + completar.
+            """v6.17 F7 (criterio 6) → v6.18 F3 (criterio 3): si contexto_recuperacion existe, solo auditar + completar.
+
+            v6.18 F3 (criterio 3): si ``contexto_recuperacion/`` no existe,
+            esta función NO se llama. P2 (auditoría inicial) carece de
+            sentido sobre un workspace vacío. El proceso va directo a
+            procesar la fuente (``ampliar_contexto()`` o ``RecoveryCycle``).
 
             Si ``contexto_recuperacion/`` existe (con bloques físicos), el
             daemon/process NO re-extrae ni re-construye. Audita qué está
@@ -2515,7 +2668,8 @@ class EnriquecimientoOrquestador:
             3. Auditoría final + P17 + P18 + P19.
 
             Si ``contexto_recuperacion/`` no existe, el llamador debe
-            ejecutar ``RecoveryCycle`` completo (no esta función).
+            ejecutar ``RecoveryCycle`` completo o ``ampliar_contexto()``
+            (que internamente invoca RecoveryCycle si estructura=cronologico).
 
             Args:
                 workspace_dir: Directorio del workspace (donde viven los
@@ -3526,6 +3680,118 @@ Respuesta:"""
             if patron_exchange.search(sample) or patron_fecha.search(sample):
                 return "cronologico"
             return "arbitrario"
+
+    @staticmethod
+    def _parsear_intercambios_desde_contenido(content_bytes: bytes) -> list:
+            """v6.18 F1 (criterio 1): Parsea el contenido de un archivo externo en Messages.
+
+            Acepta el formato de export de chat Z.ai::
+
+                ## Exchange N -- [YYYY-MM-DD HH:MM]
+
+                ### Director:
+                <contenido del director>
+
+                ### Agente:
+                <contenido del agente>
+
+                ---
+
+            Devuelve una lista plana de ``Message`` con ``seq``, ``role``,
+            ``timestamp`` (Unix UTC) y ``content`` poblados. ``timestamp``
+            se parsea del ``[YYYY-MM-DD HH:MM]`` y se usa para que
+            ``BlockPacker`` pueda ordenar los intercambios por timestamp
+            descendente (criterio 2).
+
+            Args:
+                content_bytes: Bytes del contenido a parsear.
+
+            Returns:
+                Lista de ``Message`` (vacía si no hay intercambios válidos).
+            """
+            import re as _re
+            from datetime import datetime as _dt, timezone as _tz
+
+            if not content_bytes:
+                return []
+            try:
+                text = content_bytes.decode("utf-8", errors="ignore")
+            except Exception:
+                return []
+
+            # Patrón para detectar el inicio de cada intercambio.
+            patron_exchange = _re.compile(
+                r"^##\s+Exchange\s+(\d+)\s+--\s+\[([^\]]+)\]",
+                _re.MULTILINE | _re.IGNORECASE,
+            )
+
+            matches = list(patron_exchange.finditer(text))
+            if not matches:
+                return []
+
+            # Pre-importar para evitar repetir en cada iteración.
+            from contexto_zai.models import Message, MessageRole
+
+            messages: list = []
+            seq = 0
+            for i, m in enumerate(matches):
+                start = m.end()
+                end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+                block = text[start:end]
+
+                # Parsear el timestamp del encabezado.
+                ts_str = m.group(2).strip()
+                timestamp = 0.0
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+                    try:
+                        dt = _dt.strptime(ts_str, fmt).replace(tzinfo=_tz.utc)
+                        timestamp = dt.timestamp()
+                        break
+                    except ValueError:
+                        continue
+                # Fallback: usar el índice como timestamp creciente (garantiza
+                # orden temporal ascendente incluso si el parseo falla).
+                if timestamp == 0.0:
+                    timestamp = float(i + 1)
+
+                # Separar Director y Agente dentro del bloque.
+                director_match = _re.search(
+                    r"^###\s+Director:\s*\n(.*?)(?=^###\s+Agente:|\Z)",
+                    block, _re.MULTILINE | _re.DOTALL,
+                )
+                agente_match = _re.search(
+                    r"^###\s+Agente:\s*\n(.*?)(?=^###\s+Director:|\Z)",
+                    block, _re.MULTILINE | _re.DOTALL,
+                )
+
+                director_content = director_match.group(1).strip() if director_match else ""
+                agente_content = agente_match.group(1).strip() if agente_match else ""
+
+                # Quitar separador "---" al final si existe.
+                director_content = _re.sub(r"\n---\s*$", "", director_content).strip()
+                agente_content = _re.sub(r"\n---\s*$", "", agente_content).strip()
+
+                # Agregar mensaje del Director.
+                if director_content:
+                    seq += 1
+                    messages.append(Message(
+                        seq=seq,
+                        role=MessageRole.USER,
+                        timestamp=timestamp,
+                        content=director_content,
+                    ))
+
+                # Agregar mensaje del Agente (timestamp +1s para mantener orden).
+                if agente_content:
+                    seq += 1
+                    messages.append(Message(
+                        seq=seq,
+                        role=MessageRole.ASSISTANT,
+                        timestamp=timestamp + 1.0,
+                        content=agente_content,
+                    ))
+
+            return messages
 
 
 class ProgressMonitor:

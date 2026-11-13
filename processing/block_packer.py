@@ -100,6 +100,15 @@ class BlockPacker:
           del workspace (después de los cronológicos). El ``pack_combined()``
           se encarga de la renumeración N+1..M para externos.
 
+        v6.18 F2 (criterio 2): cuando ``ampliar_contexto()`` procesa un
+        archivo externo con ``estructura = "cronologico"``, el flujo pasa
+        por ``RecoveryCycle.run_from_messages()`` que invoca este método
+        con el default ``origen = "cronologico"`` → bloques ordenados por
+        timestamp descendente (``bloque_01`` = más reciente). Los
+        intercambios construidos por ``_parsear_intercambios_desde_contenido``
+        + ``ExchangeBuilder._assign_timestamps`` llevan ``start_timestamp``
+        poblado desde el ``## Exchange N -- [YYYY-MM-DD HH:MM]`` parseado.
+
         Estrategia (común a ambos orígenes):
         1. Para cada tema, procesar sus intercambios.
         2. Si el tema completo cabe en el bloque actual, se añade ahí.
