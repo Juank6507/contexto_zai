@@ -1,5 +1,5 @@
 MANIFIESTO DE ENTREGA — contexto_zai v6.19 (con F6)
-Fecha: 2026-11-16 19:07:12
+Fecha: 2026-11-16 19:34:22
 Versión: 6.19
 VERSION: 6.19
 Total: 181 archivos
@@ -138,7 +138,7 @@ processing/exchange_builder.py|cd70f0154c17e888a5efdff75487a90edc01c03e5b3200c1c
 processing/intention_classifier.py|759085df41d5293c5ce0fdd4b3b8afd10d321a356a41bfec3545b90346feaadc|9130
 processing/message_extractor.py|960c23e45dcb49fe8f37e0c9a36ca37b9dad1b59b30730d8d45b0a8476a36de1|7198
 processing/version_graph.py|c0421b779505a42e148e9403a24f98a3c58ad2586fa0e89a994fcb6eee425e73|19930
-retorno/documento_consolidado.md|d925d03b35b5844d95e395f862127b54b001fa6313d1c49c80986598cf724a77|1724
+retorno/documento_consolidado.md|8b8b8375ca8a561e18017c70864b5d6880a0409ddb00206c5225a1618527f2a4|2162
 sandbox-src/IMPLEMENTACION_SANDBOX.md|b80aa1f7ec6917c266184fb87187c7ed9412eda3b0e723a32ddb62ce08aacc4e|2989
 sandbox-src/api/czai/installer-bat/route.ts|771bc56dc5b90b7ee0aa6d7d451dc3a5d625ce87e29a178e5c2246df7d518262|418
 sandbox-src/api/czai/installer-ps1/route.ts|a57fb568a1b5d0c804445f1072ab0823a221a000734c68406de9135da9f46277|290
@@ -184,6 +184,6 @@ tests/test_v35_attachments.py|a215a9b645da3d9528d076d6618d8e262aa47a9263100a3122
 tests/test_v36_e2e.py|cc40dca8ae0739f00f449aa9c7d40bae55ac178a88d707a8dd1ae819e5445328|14400
 tests/test_v42_e2e.py|6dcd3d54eff24f0776c593df5138bd3449489447fd9d151b2124aa4a0bd04640|58439
 tests/test_version_graph.py|62b082acdc91846a8ff3a63ae345e46c985718e8e668865049b0d465dff7ebec|8707
-update_czai.ps1|ca1b316e267d595cf1e53c95b8b97abe2151b2dde673ac5100d3ffc8709f0f1d|29619
+update_czai.ps1|48942675640b0bdc61d64468a74a31e7b596c69f0773b0abd3dd09a7426f6fb7|29510
 verification/__init__.py|8f09428ccb70500316ef793dca59fc79a3d3f3f88c9acb19dd55e4f494255f34|1251
 verification/verifier.py|491456f769414a018885bb64bd059101480fe043feea05385494022ff307fb38|10999

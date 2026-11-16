@@ -84,9 +84,7 @@ $ArchivosRequeridos = @(
     "Documentos/spec_recuperacion_contexto_v6.19.md",
     "Documentos/plan_refactorizacion_v6.19.md",
     "MANIFIESTO_ENTREGA.txt",
-    "update_czai.ps1",
-    "VEREDICTO_DETERMINISTA_contexto_zai_v6.19.json",
-    "VEREDICTO_GAUNTLET_NH27_contexto_zai_v6.19.json"
+    "update_czai.ps1"
 )
 
 # (b) Funcionamiento en Windows: sentencias de prueba y tests E2E (datos reales, R4/NH25)

@@ -29,3 +29,6 @@ El .zip debe tener los archivos en raíz, sin carpeta envolvente que duplique el
 ### AP19-ter — Sentencias de prueba con saltos de línea literales en cmd.exe
 Las sentencias `python -c "..."` NO deben contener saltos de línea literales. Usar `chr(10)` u otras funciones.
 
+### AP19-quater — No listar veredictos en $ArchivosRequeridos del script de entrega
+Los archivos `VEREDICTO_*` son evidencia de validación que vive en `upload/` del sandbox, no archivos del proyecto. NO deben estar en `$ArchivosRequeridos` del `update_czai.ps1` porque el Director no los tiene en su repo local. **Criterio:** `$ArchivosRequeridos` solo incluye archivos del proyecto que viven en el repo, no evidencia de validación.
+
