@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_tematico_funcionamiento",
+  "decisiones": [],
+  "temas": ["worker_bun", "empaquetado_intercambios", "proceso_contexto_zai"]
+}
+```

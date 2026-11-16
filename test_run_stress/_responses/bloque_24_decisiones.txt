@@ -1,0 +1,2 @@
+DECISION: Arquitectura del pipeline | ALCANCE: Integración con Worker Bun
+DECISION: Resúmenes rigurosos | ALCANCE: Generación por Worker Bun

@@ -1,0 +1,1 @@
+DECISION: clasificación y empaquetamiento de intercambios | ALCANCE: optimizar recuperación del sistema

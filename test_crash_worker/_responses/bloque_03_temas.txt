@@ -1,0 +1,4 @@
+proceso_recuperacion
+proxy_zai
+estructura_bloques
+arquitectura_pipeline

@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "recuperacion_contexto_empaquetado",
+  "decisiones": ["DECISION: mantener arquitectura actual | ALCANCE: pipeline de procesamiento", "DECISION: optimizar integracion proxy | ALCANCE: rendimiento del sistema"],
+  "temas": ["worker_bun", "proxy_zai", "clasificacion_tematica", "procesamiento_optimizado", "enriquecedor_nivel_2"]
+}
+```

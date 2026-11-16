@@ -1,0 +1,1 @@
+DECISION: estructura intercambios clasificados | ALCANCE: facilitar tras caida Worker Bun

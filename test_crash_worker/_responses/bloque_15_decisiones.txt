@@ -1,0 +1,1 @@
+DECISION: implementar sistema de empaquetamiento de intercambios | ALCANCE: mejorar recuperacion y mantener integridad de datos durante interrupciones

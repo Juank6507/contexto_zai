@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "recuperacion_contexto_zai",
+  "decisiones": ["DECISION: implementar sistema de empaquetamiento de intercambios | ALCANCE: mejorar recuperacion y mantener integridad de datos durante interrupciones"],
+  "temas": ["pipeline", "recuperacion_contexto", "proxy_zai", "arquitectura", "resiliencia_sistema"]
+}
+```

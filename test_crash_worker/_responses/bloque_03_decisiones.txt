@@ -1,0 +1,1 @@
+DECISION: Contener intercambios clasificados y empaquetados | ALCANCE: Facilitar recuperación del Worker Bun tras caída

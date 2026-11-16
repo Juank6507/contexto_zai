@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "recuperacion_contexto_zai",
+  "decisiones": ["DECISION: estructura intercambios clasificados | ALCANCE: facilitar tras caida Worker Bun"],
+  "temas": ["arquitectura_pipeline", "recuperacion_proxy_zai", "sistema_recuperacion_contexto"]
+}
+```

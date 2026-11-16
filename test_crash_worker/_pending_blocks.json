@@ -1,0 +1,104 @@
+{
+  "blocks": [
+    {
+      "block_id": "bloque_01",
+      "filename": "bloque_01.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_01.md"
+    },
+    {
+      "block_id": "bloque_02",
+      "filename": "bloque_02.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_02.md"
+    },
+    {
+      "block_id": "bloque_03",
+      "filename": "bloque_03.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_03.md"
+    },
+    {
+      "block_id": "bloque_04",
+      "filename": "bloque_04.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_04.md"
+    },
+    {
+      "block_id": "bloque_05",
+      "filename": "bloque_05.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_05.md"
+    },
+    {
+      "block_id": "bloque_06",
+      "filename": "bloque_06.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_06.md"
+    },
+    {
+      "block_id": "bloque_07",
+      "filename": "bloque_07.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_07.md"
+    },
+    {
+      "block_id": "bloque_08",
+      "filename": "bloque_08.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_08.md"
+    },
+    {
+      "block_id": "bloque_09",
+      "filename": "bloque_09.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_09.md"
+    },
+    {
+      "block_id": "bloque_10",
+      "filename": "bloque_10.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_10.md"
+    },
+    {
+      "block_id": "bloque_11",
+      "filename": "bloque_11.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_11.md"
+    },
+    {
+      "block_id": "bloque_12",
+      "filename": "bloque_12.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_12.md"
+    },
+    {
+      "block_id": "bloque_13",
+      "filename": "bloque_13.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_13.md"
+    },
+    {
+      "block_id": "bloque_14",
+      "filename": "bloque_14.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_14.md"
+    },
+    {
+      "block_id": "bloque_15",
+      "filename": "bloque_15.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_15.md"
+    },
+    {
+      "block_id": "bloque_16",
+      "filename": "bloque_16.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_16.md"
+    },
+    {
+      "block_id": "bloque_17",
+      "filename": "bloque_17.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_17.md"
+    },
+    {
+      "block_id": "bloque_18",
+      "filename": "bloque_18.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_18.md"
+    },
+    {
+      "block_id": "bloque_19",
+      "filename": "bloque_19.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_19.md"
+    },
+    {
+      "block_id": "bloque_20",
+      "filename": "bloque_20.md",
+      "path": "/home/z/my-project/contexto_zai/test_crash_worker/bloque_20.md"
+    }
+  ]
+}

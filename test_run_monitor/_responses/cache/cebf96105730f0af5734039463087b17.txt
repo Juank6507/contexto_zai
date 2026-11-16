@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "rendimiento_worker_bun",
+  "decisiones": ["DECISION: mantener estructura 4 oraciones | ALCANCE: resúmenes 600-900 caracteres"],
+  "temas": ["recuperacion_contexto", "empaquetado_tematico", "generacion_resumenes", "diseño_sistema", "validacion_funcionalidad"]
+}
+```

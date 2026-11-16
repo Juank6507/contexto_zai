@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_10_proceso_recuperacion",
+  "decisiones": ["DECISION: mantener estructura actual | ALCANCE: intercambios clasificados"],
+  "temas": ["recuperacion_contexto", "empaquetamiento_datos", "proxy_zai", "arquitectura_pipeline", "funcionalidad_sistema"]
+}
+```

@@ -1,0 +1,2 @@
+DECISION: Empaquetamiento de intercambios temáticos | ALCANCE: Implementación en el sistema
+DECISION: Generación de resúmenes rigurosos | ALCANCE: Mediante el Worker Bun

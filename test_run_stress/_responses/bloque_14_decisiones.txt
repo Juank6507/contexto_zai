@@ -1,0 +1,3 @@
+DECISION: arquitectura del pipeline | ALCANCE: empaquetamiento de bloques temáticos
+DECISION: funcionamiento del Worker Bun | ALCANCE: generación de resúmenes rigurosos
+DECISION: integración con proxy Z.ai | ALCANCE: intercambios clasificados

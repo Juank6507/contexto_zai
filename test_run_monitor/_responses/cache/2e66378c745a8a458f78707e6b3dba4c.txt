@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "rendimiento_worker_bun",
+  "decisiones": ["DECISION: mantener formato resumen rígido | ALCANCE: 600-900 caracteres con 4 oraciones"],
+  "temas": ["rendimiento", "worker_bun", "proxy_z.ai", "arquitectura_pipeline", "validacion_sistema"]
+}
+```

@@ -1,0 +1,1 @@
+DECISION: Clasificar intercambios temáticamente | ALCANCE: Generar resúmenes rigurosos con Worker Bun

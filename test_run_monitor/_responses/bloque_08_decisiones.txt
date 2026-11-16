@@ -1,0 +1,1 @@
+DECISION: mantener formato resumen rígido | ALCANCE: 600-900 caracteres con 4 oraciones

@@ -1,0 +1,3 @@
+DECISION: Worker Bun genera resúmenes de 600-900 caracteres | ALCANCE: Cada bloque temático
+DECISION: Cada bloque debe contener intercambios clasificados temáticamente | ALCANCE: Empaquetado del contenido
+DECISION: Enriquecedor Nivel 2 requiere mínimo 100 caracteres | ALCANCE: Proceso de enriquecimiento

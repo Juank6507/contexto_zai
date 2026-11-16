@@ -1,0 +1,5 @@
+rendimiento
+worker_bun
+proxy_z.ai
+arquitectura_pipeline
+validacion_sistema

@@ -1,0 +1,190 @@
+============================================================
+  CZAI v6.14 — Reorganación pipeline 19 pasos + daemon + detonante
+============================================================
+
+Este zip contiene la entrega de CZAI v6.14.
+No necesitas nada más. Todo está aquí adentro.
+
+------------------------------------------------------------
+  QUÉ HAY EN ESTE ZIP
+------------------------------------------------------------
+
+Este zip tiene 3 cosas en la raíz:
+
+1. Este archivo de instrucciones (el que estás leyendo)
+
+2. update_czai.ps1 — script PowerShell de entrega (v1.5.4)
+   Ejecuta la verificación de contenido + Windows + cierre.
+
+3. Una carpeta llamada "para-repo-contexto_zai"
+   Contiene TODOS los archivos del repositorio contexto_zai
+   (no solo modificados — entrega completa).
+
+------------------------------------------------------------
+  QUÉ CONTIENE ESTA ACTUALIZACIÓN
+------------------------------------------------------------
+
+Esta entrega implementa v6.14 (reorganación del pipeline a 19 pasos
++ daemon del proceso + detonante de falta de contexto).
+
+Estructura: cambio de versión, no parche. v6.13 (no pasó Gauntlet,
+base para v6.14) está committeada como `f0c7358`. v6.14 arranca
+desde ahí.
+
+CAMBIOS PRINCIPALES (F2-F9):
+
+A) F2 — REPOSICIONAR P16 DESPUÉS DEL ENRIQUECIMIENTO:
+   La auditoría final (AuditorWorkspace.auditar_completitud) ahora
+   corre después del enriquecimiento (P14), no antes. Antes reportaba
+   "N incompletos" porque los bloques aún no estaban enriquecidos.
+
+B) F3 — BUCLE D7 EN P17 (MAX_ITER_D7=5):
+   Sustituye _ejecutar_pending_tasks_obligatorias() por un bucle D7
+   real: revisar falla vs spec → modificar prompt → re-entregar al
+   Actuador → re-valorar como Crítico → re-probar, hasta 5 intentos.
+   Si se agotan, genera informe de escalado al Director con las 4
+   preguntas por iteración.
+
+C) F4 — CORREGIR LLAMADA INCORRECTA A collect_responses():
+   collect_responses() es el integrador de respuestas de subagentes
+   (cualquier propósito) + disparador de la cascada P14. NO es un
+   bucle D7. La llamada incorrecta dentro de
+   _ejecutar_pending_tasks_obligatorias() fue eliminada.
+
+D) F5 — DAEMON DEL PROCESO (puerto 8088):
+   Nuevo mini-servicio Python siempre corriendo en
+   /home/z/my-project/mini-services/pipeline-daemon/index.py
+   con endpoints /ampliar-contexto, /pipeline-run, /pending-tasks,
+   /status, /health. El agente CZAI no escribe scripts runner_*.py;
+   usa la API pública del daemon.
+
+E) F6 — DETECTAR ESTRUCTURA DEL CONTENIDO EN ampliar_contexto:
+   Nuevo P4.2: _detectar_estructura_contenido() determina si el
+   archivo son exchanges cronológicos (marcadores ## Exchange N --
+   [timestamp] o ### 📅 YYYY-MM-DD) o documento arbitrario. Los
+   cronológicos se procesan como P4.1 (extraer intercambios); los
+   arbitrarios van directo a P6.
+
+F) F7 — CABECERA DE BLOQUES: CRONOLÓGICO VS EXTERNO:
+   BloqueGenerator.generate() acepta parámetro origen. Si
+   "cronologico" → "# Bloque cronológico N". Si "externo" →
+   "# Bloque externo N" + "**Source:** ampliar_contexto".
+   (NOTA: bug conocido — _integrar_documento no propaga origen,
+   se corrige en v6.15, ver documento consolidado AP24).
+
+G) F8 — 00_estado_actual SOLO PARA CRONOLÓGICO:
+   RecoveryGenerator.generate_all() acepta origen. Si "externo",
+   omite EstadoGenerator (no genera 00_estado_actual.md).
+   (NOTA: bug de diseño conocido — la condición debería depender
+   de estructura="cronologico", no de origen. Se corrige en v6.15,
+   ver documento consolidado AP25 + L021).
+
+H) F9 — ORDENAMIENTO: BLOQUES EXTERNOS AL FINAL:
+   BlockPacker.pack_combined() empaqueta cronológicos primero
+   (bloque_01..N) y externos al final (bloque_N+1..M) en orden
+   de entrada.
+
+DOCUMENTOS INCLUIDOS:
+
+- Documentos/spec_recuperacion_contexto_v6.14.md (spec con 7
+  problemas, 19 pasos, 5 categorías, 26 criterios).
+- Documentos/plan_refactorizacion_v6.14.md (plan con 11 fases
+  F1-F11, modo Actuador+Crítico v1.6).
+- retorno/documento_consolidado.md (6 lecciones L018-L023,
+  6 anti-patrones AP24-AP29, 4 patrones P12-P15, 1 decisión D8
+  ya cosechada por agente EP en estrategia v1.6.1).
+
+------------------------------------------------------------
+  QUÉ DEBES HACER (3 PASOS)
+------------------------------------------------------------
+
+PASO 1: Descomprime el .zip y aplica los archivos al repo contexto_zai
+---------------------------------------------------------------------
+
+a) Descomprime este .zip en una carpeta temporal de tu PC.
+
+b) Ejecuta el script de entrega update_czai.ps1:
+   Abre PowerShell como Administrador y ejecuta:
+
+   powershell -ExecutionPolicy Bypass -File .\update_czai.ps1 -EntregaDir .
+
+   El script:
+   - Localiza el .zip de mayor versión (contexto_zai_v6.14.zip)
+   - Verifica el MANIFIESTO_ENTREGA.txt (SHA256, umbral cero)
+   - Reemplazo total del repo local
+   - Publica en GitHub (commit + push origin main)
+   - Genera el informe DIFF_ENTREGA en Descargas
+
+c) Si el veredicto del script es VERDE, la entrega quedó aplicada.
+   Si es ROJO, NO se aplica y vuelve al DCEPI con el informe.
+
+PASO 2: Verifica que todo quedó bien
+-------------------------------------
+
+a) Entra a GitHub en tu navegador:
+   https://github.com/Juank6507/contexto_zai
+
+b) Verás el último commit con el mensaje:
+   "v6.14: ..."
+
+c) Verifica que la carpeta Documentos/ contiene:
+   - spec_recuperacion_contexto_v6.14.md
+   - plan_refactorizacion_v6.14.md
+   - spec_recuperacion_contexto_v6.13.md (histórica)
+   - plan_refactorizacion_v6.13.md (histórica)
+
+d) Verifica que retorno/documento_consolidado.md existe con:
+   - 6 lecciones aprendidas (L018-L023)
+   - 6 anti-patrones (AP24-AP29)
+   - 4 patrones recurrentes (P12-P15)
+
+PASO 3: Re-clona en el sandbox Linux del agente CZAI
+-----------------------------------------------------
+
+Tras confirmar el push a GitHub, el agente CZAI debe re-clonar:
+
+   cd /home/z/my-project
+   rm -rf contexto_zai
+   git clone https://github.com/Juank6507/contexto_zai.git contexto_zai
+
+Esto completa el ciclo I.3.c (cosecha GitHub) y I.3.e (re-clonado final).
+
+------------------------------------------------------------
+  BUGS CONOCIDOS (no bloquean la entrega, se corrigen en v6.15)
+------------------------------------------------------------
+
+1. F7 bug: _integrar_documento() no propaga origen="externo" a
+   BloqueGenerator.generate(). Los bloques externos se generan con
+   cabecera vieja "# Bloque temático: documento_externo_N".
+   Ver anti-patrón AP24 en retorno/documento_consolidado.md.
+
+2. F8 bug de diseño: la generación de 00_estado_actual,
+   02_decisiones, 03_objetivo depende de origen="externo" en vez
+   de estructura="cronologico". Un archivo externo con estructura
+   cronológica NO debería omitir estos 4 archivos.
+   Ver anti-patrón AP25 + lección L021 en retorno/documento_consolidado.md.
+
+3. C14 (Gauntlet 100% datos reales) no pasa: 14/50 bloques
+   enriquecidos por limitación externa (cuota Z.ai HTTP 429).
+   El bucle D7 MAX_ITER_W3=5 funcionó perfectamente en los 14
+   bloques procesados (3 bloques pasaron W3 en intento 2-3 con
+   feedback al LLM).
+
+------------------------------------------------------------
+  SI TIENES PROBLEMAS
+------------------------------------------------------------
+
+Si algo falla al hacer git push, probablemente es porque no tienes
+configuradas tus credenciales de GitHub en tu computadora.
+
+Para configurarlas, ejecuta en la terminal:
+
+   git config --global user.name "Tu Nombre"
+   git config --global user.email "tu@email.com"
+
+Si necesitas ayuda, dile al agente Z.ai:
+"No pude hacer git push. Ayúdame a configurar mis credenciales de GitHub."
+
+============================================================
+  FIN DE LAS INSTRUCCIONES
+============================================================

@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "recuperacion_contexto_zai",
+  "decisiones": ["DECISION: mantener estructura de intercambios empaquetados y clasificados | ALCANCE: garantizar continuidad del sistema"],
+  "temas": ["recuperacion_contexto", "proxy_zai", "empaquetado_datos", "arquitectura_sistema", "worker_bun"]
+}
+```

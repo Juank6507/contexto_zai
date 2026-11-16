@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "recuperacion_contexto_worker",
+  "decisiones": ["DECISION: arquitectura del pipeline | ALCANCE: tras caída de Worker Bun", "DECISION: funcionamiento del proxy | ALCANCE: sistema de recuperación"],
+  "temas": ["bloque_tem_6", "proyecto_contexto_zai", "recuperacion_contexto", "worker_bun", "proxy"]
+}
+```

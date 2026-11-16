@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_tematico_funcionamiento",
+  "decisiones": ["DECISION: clasificar intercambios temáticamente | ALCANCE: generar resúmenes rigurosos"],
+  "temas": ["bloques_tematicos", "worker_bun", "proxy_zai", "arquitectura_pipeline", "clasificacion_tematica"]
+}
+```

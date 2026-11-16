@@ -1,0 +1,7 @@
+```json
+{
+  "nombre": "bloque_tematico_proceso",
+  "decisiones": ["DECISION: determinar estructura de bloques temáticos | ALCANCE: proceso contexto_zai", "DECISION: procesar con Worker Bun | ALCANCE: generación de resúmenes"],
+  "temas": ["bloques_tematicos", "worker_bun", "generacion_resumenes", "clasificacion_temas", "procesamiento_sistema"]
+}
+```

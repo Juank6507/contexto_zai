@@ -1,0 +1,11 @@
+```json
+{
+  "nombre": "contexto_zai_proyecto",
+  "decisiones": [
+    "DECISION: arquitectura del pipeline | ALCANCE: empaquetamiento de bloques temáticos",
+    "DECISION: funcionamiento del Worker Bun | ALCANCE: generación de resúmenes rigurosos",
+    "DECISION: integración con proxy Z.ai | ALCANCE: intercambios clasificados"
+  ],
+  "temas": ["arquitectura_pipeline", "worker_bun", "proxy_zai", "bloques_temáticos", "resumenes_rigurosos"]
+}
+```

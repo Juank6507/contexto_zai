@@ -1,0 +1,5 @@
+arquitectura_pipeline
+worker_bun
+integracion_proxy_zai
+diseño_sistema
+generacion_resumenes

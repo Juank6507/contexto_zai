@@ -1,0 +1,54 @@
+{
+  "blocks": [
+    {
+      "block_id": "bloque_01",
+      "filename": "bloque_01.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_01.md"
+    },
+    {
+      "block_id": "bloque_02",
+      "filename": "bloque_02.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_02.md"
+    },
+    {
+      "block_id": "bloque_03",
+      "filename": "bloque_03.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_03.md"
+    },
+    {
+      "block_id": "bloque_04",
+      "filename": "bloque_04.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_04.md"
+    },
+    {
+      "block_id": "bloque_05",
+      "filename": "bloque_05.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_05.md"
+    },
+    {
+      "block_id": "bloque_06",
+      "filename": "bloque_06.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_06.md"
+    },
+    {
+      "block_id": "bloque_07",
+      "filename": "bloque_07.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_07.md"
+    },
+    {
+      "block_id": "bloque_08",
+      "filename": "bloque_08.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_08.md"
+    },
+    {
+      "block_id": "bloque_09",
+      "filename": "bloque_09.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_09.md"
+    },
+    {
+      "block_id": "bloque_10",
+      "filename": "bloque_10.md",
+      "path": "/home/z/my-project/contexto_zai/test_run_monitor/bloque_10.md"
+    }
+  ]
+}

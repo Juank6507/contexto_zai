@@ -1,0 +1,11 @@
+```json
+{
+  "nombre": "worker_bun_proxy_zai",
+  "decisiones": [
+    "DECISION: Worker Bun genera resúmenes de 600-900 caracteres | ALCANCE: Cada bloque temático",
+    "DECISION: Cada bloque debe contener intercambios clasificados temáticamente | ALCANCE: Empaquetado del contenido",
+    "DECISION: Enriquecedor Nivel 2 requiere mínimo 100 caracteres | ALCANCE: Proceso de enriquecimiento"
+  ],
+  "temas": ["worker_bun", "proxy_zai", "enriquecedor_nivel_2", "recuperacion_contexto", "rendimiento_sistema"]
+}
+```

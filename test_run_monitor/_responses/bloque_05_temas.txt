@@ -1,0 +1,5 @@
+rendimiento_worker_bun
+proxy_zai
+arquitectura_pipeline
+simulación_diálogo
+sistema_recuperación

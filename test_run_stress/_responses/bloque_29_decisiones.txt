@@ -1,0 +1,2 @@
+DECISION: mantener formato actual del bloque | ALCANCE: estructura y empaquetamiento temático
+DECISION: continuar usando Worker Bun | ALCANCE: generación automática de resúmenes

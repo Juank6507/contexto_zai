@@ -1,0 +1,985 @@
+# contexto_zai/models.py -- Modelos de datos Pydantic (Message, Exchange, ThematicBlock, RecoveryFile, etc.).
+"""Modelos de datos del sistema Contexto Z.ai.
+
+Usa Pydantic v2 para validación estricta y serialización.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from typing import Optional
+
+from pydantic import BaseModel, Field, field_validator
+
+# -- Enums ----------------------------------------------------------
+
+class MessageRole(str, Enum):
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+class FileCategory(str, Enum):
+    ESTADO = "estado_actual"
+    INDICE = "indice_recuperacion"
+    DECISIONES = "decisiones_clave"
+    BLOQUE = "bloque_tematico"
+
+class PipelinePhase(str, Enum):
+    AUTH = "auth"
+    EXTRACTION = "extraction"
+    CLASSIFICATION = "classification"
+    GENERATION = "generation"
+    VERIFICATION = "verification"
+
+class Verdict(str, Enum):
+    OK = "ok"
+    WARNING = "warning"
+    ERROR = "error"
+
+# -- Mensajes -------------------------------------------------------
+
+class Message(BaseModel):
+    """Un mensaje individual del chat.
+
+    Attributes:
+        seq: Número secuencial (1-based).
+        role: Rol del emisor (user/assistant).
+        timestamp: Unix timestamp del mensaje.
+        model: Nombre del modelo (solo para assistant).
+        content: Contenido textual del mensaje.
+    """
+
+    seq: int
+    role: MessageRole
+    timestamp: float
+    model: str = ""
+    content: str = ""
+
+    @property
+    def datetime(self) -> datetime:
+        return datetime.fromtimestamp(self.timestamp, tz=timezone.utc)
+
+    @property
+    def date_str(self) -> str:
+        return self.datetime.strftime("%Y-%m-%d")
+
+    @property
+    def datetime_str(self) -> str:
+        return self.datetime.strftime("%Y-%m-%d %H:%M")
+
+    @property
+    def is_user(self) -> bool:
+        return self.role == MessageRole.USER
+
+    @property
+    def is_assistant(self) -> bool:
+        return self.role == MessageRole.ASSISTANT
+
+    @property
+    def estimated_tokens(self) -> float:
+        return len(self.content) / 3.5
+
+class Exchange(BaseModel):
+    """Unidad de conversación: mensaje del Director + respuestas del agente.
+
+    Attributes:
+        id: Identificador secuencial (1-based).
+        director_msg: Mensaje del Director que inicia el exchange.
+        agent_msgs: Lista de respuestas del agente.
+        topic: Tema clasificado (nombre de ThemeRule).
+        start_timestamp: Timestamp del primer mensaje del exchange.
+        end_timestamp: Timestamp del último mensaje del exchange.
+    """
+
+    id: int
+    director_msg: Message
+    agent_msgs: list[Message] = Field(default_factory=list)
+    topic: str = "general"
+    start_timestamp: float = 0.0
+    end_timestamp: float = 0.0
+
+    @property
+    def start_datetime(self) -> datetime:
+        ts = self.start_timestamp or self.director_msg.timestamp
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+
+    @property
+    def end_datetime(self) -> datetime:
+        # v6.4 F5: validar end_timestamp. Si es 0, usar start_timestamp como fallback.
+        ts = self.end_timestamp
+        if ts and ts > 0:
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        # Fallback: usar start_timestamp (no director_msg.timestamp que puede ser distinto)
+        return self.start_datetime
+
+    @property
+    def period_str(self) -> str:
+        return f"{self.start_datetime.strftime('%Y-%m-%d')} -> {self.end_datetime.strftime('%Y-%m-%d')}"
+
+    @property
+    def datetime_str(self) -> str:
+        return self.start_datetime.strftime("%Y-%m-%d %H:%M")
+
+    @property
+    def all_messages(self) -> list[Message]:
+        return [self.director_msg, *self.agent_msgs]
+
+    @property
+    def total_chars(self) -> int:
+        return sum(len(m.content) for m in self.all_messages)
+
+    @property
+    def estimated_tokens(self) -> float:
+        return self.total_chars / 3.5
+
+    @property
+    def director_count(self) -> int:
+        return 1
+
+    @property
+    def agent_count(self) -> int:
+        return len(self.agent_msgs)
+
+# -- Bloques temáticos ----------------------------------------------
+
+class ThematicBlock(BaseModel):
+    """Bloque de exchanges agrupados por tamaño (v3.2).
+
+    Un bloque puede contener exchanges de varios temas diferentes,
+    siempre que la suma de sus tokens no supere MAX_TOKENS_BLOQUE.
+
+    Attributes:
+        filename: Nombre del archivo de salida.
+        exchanges: Lista de exchanges en este bloque.
+        temas: Lista de temas contenidos en este bloque.
+        description: Descripción del contenido.
+    """
+
+    filename: str
+    exchanges: list[Exchange] = Field(default_factory=list)
+    temas: list[str] = Field(default_factory=list)
+    description: str = ""
+    # v6.6 F6 (Bug 1 fix): tamaño en chars para bloques externos sin exchanges.
+    # Si > 0 y no hay exchanges, estimated_tokens usa este valor en vez de 0.
+    # Esto permite que los bloques externos (creados por ampliar_contexto)
+    # tengan un estimated_tokens correcto en el índice.
+    external_size_chars: int = 0
+
+    @property
+    def total_chars(self) -> int:
+        # v6.6 F6: si external_size_chars > 0 y no hay exchanges (bloque externo),
+        # usar el tamaño del archivo físico.
+        if self.external_size_chars > 0 and not self.exchanges:
+            return self.external_size_chars
+        return sum(ex.total_chars for ex in self.exchanges)
+
+    @property
+    def estimated_tokens(self) -> float:
+        return self.total_chars / 3.5
+
+    @property
+    def exchange_count(self) -> int:
+        return len(self.exchanges)
+
+    @property
+    def director_count(self) -> int:
+        return sum(ex.director_count for ex in self.exchanges)
+
+    @property
+    def agent_count(self) -> int:
+        return sum(ex.agent_count for ex in self.exchanges)
+
+    @property
+    def period_str(self) -> str:
+        if not self.exchanges:
+            return "sin datos"
+        first = self.exchanges[0].start_datetime
+        last = self.exchanges[-1].end_datetime
+        # v6.4 F5: si last < first (por timestamps inválidos), usar first como fallback
+        if last < first:
+            last = first
+        return f"{first.strftime('%Y-%m-%d')} -> {last.strftime('%Y-%m-%d')}"
+
+    @property
+    def full_filename(self) -> str:
+        return self.filename
+
+    def add_exchange(self, exchange: Exchange) -> None:
+        """Añade un exchange al bloque y registra su tema si no existe."""
+        self.exchanges.append(exchange)
+        if exchange.topic not in self.temas:
+            self.temas.append(exchange.topic)
+
+    def would_exceed_limit(self, exchange: Exchange, max_tokens: int) -> bool:
+        """Verifica si añadir el exchange superaría el límite de tokens."""
+        new_chars = self.total_chars + exchange.total_chars
+        return (new_chars / 3.5) > max_tokens
+
+    def tiene_resumen(self, workspace_dir: Optional[Path | str] = None) -> bool:
+        """v6.2: Devuelve True si el archivo físico del bloque empieza con 'RESUMEN:'.
+
+        Usa ``workspace_dir`` + ``self.filename`` para localizar el archivo.
+        Si ``workspace_dir`` no se pasa, usa el directorio de trabajo actual.
+
+        Args:
+            workspace_dir: Directorio donde vive el bloque físico. Si es None,
+                busca ``./<filename>``.
+
+        Returns:
+            True si la primera línea del archivo empieza con ``RESUMEN:``.
+            False si el archivo no existe o no tiene resumen.
+        """
+        try:
+            path = Path(workspace_dir) / self.filename if workspace_dir else Path(self.filename)
+            if not path.exists():
+                return False
+            with open(path, "r", encoding="utf-8") as f:
+                first_line = f.readline().strip()
+            return first_line.startswith("RESUMEN:")
+        except Exception:
+            return False
+
+# -- Archivos de recuperación ---------------------------------------
+
+class RecoveryFile(BaseModel):
+    """Archivo de recuperación generado.
+
+    Attributes:
+        filename: Nombre del archivo.
+        category: Tipo de archivo.
+        content: Contenido en markdown.
+        token_limit: Límite máximo de tokens para este tipo.
+    """
+
+    filename: str
+    category: FileCategory
+    content: str = ""
+    token_limit: int = 0
+
+    @property
+    def char_count(self) -> int:
+        return len(self.content)
+
+    @property
+    def estimated_tokens(self) -> float:
+        return self.char_count / 3.5
+
+    @property
+    def within_limit(self) -> bool:
+        return self.estimated_tokens <= self.token_limit
+
+    @property
+    def utilization_pct(self) -> float:
+        if self.token_limit == 0:
+            return 0.0
+        return (self.estimated_tokens / self.token_limit) * 100
+
+# -- Regla de clasificación -----------------------------------------
+
+class ClassificationRule(BaseModel):
+    """Regla para clasificar exchanges por tema.
+
+    Attributes:
+        name: Nombre interno del tema.
+        display_name: Nombre legible.
+        keywords: Palabras clave para clasificación.
+        block_filename: Nombre del archivo de bloque.
+        description: Descripción para el índice.
+    """
+
+    name: str
+    display_name: str
+    keywords: list[str] = Field(default_factory=list)
+    block_filename: str = ""
+    description: str = ""
+
+# -- Resultados de verificación -------------------------------------
+
+class FileVerification(BaseModel):
+    """Resultado de verificación de un archivo.
+
+    Attributes:
+        filename: Nombre del archivo.
+        estimated_tokens: Tokens estimados.
+        token_limit: Límite permitido.
+        verdict: Veredicto (ok/warning/error).
+        message: Mensaje descriptivo.
+    """
+
+    filename: str
+    estimated_tokens: float
+    token_limit: int
+    verdict: Verdict = Verdict.OK
+    message: str = ""
+
+class VerificationReport(BaseModel):
+    """Reporte completo de verificación.
+
+    Attributes:
+        files: Verificaciones individuales.
+        total_main_load: Suma de tokens de los 3 archivos principales.
+        main_load_ok: Si la carga principal está dentro del límite.
+        overall_verdict: Veredicto global.
+    """
+
+    files: list[FileVerification] = Field(default_factory=list)
+    total_main_load: float = 0.0
+    main_load_limit: int = 40_000
+    main_load_ok: bool = True
+    overall_verdict: Verdict = Verdict.OK
+
+    @property
+    def has_errors(self) -> bool:
+        return any(f.verdict == Verdict.ERROR for f in self.files)
+
+    @property
+    def has_warnings(self) -> bool:
+        return any(f.verdict == Verdict.WARNING for f in self.files)
+
+# -- Resultado del pipeline -----------------------------------------
+
+class PipelineResult(BaseModel):
+    """Resultado completo de la ejecución del pipeline.
+
+    Attributes:
+        success: Si el pipeline completó sin errores fatales.
+        phases_completed: Fases completadas exitosamente.
+        messages_extracted: Total de mensajes extraídos.
+        exchanges_built: Total de exchanges construidos.
+        blocks_generated: Total de bloques temáticos.
+        files_generated: Lista de archivos generados.
+        verification: Reporte de verificación.
+        output_dir: Directorio de salida.
+        error: Mensaje de error si hubo fallo.
+    """
+
+    success: bool = True
+    phases_completed: list[PipelinePhase] = Field(default_factory=list)
+    messages_extracted: int = 0
+    exchanges_built: int = 0
+    blocks_generated: int = 0
+    files_generated: list[str] = Field(default_factory=list)
+    verification: VerificationReport | None = None
+    output_dir: str = ""
+    error: str = ""
+
+# -- Modelos v3.2: Metadata, Decisiones, Detección -----------------
+
+class Decision(BaseModel):
+    """Una decisión operativa extraída de la conversación.
+
+    Attributes:
+        id: Identificador (D01, D02, ...).
+        timestamp: Cuándo se tomó.
+        title: Título breve.
+        decision: Qué se decidió.
+        reason: Por qué.
+        impact: Qué afecta.
+        tema: Tema al que pertenece.
+    """
+
+    id: str = ""
+    timestamp: float = 0.0
+    title: str = ""
+    decision: str = ""
+    reason: str = ""
+    impact: str = ""
+    tema: str = ""
+
+class ChatInfo(BaseModel):
+    """v4.4: Información de un chat procesado en el workspace.
+
+    Permite que el workspace tenga información de múltiples chats
+    coexistiendo (ampliación de contexto desde varios chats).
+
+    Attributes:
+        chat_id: UUID interno del chat.
+        share_id: UUID del share si se procesó por link /s/.
+        ultimo_timestamp: Último mensaje procesado de este chat.
+        total_exchanges: Total de intercambios procesados de este chat.
+    """
+
+    chat_id: str = ""
+    share_id: str = ""
+    ultimo_timestamp: float = 0.0
+    total_exchanges: int = 0
+
+
+class RecoveryMetadata(BaseModel):
+    """Metadata de recuperación (archivo _metadata.json).
+
+    v4.4: soporta múltiples chats coexistiendo en el workspace.
+    El campo ``chats_procesados`` es una lista de ``ChatInfo``,
+    cada uno con su ``chat_id``, ``ultimo_timestamp`` y ``share_id``.
+
+    Para compatibilidad con versiones anteriores (v4.3 y anteriores),
+    los campos ``chat_id``, ``share_id`` y ``ultimo_timestamp`` siguen
+    existiendo como campos del "chat activo" (el último procesado).
+    La migración del formato viejo al nuevo es automática al leer.
+
+    Attributes:
+        chat_id: UUID del chat activo (último procesado).
+        share_id: UUID del share del chat activo.
+        ultimo_timestamp: Último mensaje procesado del chat activo.
+        total_exchanges: Total de exchanges del chat activo.
+        tema_a_archivo: Mapeo tema -> lista de archivos que lo contienen
+            (v6.0: multi-bloque — un tema puede abarcar varios archivos).
+        subtemas_derivados: Registro de subtemas creados al subdividir.
+        ultima_activacion: ISO timestamp de la última activación.
+        chats_procesados: Lista de chats procesados (v4.4 multi-chat).
+        archivo_a_source: Mapeo archivo -> información de procedencia (v4.4).
+    """
+
+    chat_id: str = ""
+    share_id: str = ""
+    ultimo_timestamp: float = 0.0
+    total_exchanges: int = 0
+    tema_a_archivo: dict[str, list[str]] = Field(default_factory=dict)
+    subtemas_derivados: dict[str, list[str]] = Field(default_factory=dict)
+    ultima_activacion: str = ""
+    # v4.4: soporte multi-chat
+    chats_procesados: list[ChatInfo] = Field(default_factory=list)
+    archivo_a_source: dict[str, dict] = Field(default_factory=dict)
+
+    @field_validator("tema_a_archivo", mode="before")
+    @classmethod
+    def _migrate_tema_a_archivo(cls, v):
+        """Migra el formato viejo (dict[str, str]) al nuevo (dict[str, list[str]]).
+
+        v6.0: tema_a_archivo ahora es multi-bloque. Si al cargar de JSON
+        vienen valores str (formato v5.x), se convierten a lista de 1 elemento.
+        """
+        if not isinstance(v, dict):
+            return v
+        out: dict[str, list[str]] = {}
+        for k, val in v.items():
+            if isinstance(val, str):
+                out[k] = [val]
+            elif isinstance(val, list):
+                out[k] = list(val)
+            else:
+                out[k] = [str(val)]
+        return out
+
+    def archivo_para_tema(self, tema: str) -> list[str]:
+        """Devuelve la lista de archivos que contienen el tema (vacía si no existe).
+
+        v6.0: multi-bloque — un tema puede estar repartido en varios
+        archivos cuando supera el límite de tokens de un bloque.
+        """
+        return list(self.tema_a_archivo.get(tema, []))
+
+    def tiene_tema(self, tema: str) -> bool:
+        """Verifica si un tema ya está registrado."""
+        return tema in self.tema_a_archivo and len(self.tema_a_archivo[tema]) > 0
+
+    def registrar_tema(self, tema: str, archivo: str) -> None:
+        """Registra un tema en un archivo. Idempotente (v6.0).
+
+        Si el tema no existe, crea la lista con ese archivo.
+        Si existe y el archivo ya está en la lista, no hace nada.
+        Si existe y el archivo NO está, lo añade (multi-bloque).
+        Ya NO lanza ValueError: un tema puede abarcar varios bloques.
+        """
+        if tema not in self.tema_a_archivo:
+            self.tema_a_archivo[tema] = []
+        if archivo not in self.tema_a_archivo[tema]:
+            self.tema_a_archivo[tema].append(archivo)
+
+    def registrar_subtema(self, tema_padre: str, subtema: str, archivo: str) -> None:
+        """Registra un subtema derivado de una subdivisión."""
+        self.registrar_tema(subtema, archivo)
+        if tema_padre not in self.subtemas_derivados:
+            self.subtemas_derivados[tema_padre] = []
+        if subtema not in self.subtemas_derivados[tema_padre]:
+            self.subtemas_derivados[tema_padre].append(subtema)
+
+    # -- v4.4: Métodos multi-chat ----------------------------------
+
+    def registrar_chat(
+        self,
+        chat_id: str,
+        share_id: str = "",
+        ultimo_timestamp: float = 0.0,
+        total_exchanges: int = 0,
+    ) -> None:
+        """v4.4: Registra o actualiza un chat en ``chats_procesados``.
+
+        Si el chat ya existe en la lista, actualiza sus campos.
+        Si no existe, lo añade.
+
+        Args:
+            chat_id: UUID interno del chat.
+            share_id: UUID del share (si se procesó por link /s/).
+            ultimo_timestamp: Último mensaje procesado de este chat.
+            total_exchanges: Total de intercambios procesados de este chat.
+        """
+        for chat in self.chats_procesados:
+            if chat.chat_id == chat_id:
+                chat.share_id = share_id or chat.share_id
+                chat.ultimo_timestamp = max(chat.ultimo_timestamp, ultimo_timestamp)
+                chat.total_exchanges = max(chat.total_exchanges, total_exchanges)
+                return
+        self.chats_procesados.append(ChatInfo(
+            chat_id=chat_id,
+            share_id=share_id,
+            ultimo_timestamp=ultimo_timestamp,
+            total_exchanges=total_exchanges,
+        ))
+
+    def buscar_chat(self, chat_id: str) -> Optional[ChatInfo]:
+        """v4.4: Busca un chat en ``chats_procesados`` por su ``chat_id``.
+
+        Returns:
+            ``ChatInfo`` si lo encuentra, ``None`` si no.
+        """
+        for chat in self.chats_procesados:
+            if chat.chat_id == chat_id:
+                return chat
+        return None
+
+    def actualizar_timestamp_chat(self, chat_id: str, nuevo_ts: float) -> bool:
+        """v4.4: Actualiza el ``ultimo_timestamp`` de un chat específico.
+
+        Returns:
+            ``True`` si se actualizó, ``False`` si el chat no estaba.
+        """
+        chat = self.buscar_chat(chat_id)
+        if chat:
+            chat.ultimo_timestamp = max(chat.ultimo_timestamp, nuevo_ts)
+            return True
+        return False
+
+    def _migrar_formato_viejo(self) -> None:
+        """v4.4: Migra el formato viejo (sin ``chats_procesados``) al nuevo.
+
+        Si ``chats_procesados`` está vacío pero ``chat_id`` tiene valor,
+        crea una entrada en ``chats_procesados`` con los datos del chat activo.
+        """
+        if not self.chats_procesados and self.chat_id:
+            self.chats_procesados.append(ChatInfo(
+                chat_id=self.chat_id,
+                share_id=self.share_id,
+                ultimo_timestamp=self.ultimo_timestamp,
+                total_exchanges=self.total_exchanges,
+            ))
+
+class DetectionTrigger(str, Enum):
+    """Tipos de disparador de la recuperación de contexto."""
+
+    LEXICO = "lexico"
+    CONTADOR = "contador"
+    AUTO_PREGUNTAS = "auto_preguntas"
+    EXPLICITO = "explicito"
+
+class DetectionEvent(BaseModel):
+    """Evento de detección de pérdida de contexto.
+
+    Attributes:
+        trigger: Tipo de disparador que lo activó.
+        reason: Descripción legible del motivo.
+        timestamp: Cuándo se detectó.
+        tokens_estimados: Tokens consumidos al momento (si aplica).
+    """
+
+    trigger: DetectionTrigger
+    reason: str = ""
+    timestamp: float = 0.0
+    tokens_estimados: int = 0
+
+
+# ── Modelos v3.3: Scripts versionados ─────────────────────────
+
+
+class ScriptVersion(BaseModel):
+    """Una version de un script en un punto del chat.
+
+    Attributes:
+        version_id: Identificador unico (ej: "v1", "v2").
+        timestamp: Cuando aparecio en el chat.
+        exchange_id: ID del intercambio donde aparecio.
+        content: Contenido del script en esta version.
+        parent_version: Version padre en el grafo (None para v1).
+    """
+
+    version_id: str
+    timestamp: float = 0.0
+    exchange_id: int = 0
+    content: str = ""
+    parent_version: Optional[str] = None
+
+
+class Script(BaseModel):
+    """Un script o artefacto versionable identificado en el chat.
+
+    Attributes:
+        name: Nombre propio (ej: "server", "router").
+        full_path: Ruta completa (DNI/apellido si hay duplicados).
+        versions: Lista de ScriptVersion ordenadas cronologicamente.
+    """
+
+    name: str
+    full_path: str = ""
+    versions: list[ScriptVersion] = Field(default_factory=list)
+
+    @property
+    def version_count(self) -> int:
+        """Numero de versiones del script."""
+        return len(self.versions)
+
+    @property
+    def current_version(self) -> Optional[ScriptVersion]:
+        """Ultima version del script."""
+        return self.versions[-1] if self.versions else None
+
+
+# ── Modelos v3.5: Attachments y documentos indexados ─────────────
+
+
+class Attachment(BaseModel):
+    """Un archivo adjunto en un mensaje del chat de Z.ai (v3.5).
+
+    Representa archivos entregados por el Director mediante el botón "+"
+    del chat. La descarga se realiza mediante /api/v1/files/{id}/content.
+
+    Attributes:
+        file_id: UUID del archivo en Z.ai.
+        filename: Nombre original del archivo.
+        content_type: Tipo MIME (application/pdf, text/plain, etc.).
+        size: Tamaño en bytes.
+        url: Endpoint de descarga (/api/v1/files/{id}/content).
+        cdn_url: URL directa del CDN (opcional, suele expirar).
+        ref_msg_id: ID del mensaje del Director que adjuntó el archivo.
+        media: Tipo de media ("doc", "file", "image").
+        status: Estado ("uploaded", "indexed", "error").
+        created_at: Timestamp de subida.
+    """
+
+    file_id: str
+    filename: str
+    content_type: str = "application/octet-stream"
+    size: int = 0
+    url: str = ""
+    cdn_url: str = ""
+    ref_msg_id: str = ""
+    media: str = "file"
+    status: str = "uploaded"
+    created_at: float = 0.0
+
+    @property
+    def estimated_tokens(self) -> float:
+        """Estimación de tokens del contenido.
+
+        Para PDFs, la densidad de texto es menor (~10 bytes por token)
+        debido al overhead estructural. Para texto plano, 3.5 chars/token.
+        """
+        if self.content_type == "application/pdf":
+            return self.size / 10.0
+        if "zip" in self.content_type or "officedocument" in self.content_type:
+            # DOCX, XLSX, PPTX (archivos ZIP con XML)
+            return self.size / 8.0
+        if "image" in self.content_type:
+            return 1000  # estimación para imágenes (OCR)
+        return self.size / 3.5  # texto plano
+
+    @property
+    def is_pdf(self) -> bool:
+        return self.content_type == "application/pdf"
+
+    @property
+    def is_text(self) -> bool:
+        return self.content_type in (
+            "text/plain", "text/markdown", "application/octet-stream",
+        )
+
+    @property
+    def is_docx(self) -> bool:
+        return "officedocument" in self.content_type or "wordprocessingml" in self.content_type
+
+    @property
+    def is_image(self) -> bool:
+        return "image" in self.content_type
+
+    @property
+    def is_trivially_small(self) -> bool:
+        """True si el contenido es trivialmente pequeño (<1000 tokens)."""
+        return self.estimated_tokens < 1000
+
+
+# ── Modelos v3.6: Particionado y conciliación de documentos grandes ─────────
+
+
+class Porcion(BaseModel):
+    """Una porción de un documento grande para procesar por un subagente N2 (v3.6).
+
+    Attributes:
+        id: Índice de la porción (1-based).
+        contenido_path: Ruta del archivo temporal con la porción.
+        tokens_estimados: Tokens estimados de la porción.
+        pagina_inicio: Página de inicio (solo para PDFs, 1-based).
+        pagina_fin: Página de fin (solo para PDFs).
+    """
+
+    id: int
+    contenido_path: str = ""
+    tokens_estimados: int = 0
+    pagina_inicio: int = 0
+    pagina_fin: int = 0
+
+    @property
+    def paginas_str(self) -> str:
+        """String descriptivo del rango de páginas."""
+        if self.pagina_inicio and self.pagina_fin:
+            return f"páginas {self.pagina_inicio}-{self.pagina_fin}"
+        return "sin páginas"
+
+
+class IndiceParcial(BaseModel):
+    """Índice parcial devuelto por un subagente N2 (v3.6).
+
+    Attributes:
+        porcion_id: ID de la porción que se procesó.
+        temas: Lista de temas detectados en la porción.
+        resumen_parcial: Resumen breve de la porción.
+    """
+
+    porcion_id: int
+    temas: list = Field(default_factory=list)  # list[ThemeSection] pero se evita import circular
+    resumen_parcial: str = ""
+
+
+class IndiceConsolidado(BaseModel):
+    """Índice consolidado tras conciliar todos los índices parciales (v3.6).
+
+    Attributes:
+        temas_consolidados: Lista de temas consolidados (sin duplicados).
+        resumen_final: Resumen final del documento completo.
+        indices_parciales: Lista de índices parciales que se consolidaron.
+    """
+
+    temas_consolidados: list = Field(default_factory=list)
+    resumen_final: str = ""
+    indices_parciales: list[IndiceParcial] = Field(default_factory=list)
+
+
+# -- Modelos v4.1 H9: Subagentes diferidos (two-phase pipeline) ----------
+
+
+class SubagentTask(BaseModel):
+    """Tarea de subagente diferida (H9).
+
+    Representa una llamada a un subagente que NO se ejecuta durante
+    ``pipeline.run()`` (porque causaría deadlock síncrono), sino que
+    se difiere para que el agente principal la ejecute con el Task tool
+    tras recibir el resultado del pipeline.
+
+    Attributes:
+        task_id: Identificador único (ej: "estado_d4", "decisiones_lote_0").
+        purpose: Propósito legible ("estado.d4", "estado.a1_resumen",
+            "decisiones", "subdivider.nombre").
+        prompt: Prompt completo para enviar al subagente.
+        context: Metadatos para aplicar la respuesta (ej: section, tema_actual).
+    """
+
+    task_id: str
+    purpose: str = ""
+    prompt: str = ""
+    context: dict = Field(default_factory=dict)
+
+
+class SubagentResponse(BaseModel):
+    """Respuesta de un subagente (H9).
+
+    Representa el resultado de ejecutar una ``SubagentTask`` vía el
+    Task tool del agente principal.
+
+    Attributes:
+        task_id: Identificador de la tarea que responde.
+        success: Si el subagente devolvió una respuesta válida.
+        response: Texto crudo devuelto por el subagente.
+        error: Mensaje de error si falló.
+    """
+
+    task_id: str
+    success: bool = True
+    response: str = ""
+    error: str = ""
+
+
+if __name__ == "__main__":
+    # Compatibilidad Windows: reconfigurar stdout/stderr a UTF-8
+    import io as _io, sys as _sys
+    try:
+        if hasattr(_sys.stdout, 'buffer') and 'utf' not in (getattr(_sys.stdout, 'encoding', '') or '').lower():
+            _sys.stdout = _io.TextIOWrapper(_sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(_sys.stderr, 'buffer') and 'utf' not in (getattr(_sys.stderr, 'encoding', '') or '').lower():
+            _sys.stderr = _io.TextIOWrapper(_sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except (AttributeError, _io.UnsupportedOperation):
+        pass
+    # -- Validacion interna de models.py (atomico standalone) ---------
+    print("=== Validacion de models.py ===\n")
+
+    # Test 1: Message básico
+    m = Message(seq=1, role=MessageRole.USER, timestamp=1788482829, content="hola")
+    assert m.is_user and not m.is_assistant
+    assert m.estimated_tokens > 0
+    print(f"[OK] Message: role={m.role.value}, datetime={m.datetime_str}")
+
+    # Test 2: Exchange
+    ex = Exchange(
+        id=1,
+        director_msg=m,
+        agent_msgs=[Message(seq=2, role=MessageRole.ASSISTANT, timestamp=1788482830, content="respuesta")],
+        topic="general",
+        start_timestamp=1788482829,
+        end_timestamp=1788482830,
+    )
+    assert ex.director_count == 1
+    assert ex.agent_count == 1
+    assert ex.estimated_tokens > 0
+    print(f"[OK] Exchange: id={ex.id}, tema={ex.topic}, tokens={ex.estimated_tokens:.0f}")
+
+    # Test 3: ThematicBlock v3.2 (varios temas por archivo)
+    bloque = ThematicBlock(filename="bloque_01.md")
+    ex2 = Exchange(id=2, director_msg=m, topic="validaciones", start_timestamp=1788482830, end_timestamp=1788482831)
+    bloque.add_exchange(ex)
+    bloque.add_exchange(ex2)
+    assert set(bloque.temas) == {"general", "validaciones"}
+    assert not bloque.would_exceed_limit(ex, max_tokens=100_000)
+    print(f"[OK] ThematicBlock v3.2: {bloque.exchange_count} exchanges, {len(bloque.temas)} temas en 1 archivo")
+
+    # Test 4: RecoveryMetadata multi-bloque (v6.0)
+    meta = RecoveryMetadata(chat_id="abc", share_id="def")
+    meta.registrar_tema("validaciones", "bloque_01.md")
+    meta.registrar_tema("configuracion", "bloque_01.md")  # mismo archivo, OK
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md"]
+    assert meta.tiene_tema("validaciones")
+    # v6.0: un tema puede abarcar varios bloques (idempotente, no lanza)
+    meta.registrar_tema("validaciones", "bloque_02.md")  # añade a la lista
+    meta.registrar_tema("validaciones", "bloque_02.md")  # idempotente, no añade
+    assert meta.archivo_para_tema("validaciones") == ["bloque_01.md", "bloque_02.md"]
+    print(f"[OK] Multi-bloque: 'validaciones' registrado en 2 bloques sin error")
+    meta.registrar_subtema("validaciones", "validaciones_server", "bloque_02.md")
+    assert "validaciones_server" in meta.subtemas_derivados["validaciones"]
+    print(f"[OK] Subtema derivado: 'validaciones_server' registrado en bloque_02.md")
+
+    # Test 5: Decision
+    d = Decision(id="D01", timestamp=1788482829, title="Test", decision="X", reason="Y", impact="Z")
+    assert d.id == "D01"
+    print(f"[OK] Decision: {d.id} - {d.title}")
+
+    # Test 6: DetectionEvent
+    de = DetectionEvent(trigger=DetectionTrigger.LEXICO, reason="ya te dije")
+    assert de.trigger == DetectionTrigger.LEXICO
+    print(f"[OK] DetectionEvent: trigger={de.trigger.value}")
+
+    # Test 7: límites actualizados
+    assert VerificationReport().main_load_limit == 40_000
+    print(f"[OK] VerificationReport: main_load_limit=40K (v3.2)")
+
+    # Test 8 (v3.5): Attachment con propiedades
+    att = Attachment(
+        file_id="abc-123",
+        filename="doc.pdf",
+        content_type="application/pdf",
+        size=1652025,
+        url="/api/v1/files/abc-123/content",
+        media="doc",
+    )
+    assert att.is_pdf
+    assert not att.is_text
+    assert att.estimated_tokens > 5000
+    assert not att.is_trivially_small
+    print(f"[OK] Attachment PDF: {att.estimated_tokens:.0f} tokens, delega=True")
+
+    att2 = Attachment(
+        file_id="xyz-789",
+        filename="notas.txt",
+        content_type="text/plain",
+        size=500,
+    )
+    assert att2.is_text
+    assert att2.is_trivially_small
+    print(f"[OK] Attachment TXT: {att2.estimated_tokens:.0f} tokens, trivial=True")
+
+    # Test 9 (v3.6): Porcion e IndiceParcial
+    p = Porcion(id=1, contenido_path="/tmp/p1.pdf", tokens_estimados=25000, pagina_inicio=1, pagina_fin=50)
+    assert p.id == 1
+    assert p.tokens_estimados == 25000
+    assert p.paginas_str == "páginas 1-50"
+    print(f"[OK] Porcion: {p.paginas_str}, {p.tokens_estimados} tokens")
+
+    ip = IndiceParcial(porcion_id=1, resumen_parcial="Resumen de la porción 1")
+    assert ip.porcion_id == 1
+    print(f"[OK] IndiceParcial: porcion_id={ip.porcion_id}")
+
+    ic = IndiceConsolidado(
+        resumen_final="Resumen final consolidado",
+        indices_parciales=[ip],
+    )
+    assert len(ic.indices_parciales) == 1
+    print(f"[OK] IndiceConsolidado: {len(ic.indices_parciales)} índices parciales")
+
+    # Test 10 (v4.1 H9): SubagentTask y SubagentResponse
+    task = SubagentTask(
+        task_id="estado_d4",
+        purpose="estado.d4",
+        prompt="Eres un subagente...",
+        context={"section": "D4", "tema_actual": "jwt"},
+    )
+    assert task.task_id == "estado_d4"
+    assert task.context["section"] == "D4"
+    assert task.context["tema_actual"] == "jwt"
+    print(f"[OK] SubagentTask: task_id={task.task_id}, purpose={task.purpose}")
+
+    resp = SubagentResponse(
+        task_id="estado_d4",
+        success=True,
+        response="RESTRICCION: No usar colores indigo\nALCANCE: general",
+    )
+    assert resp.success
+    assert "indigo" in resp.response
+    print(f"[OK] SubagentResponse: success={resp.success}, response len={len(resp.response)}")
+
+    # Test 11 (v4.1 H9): SubagentTask con defaults (context vacío, purpose vacío)
+    task2 = SubagentTask(task_id="decisiones_lote_0", prompt="prompt")
+    assert task2.context == {}
+    assert task2.purpose == ""
+    print(f"[OK] SubagentTask defaults: context={task2.context}, purpose='{task2.purpose}'")
+
+    # Test 12 (v4.1 H9): SubagentResponse con error
+    resp_err = SubagentResponse(
+        task_id="estado_d4",
+        success=False,
+        error="Subagente falló: timeout",
+    )
+    assert not resp_err.success
+    assert resp_err.response == ""
+    assert "timeout" in resp_err.error
+    print(f"[OK] SubagentResponse error: success={resp_err.success}, error='{resp_err.error}'")
+
+    # v6.2: Test ThematicBlock.tiene_resumen()
+    import tempfile as _tempfile, os as _os
+    with _tempfile.TemporaryDirectory() as _tmp:
+        # Bloque con RESUMEN
+        _b1 = ThematicBlock(filename="bloque_con_resumen.md")
+        _p1 = Path(_tmp) / _b1.filename
+        _p1.write_text("RESUMEN: Tema central del bloque.\n\n---\n\nContenido...", encoding="utf-8")
+        assert _b1.tiene_resumen(workspace_dir=_tmp) is True
+        print(f"[OK] v6.2 ThematicBlock.tiene_resumen() con RESUMEN: True")
+
+        # Bloque sin RESUMEN
+        _b2 = ThematicBlock(filename="bloque_sin_resumen.md")
+        _p2 = Path(_tmp) / _b2.filename
+        _p2.write_text("# Bloque temático: general\n\nContenido sin resumen...", encoding="utf-8")
+        assert _b2.tiene_resumen(workspace_dir=_tmp) is False
+        print(f"[OK] v6.2 ThematicBlock.tiene_resumen() sin RESUMEN: False")
+
+        # Bloque que no existe
+        _b3 = ThematicBlock(filename="no_existe.md")
+        assert _b3.tiene_resumen(workspace_dir=_tmp) is False
+        print(f"[OK] v6.2 ThematicBlock.tiene_resumen() archivo no existe: False")
+
+    print("\n[PASS] models.py: todos los tests pasaron")

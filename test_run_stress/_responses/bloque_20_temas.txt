@@ -1,0 +1,5 @@
+pipeline
+worker_bun
+proxy_zai
+arquitectura
+implementacion_tecnica

@@ -1,0 +1,5 @@
+bloques_temáticos
+clasificación_intercambios
+generación_resúmenes
+worker_bun
+funcionamiento_sistema
