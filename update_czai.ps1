@@ -84,7 +84,7 @@ $ArchivosRequeridos = @(
     "Documentos/spec_recuperacion_contexto_v6.19.md",
     "Documentos/plan_refactorizacion_v6.19.md",
     "MANIFIESTO_ENTREGA.txt",
-    "update_czai_v6.19.ps1",
+    "update_czai.ps1",
     "VEREDICTO_DETERMINISTA_contexto_zai_v6.19.json",
     "VEREDICTO_GAUNTLET_NH27_contexto_zai_v6.19.json"
 )

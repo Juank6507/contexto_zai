@@ -20,3 +20,6 @@ El filtro de comentarios HTML `<!-- ... -->` en markdown debe usar `re.sub(r"<!-
 ### AP19 — Parser que extrae rutas sin distinguir texto natural de bloques de código
 `EstadoGenerator._extraer_entregables()` aplicaba regex de detección de rutas sobre el contenido completo del mensaje del agente, sin distinguir si la ruta estaba en texto natural o dentro de un bloque ` ```bash ... ``` `. Esto generaba falsos entregables. **Fix:** encadenar `_strip_tool_calls` + `_strip_bash_blocks` antes del regex de detección. **Criterio:** cualquier parser que extraiga patrones del contenido del agente debe primero limpiar tool_calls y bloques de código.
 
+### AP19-bis — Estructura del .zip con carpeta envolvente
+El .zip de entrega debe contener los archivos DIRECTAMENTE en la raíz, no envueltos en una carpeta `contexto_zai/`. Cuando el Director descomprime el .zip en `C:\Python\Proyectos\contexto_zai` (que ya es el repo local), la estructura con carpeta envolvente crea doble nesting (`contexto_zai/contexto_zai/...`) y rompe todos los imports relativos. **Criterio:** el .zip debe tener los archivos en raíz, sin carpeta envolvente que duplique el nombre del repo local.
+
