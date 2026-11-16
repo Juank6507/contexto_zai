@@ -1,2 +1,0 @@
-DECISION: mantener arquitectura actual | ALCANCE: pipeline de procesamiento
-DECISION: optimizar integracion proxy | ALCANCE: rendimiento del sistema

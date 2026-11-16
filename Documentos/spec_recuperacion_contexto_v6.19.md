@@ -74,3 +74,23 @@ Implementado en elemento I (Implementación) el 15 nov 2026. Gauntlet determinis
 ---
 
 **Fin de la spec v6.19.**
+
+### 6. Autonomía del agente CZAI frente al daemon (F6 — primer problema original)
+
+**Problema original ( Exchange del 13 nov 17:14):** cuando el proceso publicó 15 pending_tasks de Nivel 3 (subagentes que solo el agente CZAI puede ejecutar vía Task tool), el agente no las ejecutó automáticamente. Esperó permiso del Director cuando el proceso ya se lo había pedido.
+
+**Decisión conciliada (v6.19 F6, añadida como parche):**
+1. El daemon publica `status=waiting_for_agent` en `_daemon_status.json` cuando hay pending_tasks de Nivel 3.
+2. El agente CZAI monitoriza `_daemon_status.json`. Si ve `waiting_for_agent`, ejecuta las pending_tasks **automáticamente, sin pedir permiso al Director**.
+3. Tras ejecutar las pending_tasks, el agente llama `POST /collect-responses` al daemon (puerto 8088).
+4. El daemon integra respuestas (`collect_responses`), verifica bloques incompletos, y si todos completos → P16+P18+P19 + `status=done`.
+5. Si aún hay incompletos → publica nuevas pending_tasks y vuelve a `waiting_for_agent`.
+
+**Bug fix incluido:** `_daemon_status.json` ahora cambia `status=running` → `status=done` automáticamente cuando `pendientes == 0` y `completados == total`.
+
+**Implementación:**
+- `pipeline.py`: `ampliar_contexto` retorna temprano con `needs_agent_action=True` cuando hay pending_tasks de Nivel 3. Nuevo método `_collect_responses_and_finalize()`. Fix en `_actualizar_estado_daemon`.
+- `pipeline-daemon/index.py`: nuevo endpoint `POST /collect-responses`.
+- `estado_generator.py`: nueva sección A5 «Autonomía del agente CZAI frente al daemon» en `00_estado_actual.md`.
+
+**Criterio de aceptación 6:** cuando el daemon publica pending_tasks de Nivel 3, `_daemon_status.json` dice `waiting_for_agent` (no `running` ni `done`). El agente CZAI puede leer ese estado y ejecutar las pending_tasks automáticamente.

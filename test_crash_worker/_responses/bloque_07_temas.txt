@@ -1,5 +1,0 @@
-recuperacion_contexto
-clasificacion_bloques
-funcionamiento_sistema
-estructura_bloque
-intercambios

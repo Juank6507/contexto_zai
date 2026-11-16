@@ -1,5 +1,0 @@
-bloque_tem_6
-proyecto_contexto_zai
-recuperacion_contexto
-worker_bun
-proxy

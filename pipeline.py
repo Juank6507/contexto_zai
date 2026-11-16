@@ -938,6 +938,72 @@ class ContextoPipeline:
                             "v6.18 Fix: _enriquecer_bloques_con_fallback falló: %s", e
                         )
 
+                # v6.19 F6 (autonomía del agente CZAI): si la cascada publicó
+                # pending_tasks de Nivel 3 (subagentes que solo el agente CZAI
+                # puede ejecutar vía Task tool), NO ejecutar P16-P19 todavía.
+                # Publicar _daemon_status.json con status=waiting_for_agent y
+                # _pending_tasks.json con las tareas. Retornar temprano con
+                # needs_agent_action=True. El agente CZAI debe ejecutar las
+                # pending_tasks automáticamente (sin pedir permiso al Director)
+                # y luego llamar POST /collect-responses al daemon para que
+                # ejecute collect_responses() + P16-P19.
+                if cascada_pending_tasks:
+                    import json as _json_f6
+                    # Escribir _pending_tasks.json
+                    pending_path = workspace / "_pending_tasks.json"
+                    try:
+                        pending_data = {"tasks": cascada_pending_tasks}
+                        if hasattr(cascada_pending_tasks[0], 'model_dump'):
+                            pending_data = {
+                                "tasks": [
+                                    t.model_dump() if hasattr(t, 'model_dump') else t
+                                    for t in cascada_pending_tasks
+                                ]
+                            }
+                        pending_path.write_text(
+                            _json_f6.dumps(pending_data, indent=2, ensure_ascii=False, default=str),
+                            encoding="utf-8",
+                        )
+                    except Exception as e:
+                        logger.warning("v6.19 F6: escribir _pending_tasks.json falló: %s", e)
+
+                    # Escribir _daemon_status.json con waiting_for_agent
+                    EnriquecimientoOrquestador._actualizar_estado_daemon(
+                        workspace_dir=workspace,
+                        status="waiting_for_agent",
+                        tarea_actual="Nivel 3 — agente CZAI debe ejecutar pending_tasks",
+                    )
+
+                    logger.info(
+                        "v6.19 F6: %d pending_tasks de Nivel 3 publicadas. "
+                        "Daemon en waiting_for_agent. El agente CZAI debe "
+                        "ejecutarlas automáticamente y llamar /collect-responses.",
+                        len(cascada_pending_tasks),
+                    )
+
+                    return {
+                        "needs_agent_read": False,
+                        "indexed": True,
+                        "filename": filename,
+                        "path": str(indexed_path),
+                        "needs_agent_action": True,
+                        "pending_tasks_count": len(cascada_pending_tasks),
+                        "instruction": (
+                            "El daemon publicó pending_tasks de Nivel 3 que solo "
+                            "el agente CZAI puede ejecutar (vía Task tool). "
+                            "Ejecutarlas automáticamente SIN pedir permiso al "
+                            "Director y luego llamar POST /collect-responses al "
+                            "daemon (puerto 8088) para integrar respuestas y "
+                            "continuar con P16-P19."
+                        ),
+                        "tokens_estimados": int(estimated_tokens),
+                        "flujo": "recovery_cycle_cronologico",
+                        "num_lotes": cycle_result.blocks_count,
+                        "estructura": estructura,
+                        "origen": origen,
+                        "bloques_nuevos": cycle_result.blocks_count,
+                    }
+
                 # (4) P16 — auditoría final post-enriquecimiento (criterio 4:
                 # P16 SIEMPRE se ejecuta tras procesar).
                 try:
@@ -2256,7 +2322,13 @@ class EnriquecimientoOrquestador:
         status: str = "running",
         tarea_actual: str = "",
     ) -> None:
-        """v6.17 F5 (criterio 4): escribe ``_daemon_status.json`` en el workspace.
+        """v6.17 F5 → v6.19 F6: escribe ``_daemon_status.json`` en el workspace.
+
+        v6.19 F6 (autonomía): añade estado ``waiting_for_agent`` para cuando
+        el daemon publica pending_tasks de Nivel 3. También corrige el bug
+        donde ``status=running`` se mantenía aunque todos los bloques estuvieran
+        completos: si ``pendientes == 0`` y ``completados == total``, el
+        status se cambia automáticamente a ``done``.
 
         Cuenta bloques completos/pendientes con
         ``_descubrir_bloques_incompletos()`` (F1) y escribe el estado del
@@ -2265,7 +2337,7 @@ class EnriquecimientoOrquestador:
         .. code-block:: json
 
             {
-              "status": "running|idle|done",
+              "status": "running|idle|done|waiting_for_agent",
               "total_bloques": 50,
               "completados": 23,
               "pendientes": 27,
@@ -2296,6 +2368,15 @@ class EnriquecimientoOrquestador:
         except Exception as e:
             logger.warning("v6.17 F5: contar bloques falló: %s", e)
             total = completados = pendientes = 0
+        # v6.19 F6 (bug fix): si status=running pero todos los bloques están
+        # completos (pendientes=0, completados=total), cambiar a done.
+        # Evita el bug donde _daemon_status.json decía "running" cuando el
+        # proceso ya había terminado.
+        if status == "running" and total > 0 and pendientes == 0:
+            status = "done"
+            logger.info(
+                "v6.19 F6 (bug fix): status running→done (todos los bloques completos)"
+            )
         status_path = ws / "_daemon_status.json"
         payload = {
             "status": status,
@@ -2312,6 +2393,160 @@ class EnriquecimientoOrquestador:
             )
         except Exception as e:
             logger.warning("v6.17 F5: escribir _daemon_status.json falló: %s", e)
+
+    @staticmethod
+    def _collect_responses_and_finalize(
+        workspace_dir: Path | str,
+    ) -> dict:
+        """v6.19 F6 (autonomía del agente CZAI): integra respuestas de subagentes
+        y finaliza el pipeline (P16-P19).
+
+        Este método lo invoca el endpoint ``POST /collect-responses`` del daemon
+        después de que el agente CZAI haya ejecutado las pending_tasks de Nivel 3
+        (vía Task tool) y escrito las respuestas en ``_responses/``.
+
+        Flujo:
+        1. ``collect_responses()`` — integra las respuestas de los subagentes
+           en los bloques físicos (escribe RESUMEN + nombre + decisiones + temas).
+        2. Re-verificar bloques incompletos.
+        3. Si aún hay incompletos → publicar nuevas pending_tasks y retornar
+           ``needs_agent_action=True`` (el agente debe ejecutar más subagentes).
+        4. Si todos completos → P16 (auditoría) + P18 (consolidar decisiones)
+           + P19 (regenerar índice) + status=done.
+
+        Args:
+            workspace_dir: Directorio del workspace.
+
+        Returns:
+            Dict con ``success``, ``needs_agent_action``, ``pending_tasks_count``,
+            ``completados``, ``pendientes``, ``error``.
+        """
+        ws = Path(workspace_dir)
+        if not ws.exists():
+            return {"error": f"workspace no existe: {workspace_dir}"}
+
+        # (1) collect_responses: integra respuestas de _responses/ en bloques.
+        try:
+            ContextoPipeline.collect_responses(
+                workspace_dir=ws,
+                is_chat_chronological=False,
+            )
+            logger.info("v6.19 F6: collect_responses() completado tras /collect-responses")
+        except Exception as e:
+            logger.warning("v6.19 F6: collect_responses falló: %s", e)
+
+        # (2) Re-verificar bloques incompletos.
+        try:
+            incompletos = EnriquecimientoOrquestador._descubrir_bloques_incompletos(ws)
+        except Exception as e:
+            logger.warning("v6.19 F6: _descubrir_bloques_incompletos falló: %s", e)
+            incompletos = []
+
+        total = len(list(ws.glob("bloque_*.md")))
+        pendientes = len(incompletos)
+        completados = max(0, total - pendientes)
+
+        # (3) Si aún hay incompletos, publicar nuevas pending_tasks y retornar.
+        if incompletos:
+            # Re-disparar cascada para los que siguen incompletos.
+            bloques_para_cascada = [inc["bloque"] for inc in incompletos]
+            nuevas_pending = []
+            try:
+                nuevas_pending = EnriquecimientoOrquestador._enriquecer_bloques_con_fallback(
+                    blocks=bloques_para_cascada,
+                    workspace_dir=ws,
+                )
+            except Exception as e:
+                logger.warning("v6.19 F6: re-cascada falló: %s", e)
+
+            if nuevas_pending:
+                # Aún hay pending_tasks de Nivel 3 → seguir esperando al agente.
+                import json as _json_f6b
+                pending_path = ws / "_pending_tasks.json"
+                try:
+                    pending_data = {
+                        "tasks": [
+                            t.model_dump() if hasattr(t, 'model_dump') else t
+                            for t in nuevas_pending
+                        ]
+                    }
+                    pending_path.write_text(
+                        _json_f6b.dumps(pending_data, indent=2, ensure_ascii=False, default=str),
+                        encoding="utf-8",
+                    )
+                except Exception as e:
+                    logger.warning("v6.19 F6: escribir _pending_tasks.json falló: %s", e)
+
+                EnriquecimientoOrquestador._actualizar_estado_daemon(
+                    workspace_dir=ws,
+                    status="waiting_for_agent",
+                    tarea_actual="Nivel 3 — agente CZAI debe ejecutar pending_tasks (iteración 2)",
+                )
+                return {
+                    "success": True,
+                    "needs_agent_action": True,
+                    "pending_tasks_count": len(nuevas_pending),
+                    "completados": completados,
+                    "pendientes": pendientes,
+                    "instruction": (
+                        "Aún hay bloques incompletos tras collect_responses. "
+                        "Ejecutar las nuevas pending_tasks automáticamente y "
+                        "llamar /collect-responses nuevamente."
+                    ),
+                }
+
+        # (4) Todos completos → P16 + P18 + P19 + status=done.
+        try:
+            audit_final = AuditorWorkspace.auditar_completitud(ws)
+            logger.info(
+                "v6.19 F6 P16: Auditoría final: %d completos, %d incompletos",
+                len(audit_final["completos"]),
+                len(audit_final["incompletos"]),
+            )
+        except Exception as e:
+            logger.warning("v6.19 F6 P16: auditar_completitud falló: %s", e)
+
+        try:
+            EnriquecimientoOrquestador._consolidar_decisiones_llm(workspace_dir=ws)
+            logger.info("v6.19 F6 P18: decisiones consolidadas")
+        except Exception as e:
+            logger.warning("v6.19 F6 P18: _consolidar_decisiones_llm falló: %s", e)
+
+        try:
+            EnriquecimientoOrquestador._regenerar_indice_tras_enriquecimiento(workspace_dir=ws)
+            logger.info("v6.19 F6 P19: índice regenerado")
+        except Exception as e:
+            logger.warning("v6.19 F6 P19: _regenerar_indice falló: %s", e)
+
+        # Status final: done.
+        EnriquecimientoOrquestador._actualizar_estado_daemon(
+            workspace_dir=ws,
+            status="done",
+            tarea_actual="",
+        )
+
+        # Limpiar _pending_tasks.json (ya no hay pendientes).
+        pending_path = ws / "_pending_tasks.json"
+        try:
+            pending_path.write_text(
+                '{"tasks": []}', encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+        logger.info(
+            "v6.19 F6: pipeline finalizado. %d/%d bloques completos. status=done.",
+            completados, total,
+        )
+
+        return {
+            "success": True,
+            "needs_agent_action": False,
+            "pending_tasks_count": 0,
+            "completados": completados,
+            "pendientes": 0,
+            "status": "done",
+        }
 
     @staticmethod
     def _enriquecer_bloques_con_fallback(

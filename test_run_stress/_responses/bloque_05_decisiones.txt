@@ -1,2 +1,0 @@
-DECISION: Cada bloque contiene intercambios temáticos empaquetados | ALCANCE: Estructura de los bloques del proceso
-DECISION: Worker Bun debe generar resúmenes rigurosos | ALCANCE: Procesamiento de bloques temáticos

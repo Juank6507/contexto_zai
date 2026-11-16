@@ -1,5 +1,0 @@
-recuperacion_contexto
-proxy_zai
-arquitectura_pipeline
-worker_bun
-validacion_conceptual

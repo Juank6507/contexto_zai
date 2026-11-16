@@ -100,6 +100,7 @@ $SentenciasPrueba = @(
     "cd /d $RutaLocalProyecto && python -c `"import inspect; from generation.estado_generator import EstadoGenerator as E; sig = inspect.signature(E._extraer_objetivo_de_worklog); assert 'project_root' in sig.parameters; assert E._extraer_objetivo_de_worklog.__name__ == '_extraer_objetivo_de_worklog'; print('OK _extraer_objetivo_de_worklog firma')`"",
     "cd /d $RutaLocalProyecto && python -c `"from generation.recovery_generator import RecoveryGenerator as R; assert 'chat_id' in R.__init__.__code__.co_varnames; print('OK RecoveryGenerator chat_id param')`"",
     "cd /d $RutaLocalProyecto && python -c `"from process.recovery_cycle import RecoveryCycle as C; import inspect; assert 'chat_id' in inspect.signature(C.__init__).parameters; print('OK RecoveryCycle chat_id param')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from pipeline import EnriquecimientoOrquestador as E; assert hasattr(E, '_collect_responses_and_finalize'); print('OK F6 _collect_responses_and_finalize')`"",
     "cd /d $RutaLocalProyecto && python config.py",
     "cd /d $RutaLocalProyecto && python pipeline.py"
 )

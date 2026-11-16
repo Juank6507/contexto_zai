@@ -1,2 +1,0 @@
-DECISION: arquitectura del pipeline | ALCANCE: tras caída de Worker Bun
-DECISION: funcionamiento del proxy | ALCANCE: sistema de recuperación

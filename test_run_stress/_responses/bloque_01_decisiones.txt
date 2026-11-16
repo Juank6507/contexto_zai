@@ -1,2 +1,0 @@
-DECISION: Cada bloque contiene intercambios temáticos empaquetados | ALCANCE: Estructura de intercambios clasificados
-DECISION: Worker Bun genera resúmenes rigurosos | ALCANCE: Responsabilidad en generación de resúmenes

@@ -1,5 +1,0 @@
-recuperacion_contexto
-clasificacion_tematica
-empaquetamiento_datos
-arquitectura_sistema
-flujo_procesamiento

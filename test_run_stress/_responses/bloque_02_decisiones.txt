@@ -1,2 +1,0 @@
-DECISION: mantener estructura actual con intercambios temáticos empaquetados | ALCANCE: diseño del pipeline
-DECISION: generar resúmenes rigurosos mediante Worker Bun | ALCANCE: integración con el sistema

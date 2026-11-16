@@ -1,7 +1,0 @@
-```json
-{
-  "nombre": "prueba_recuperacion_worker",
-  "decisiones": [],
-  "temas": ["recuperacion", "worker_bun", "proxy_zai"]
-}
-```

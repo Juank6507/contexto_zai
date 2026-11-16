@@ -1,2 +1,0 @@
-DECISION: mantener estructura actual con intercambios temáticos | ALCANCE: funcionamiento del sistema
-DECISION: generar resúmenes rigurosos | ALCANCE: Worker Bun

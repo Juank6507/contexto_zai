@@ -1,5 +1,0 @@
-arquitectura_pipeline
-worker_bun
-proxy_zai
-eficiencia_procesamiento
-compatibilidad_sistema

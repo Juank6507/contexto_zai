@@ -126,3 +126,15 @@ Modo de ejecución v1.6 (D6): UN solo Actuador + el agente como Crítico.
 ---
 
 **Fin del plan v6.19.**
+
+### F6 — Autonomía del agente CZAI frente al daemon (parche post-entrega)
+
+- **Archivos:** `contexto_zai/pipeline.py`, `mini-services/pipeline-daemon/index.py`, `contexto_zai/generation/estado_generator.py`
+- **Cambio:**
+  - `ampliar_contexto()` retorna `needs_agent_action=True` cuando hay pending_tasks de Nivel 3. No ejecuta P16-P19 hasta que el agente ejecute las pending_tasks y llame `/collect-responses`.
+  - Nuevo método `_collect_responses_and_finalize()`: integra respuestas, verifica bloques, ejecuta P16-P19 si todos completos.
+  - Nuevo endpoint `POST /collect-responses` en el daemon.
+  - `_daemon_status.json` añade estado `waiting_for_agent`. Fix bug: `running`→`done` cuando todos completos.
+  - `EstadoGenerator` añade sección A5 con instrucción de autonomía.
+- **Estado:** ✅ Implementado
+- **Criterio de aceptación:** 6.

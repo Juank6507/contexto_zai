@@ -897,6 +897,24 @@ class EstadoGenerator:
 ## Sección A4 -- Siguiente paso lógico
 
 {a4}
+
+## Sección A5 -- Autonomía del agente CZAI frente al daemon (v6.19 F6)
+
+**Regla de autonomía:** si ``_daemon_status.json`` dice ``status=waiting_for_agent``,
+el agente CZAI debe ejecutar las ``pending_tasks`` de ``_pending_tasks.json``
+**automáticamente, sin pedir permiso al Director**. La instrucción «sólo puedes
+actuar según el proceso te lo pida» significa: actuar cuando el proceso lo pida,
+no esperar a que el Director lo confirme.
+
+**Flujo automático:**
+1. Leer ``_pending_tasks.json`` del workspace.
+2. Para cada ``task``, lanzar un subagente (vía Task tool) que la ejecute.
+3. Cuando todos los subagentes terminen, llamar ``POST /collect-responses`` al
+   daemon (puerto 8088) con ``{{"workspace_dir": "<ruta>"}}``.
+4. El daemon integra respuestas (``collect_responses``), verifica bloques
+   incompletos y, si todos completos, ejecuta P16+P18+P19 y pone ``status=done``.
+5. Si el daemon responde ``needs_agent_action=True`` otra vez, repetir desde
+   paso 1 (hay más pending_tasks).
 """
 
     # -- v4.3: Secciones nuevas G0.A, G0.B, G1 ----------------------

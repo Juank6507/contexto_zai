@@ -1,2 +1,0 @@
-DECISION: mantener estructura actual | ALCANCE: sin cambios formales
-DECISION: mejorar empaquetado de datos | ALCANCE: funcionalidad del bloque

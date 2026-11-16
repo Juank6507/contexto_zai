@@ -1,5 +1,0 @@
-recuperacion_contexto
-proxy_zai
-empaquetamiento_datos
-arquitectura_pipeline
-caida_worker_bun

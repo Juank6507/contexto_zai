@@ -1,1 +1,0 @@
-DECISION: superar umbral mínimo de caracteres | ALCANCE: bloque temático 9
