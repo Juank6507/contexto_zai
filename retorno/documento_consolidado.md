@@ -23,3 +23,8 @@ El filtro de comentarios HTML `<!-- ... -->` en markdown debe usar `re.sub(r"<!-
 ### AP19-bis — Estructura del .zip con carpeta envolvente
 El .zip de entrega debe contener los archivos DIRECTAMENTE en la raíz, no envueltos en una carpeta `contexto_zai/`. Cuando el Director descomprime el .zip en `C:\Python\Proyectos\contexto_zai` (que ya es el repo local), la estructura con carpeta envolvente crea doble nesting (`contexto_zai/contexto_zai/...`) y rompe todos los imports relativos. **Criterio:** el .zip debe tener los archivos en raíz, sin carpeta envolvente que duplique el nombre del repo local.
 
+### AP19-ter — Sentencias de prueba con saltos de línea literales en cmd.exe
+Las sentencias de prueba del `update_czai.ps1` que usan `python -c "..."` NO deben contener saltos de línea literales (`
+` reales en el string), porque `cmd.exe /c` los interpreta como fin de comando y corta el código Python. Para incluir saltos de línea en un string Python dentro de `python -c`, usar `chr(10)` en vez de `
+` literal. **Criterio:** cualquier sentencia de prueba con `python -c` que necesite strings multi-línea debe construirlos con `chr(10)` u otras funciones, no con literales.
+

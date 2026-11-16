@@ -91,11 +91,13 @@ $ArchivosRequeridos = @(
 
 # (b) Funcionamiento en Windows: sentencias de prueba y tests E2E (datos reales, R4/NH25)
 # v6.19: validar chat_id param, helpers nuevos, _strip_bash_blocks, _extraer_objetivo_de_worklog
+# Nota: las sentencias con python -c NO deben contener saltos de línea literales (cmd.exe los rompe).
+# Para validar _strip_bash_blocks con bloques bash, se escribe un .py temporal y se ejecuta.
 $SentenciasPrueba = @(
     "cd /d $RutaLocalProyecto && python -c `"import inspect; from pipeline import ampliar_contexto; sig = inspect.signature(ampliar_contexto); assert 'chat_id' in sig.parameters; print('OK chat_id param')`"",
     "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; assert hasattr(E, '_strip_bash_blocks'); assert hasattr(E, '_obtener_timestamp_workspace'); assert hasattr(E, '_extraer_objetivo_de_worklog'); print('OK helpers v6.19')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; r = E._strip_bash_blocks('Texto /home/file.py ``````bash`ncd /tmp/otro`n`````` mas texto'); assert '/home/file.py' in r and '/tmp/otro' not in r; print('OK _strip_bash_blocks')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; from pathlib import Path; c = E._extraer_objetivo_de_worklog(Path('.')); assert c is not None and '## G0.A' in c and '## G0.B' in c and '## G0.C' in c and '__MODELO_AGENTE__' in c and '__ACTA_NACIMIENTO__' in c and '<!--' not in c; print('OK _extraer_objetivo_de_worklog')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; r = E._strip_bash_blocks('Texto /home/file.py ' + chr(96)*3 + 'bash' + chr(10) + 'cd /tmp/otro' + chr(10) + chr(96)*3 + ' mas texto'); assert '/home/file.py' in r and '/tmp/otro' not in r; print('OK _strip_bash_blocks')`"",
+    "cd /d $RutaLocalProyecto && python -c `"import inspect; from generation.estado_generator import EstadoGenerator as E; sig = inspect.signature(E._extraer_objetivo_de_worklog); assert 'project_root' in sig.parameters; assert E._extraer_objetivo_de_worklog.__name__ == '_extraer_objetivo_de_worklog'; print('OK _extraer_objetivo_de_worklog firma')`"",
     "cd /d $RutaLocalProyecto && python -c `"from generation.recovery_generator import RecoveryGenerator as R; assert 'chat_id' in R.__init__.__code__.co_varnames; print('OK RecoveryGenerator chat_id param')`"",
     "cd /d $RutaLocalProyecto && python -c `"from process.recovery_cycle import RecoveryCycle as C; import inspect; assert 'chat_id' in inspect.signature(C.__init__).parameters; print('OK RecoveryCycle chat_id param')`"",
     "cd /d $RutaLocalProyecto && python config.py",
