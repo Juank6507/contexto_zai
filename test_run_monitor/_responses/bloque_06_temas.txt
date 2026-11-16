@@ -1,5 +1,0 @@
-clasificacion_temática
-empaquetamiento_chat
-generacion_resumenes
-rendimiento_worker
-proxy_zai

@@ -1,5 +1,0 @@
-bloques_tematicos
-worker_bun
-generacion_resumenes
-clasificacion_temas
-procesamiento_sistema

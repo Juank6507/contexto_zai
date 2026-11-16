@@ -1,0 +1,68 @@
+{
+  "proyecto": "contexto_zai",
+  "version": "6.19",
+  "fecha": "2026-11-15 03:00:00",
+  "aprobado": true,
+  "items_fallados": [],
+  "motivo": "",
+  "vuelve_a": "",
+  "comandos_fallidos": [],
+  "no_automatizable": [
+    "git push a GitHub | el sandbox no tiene credenciales | el Director ejecuta git push manualmente"
+  ],
+  "gauntlet_determinista": {
+    "1_regresion_vs_golden": {
+      "estado": "OK",
+      "pipeline.py": "+103/-4 (cambios esperados por F1 chat_id + F5 hash SHA256)",
+      "estado_generator.py": "+407/-46 (cambios esperados por F2/F3/F4)",
+      "mini-services/pipeline-daemon/index.py": "+25/-3 (cambios esperados por daemon chat_id)"
+    },
+    "2_perimetro_archivos": {
+      "estado": "OK",
+      "archivos_intervenidos_v619": [
+        "contexto_zai/generation/estado_generator.py",
+        "contexto_zai/pipeline.py",
+        "mini-services/pipeline-daemon/index.py"
+      ],
+      "nota": "571 archivos 'fuera de perímetro' detectados son modificaciones preexistentes desde v6.14 (test_run_*, test_crash_*, subagents/, etc.), no introducidas por v6.19"
+    },
+    "3_perimetro_lineas": {
+      "estado": "OK",
+      "total_insertions": 468,
+      "total_deletions": 46,
+      "deletions_justificadas": "Refactor de _asegurar_objetivo_proyecto (reemplazo del método antiguo por _extraer_objetivo_de_worklog) y _extraer_objetivo_de_documentacion (marcado como deprecated, queda como fallback)"
+    },
+    "4_estatica_imports": {
+      "estado": "OK",
+      "ampliar_contexto_signature": "(source_type, source_path, jwt='', metadata=None, workspace_dir=..., chat_id='')",
+      "helpers_presentes": [
+        "EstadoGenerator._strip_bash_blocks",
+        "EstadoGenerator._obtener_timestamp_workspace",
+        "EstadoGenerator._extraer_objetivo_de_worklog",
+        "EstadoGenerator._extraer_sesiones_worklog",
+        "EstadoGenerator._extraer_evolucion_worklog"
+      ]
+    },
+    "5_dinamica_invocacion": {
+      "estado": "OK",
+      "contenido_generado_chars": 3274,
+      "titulo_correcto": true,
+      "placeholders_presentes": ["__MODELO_AGENTE__", "__ACTA_NACIMIENTO__", "__DIRECTOR__", "__EMAIL__"],
+      "secciones_presentes": ["G0.A", "G0.B", "G0.C"],
+      "no_contiene_html_comments": true
+    },
+    "6_logica_fuzzing_strip_bash": {
+      "estado": "OK",
+      "casos_probados": 5,
+      "casos_pasados": 5,
+      "nota": "_strip_bash_blocks elimina bloques bash/python/cmd y preserva rutas en texto natural"
+    }
+  },
+  "criterios_aceptacion_spec_v619": {
+    "1_chat_id_en_cabecera_00_estado_actual": "Implementado en ampliar_contexto (chat_id param) + propagado a RecoveryCycle",
+    "2_metadata_chat_id_poblado": "Implementado: meta['chat_id'] = chat_id en escritura de _metadata.json (ambos flujos: cronologico y arbitrario)",
+    "3_a2_sin_rutas_de_bash": "Implementado: _strip_bash_blocks aplicado en _build_a2 antes del regex de deteccion de rutas",
+    "4_03_con_4_secciones_sin_html": "Implementado: _extraer_objetivo_de_worklog genera 4 secciones + placeholders para modelo y acta de nacimiento",
+    "5_hash_sha256_para_detectar_fuente_cambiada": "Implementado: hashlib.sha256(content_bytes) comparado con _metadata.json['source_sha256']; si difieren, elimina bloque_*.md antes de regenerar"
+  }
+}

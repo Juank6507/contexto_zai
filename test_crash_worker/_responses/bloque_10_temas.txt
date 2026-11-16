@@ -1,5 +1,0 @@
-recuperacion_contexto
-empaquetamiento_datos
-proxy_zai
-arquitectura_pipeline
-funcionalidad_sistema

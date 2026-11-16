@@ -1,5 +1,0 @@
-worker_bun
-resumen_riguroso
-empaquetamiento_intercambios
-estructura_bloque
-funcionamiento_sistema

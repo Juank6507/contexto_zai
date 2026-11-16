@@ -1,5 +1,0 @@
-pipeline
-recuperación_contexto
-proxy_zai
-arquitectura
-diseño_sistema

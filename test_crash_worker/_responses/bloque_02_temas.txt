@@ -1,5 +1,0 @@
-clasificacion_intercambios
-empaquetado_datos
-proxy_zai
-arquitectura_pipeline
-funcionamiento_bloque

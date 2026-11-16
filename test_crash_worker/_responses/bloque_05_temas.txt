@@ -1,5 +1,0 @@
-estructura_bloque
-proceso_recuperacion
-proxy_zai
-clasificacion_intercambios
-caida_sistema_worker_bun
