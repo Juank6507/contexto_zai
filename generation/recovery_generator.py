@@ -227,6 +227,7 @@ class RecoveryGenerator:
             bloque_content = self._bloque_gen.generate(
                 block=block,
                 cleaner=self._cleaner,
+                origen=origen,  # v6.20 F2: pasar origen para cabecera correcta
             )
             recovery_files.append(
                 RecoveryFile(

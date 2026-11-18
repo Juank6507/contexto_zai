@@ -1,34 +1,26 @@
-# Documento consolidado de retorno — contexto_zai v6.19 (con F6)
+# Documento consolidado de retorno — contexto_zai v6.20
 
 **Fecha:** 2026-11-16
-**Versión:** 6.19
+**Versión:** 6.20
 **Proyecto:** contexto_zai
 **Agente:** CZAI
 
----
+## Aprendizajes genéricos
 
-## Aprendizajes genéricos (viajan a agent-learn/)
+### A1 — Crítico subagente para validación de calidad
+El Crítico del bucle W3 debe ser un subagente que valide principalmente la fidelidad del resumen al contenido del bloque, no solo el formato. El formato (longitud, oraciones, etiquetas) es secundario. La fidelidad al contenido es lo primario.
 
-### A1 — Propagación de parámetros entre capas
-Cuando se añade un parámetro nuevo a la entrada de un pipeline, hay que verificar que se propague por TODAS las capas intermedias hasta el generador final. **Criterio:** cualquier fix que añada un parámetro debe incluir tests de propagación capa por capa.
+### A2 — Una sola llamada al LLM para archivos de recuperación
+Los 4 archivos de recuperación (00, 01, 02, 03) se generan con una sola llamada al LLM, no 4 llamadas separadas. Esto es más eficiente y mantiene coherencia entre los archivos.
 
-### A2 — Filtro de comentarios HTML multilínea en markdown
-Usar `re.sub(r"<!--.*?-->", "", contenido, flags=re.DOTALL)` para eliminar bloques completos multilínea. **Criterio:** cualquier parser de markdown que filtre comentarios HTML debe usar el patrón `re.DOTALL`.
+### A3 — Pedir autorización antes de regenerar
+Cuando el hash de un archivo cambia, el proceso no debe simplemente eliminar y regenerar. Debe explicar qué cambió y pedir autorización al Director antes de proceder.
 
-### A3 — Autonomía del agente frente al daemon
-El agente CZAI debe ejecutar pending_tasks de Nivel 3 automáticamente cuando el daemon lo pide (status=waiting_for_agent), sin pedir permiso al Director. **Criterio:** cuando el proceso pide acción, el agente actúa. No esperar confirmación del Director para lo que el proceso ya autorizó.
+## Anti-patrones
 
-## Anti-patrones específicos de v6.19
+### AP20 — Excepción por tamaño de bloque
+No debe existir excepción automática que acepte resúmenes sin validar solo porque el bloque es chico. El Crítico siempre valida.
 
-### AP19 — Parser que extrae rutas sin distinguir texto natural de bloques de código
-**Fix:** encadenar `_strip_tool_calls` + `_strip_bash_blocks` antes del regex de detección.
-
-### AP19-bis — Estructura del .zip con carpeta envolvente
-El .zip debe tener los archivos en raíz, sin carpeta envolvente que duplique el nombre del repo local.
-
-### AP19-ter — Sentencias de prueba con saltos de línea literales en cmd.exe
-Las sentencias `python -c "..."` NO deben contener saltos de línea literales. Usar `chr(10)` u otras funciones.
-
-### AP19-quater — No listar veredictos en $ArchivosRequeridos del script de entrega
-Los archivos `VEREDICTO_*` son evidencia de validación que vive en `upload/` del sandbox, no archivos del proyecto. NO deben estar en `$ArchivosRequeridos` del `update_czai.ps1` porque el Director no los tiene en su repo local. **Criterio:** `$ArchivosRequeridos` solo incluye archivos del proyecto que viven en el repo, no evidencia de validación.
+### AP20-bis — Daemon que sobrescribe el estado
+El daemon no debe sobrescribir el estado publicado por el proceso (waiting_for_agent con done). Debe respetar el estado que el proceso establece.
 

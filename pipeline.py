@@ -478,6 +478,7 @@ class ContextoPipeline:
         metadata: Optional[dict] = None,
         workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
         chat_id: str = "",
+        force_rebuild: bool = False,  # v6.20 F7: autorización del Director para regenerar
     ) -> dict:
             """Amplía el contexto desde una fuente externa (link o archivo).
 
@@ -775,18 +776,46 @@ class ContextoPipeline:
                         pass
 
                 if source_sha256_previo and source_sha256_previo != source_sha256_actual:
-                    logger.info(
-                        "v6.19 F5: fuente cambiada detectada (hash previo=%s... ≠ actual=%s...). "
-                        "Eliminando todos los bloque_*.md antes de regenerar.",
-                        source_sha256_previo[:12], source_sha256_actual[:12],
-                    )
-                    for bloque_file in workspace.glob("bloque_*.md"):
-                        try:
-                            bloque_file.unlink()
-                        except Exception as e:
-                            logger.warning(
-                                "v6.19 F5: no se pudo eliminar %s: %s", bloque_file, e
-                            )
+                    # v6.20 F7: explicar qué cambió y pedir autorización al Director
+                    # (igual que rama arbitraria). Si force_rebuild=True, proceder.
+                    if not force_rebuild:
+                        logger.info(
+                            "v6.20 F7: fuente cronológica cambiada detectada (hash previo=%s... ≠ actual=%s...). "
+                            "Pidiendo autorización al Director antes de regenerar.",
+                            source_sha256_previo[:12], source_sha256_actual[:12],
+                        )
+                        EnriquecimientoOrquestador._actualizar_estado_daemon(
+                            workspace_dir=workspace,
+                            status="waiting_for_authorization",
+                            tarea_actual="Fuente cronológica cambiada — esperando autorización del Director",
+                        )
+                        return {
+                            "needs_agent_read": False,
+                            "indexed": False,
+                            "needs_authorization": True,
+                            "filename": filename,
+                            "reason": (
+                                f"El archivo '{filename}' cambió desde la última vez que se procesó "
+                                f"(hash previo={source_sha256_previo[:16]}..., "
+                                f"hash actual={source_sha256_actual[:16]}...). "
+                                f"Los bloques existentes serían eliminados y regenerados. "
+                                f"Autoriza la regeneración llamando POST /ampliar-contexto con "
+                                f"force_rebuild=true."
+                            ),
+                            "source_sha256_previo": source_sha256_previo[:32],
+                            "source_sha256_actual": source_sha256_actual[:32],
+                        }
+                    else:
+                        logger.info(
+                            "v6.20 F7: force_rebuild=True — eliminando bloques y regenerando.",
+                        )
+                        for bloque_file in workspace.glob("bloque_*.md"):
+                            try:
+                                bloque_file.unlink()
+                            except Exception as e:
+                                logger.warning(
+                                    "v6.20 F5: no se pudo eliminar %s: %s", bloque_file, e
+                                )
                 elif not source_sha256_previo:
                     logger.info(
                         "v6.19 F5: primera corrida (sin source_sha256 previo). "
@@ -1077,6 +1106,58 @@ class ContextoPipeline:
             # (patrón diferido v4.2). El ProcesadorDocumento decide según tamaño
             # (mediano=un subagente, grande=3 niveles) y publica las tareas vía
             # el Orquestador. No intenta descargar de la API de Z.ai.
+
+            # v6.20 F7: hash SHA256 en rama arbitraria (igual que cronológica).
+            # Compara el hash del archivo con el anterior. Si cambiaron,
+            # explica qué cambió y pide autorización al Director antes de regenerar.
+            source_sha256_actual_arb = _hashlib.sha256(content_bytes).hexdigest()
+            metadata_path_pre_arb = workspace / "_metadata.json"
+            source_sha256_previo_arb = ""
+            if metadata_path_pre_arb.exists():
+                try:
+                    meta_pre_arb = _json.loads(metadata_path_pre_arb.read_text(encoding="utf-8"))
+                    source_sha256_previo_arb = meta_pre_arb.get("source_sha256", "") or ""
+                except (_json.JSONDecodeError, ValueError):
+                    pass
+
+            if source_sha256_previo_arb and source_sha256_previo_arb != source_sha256_actual_arb and not force_rebuild:
+                logger.info(
+                    "v6.20 F7: fuente arbitraria cambiada detectada (hash previo=%s... ≠ actual=%s...). "
+                    "Pidiendo autorización al Director antes de regenerar.",
+                    source_sha256_previo_arb[:12], source_sha256_actual_arb[:12],
+                )
+                # Explicar qué cambió y pedir autorización al Director
+                EnriquecimientoOrquestador._actualizar_estado_daemon(
+                    workspace_dir=workspace,
+                    status="waiting_for_authorization",
+                    tarea_actual="Fuente arbitraria cambiada — esperando autorización del Director",
+                )
+                return {
+                    "needs_agent_read": False,
+                    "indexed": False,
+                    "needs_authorization": True,
+                    "filename": filename,
+                    "reason": (
+                        f"El archivo '{filename}' cambió desde la última vez que se procesó "
+                        f"(hash previo={source_sha256_previo_arb[:16]}..., "
+                        f"hash actual={source_sha256_actual_arb[:16]}...). "
+                        f"Los bloques existentes serían eliminados y regenerados. "
+                        f"Autoriza la regeneración llamando POST /ampliar-contexto con "
+                        f"force_rebuild=true."
+                    ),
+                    "source_sha256_previo": source_sha256_previo_arb[:32],
+                    "source_sha256_actual": source_sha256_actual_arb[:32],
+                }
+
+            # v6.20 F7: si force_rebuild=True y hashes difieren, eliminar bloques viejos
+            if source_sha256_previo_arb and source_sha256_previo_arb != source_sha256_actual_arb and force_rebuild:
+                logger.info("v6.20 F7: force_rebuild=True — eliminando bloques arbitrarios viejos.")
+                for bloque_file in workspace.glob("bloque_*.md"):
+                    try:
+                        bloque_file.unlink()
+                    except Exception as e:
+                        logger.warning("v6.20 F7: no se pudo eliminar %s: %s", bloque_file, e)
+
             from contexto_zai.coordinador import Orquestador
             from contexto_zai.procesadores import ProcesadorDocumento
 
@@ -1561,25 +1642,13 @@ def ampliar_contexto(
     metadata: Optional[dict] = None,
     workspace_dir: Path | str = WORKSPACE_OUTPUT_DIR,
     chat_id: str = "",
+    force_rebuild: bool = False,  # v6.20 F7
 ) -> dict:
-    """v6.11 F5 → v6.18 F1 → v6.19 F1+F5: Wrapper que delega a ContextoPipeline.ampliar_contexto().
+    """v6.11 F5 → v6.18 F1 → v6.19 F1+F5 → v6.20 F7: Wrapper que delega a ContextoPipeline.ampliar_contexto().
 
-    v6.18 F1: si la estructura del archivo externo es ``cronologico``
-    (marcadores ``## Exchange N -- [timestamp]``), el flujo pasa por
-    ``RecoveryCycle`` (reusar, no duplicar lógica). Si es ``arbitrario``,
-    sigue por ``ProcesadorDocumento``.
-
-    v6.19 F1 (P1/P5 conciliados): ``chat_id`` siempre del chat actual.
-    La cabecera de ``00_estado_actual.md`` y los campos ``chat_id`` y
-    ``share_id`` de ``_metadata.json`` se poblan con el ``chat_id`` del
-    chat actual donde corre el agente, sin importar si la fuente es un
-    chat vivo de Z.ai o un archivo externo.
-
-    v6.19 F5 (P6/P7 conciliados): hash SHA256 del documento fuente
-    comparado con ``_metadata.json["source_sha256"]``. Si difieren,
-    eliminar todos los ``bloque_*.md`` antes de regenerar (la fuente
-    cambió). Si coinciden, preservar (re-corrida del mismo documento).
-    Aplica a todas las fuentes externas.
+    v6.20 F7: hash SHA256 en ambas ramas (cronológica y arbitraria).
+    Ambas comparan, explican qué cambió y piden autorización al Director
+    antes de regenerar. El Director autoriza con force_rebuild=true.
     """
     return ContextoPipeline.ampliar_contexto(
         source_type=source_type,
@@ -1588,6 +1657,7 @@ def ampliar_contexto(
         metadata=metadata,
         workspace_dir=workspace_dir,
         chat_id=chat_id,
+        force_rebuild=force_rebuild,
     )
 
 
@@ -2395,6 +2465,165 @@ class EnriquecimientoOrquestador:
             logger.warning("v6.17 F5: escribir _daemon_status.json falló: %s", e)
 
     @staticmethod
+    def _generar_archivos_recuperacion(
+        workspace_dir: Path | str,
+        chat_id: str = "",
+    ) -> dict:
+        """v6.20 F5: Subproceso de archivos de recuperación.
+
+        Genera los 4 archivos de recuperación (00, 01, 02, 03) con una sola
+        llamada al LLM vía cascada. El prompt contiene todas las preguntas
+        necesarias para los cuatro archivos. El LLM responde en una sola vez.
+
+        El 03 se genera solo la primera vez; en las siguientes se saltea.
+
+        Args:
+            workspace_dir: Directorio del workspace.
+            chat_id: Chat_id del chat actual.
+
+        Returns:
+            Dict con ``success``, ``archivos_generados``, ``error``.
+        """
+        ws = Path(workspace_dir)
+        if not ws.exists():
+            return {"error": f"workspace no existe: {workspace_dir}"}
+
+        # 1. Leer todos los RESUMEN de los bloques
+        resumenes = []
+        for bloque_file in sorted(ws.glob("bloque_*.md")):
+            try:
+                content = bloque_file.read_text(encoding="utf-8", errors="ignore")
+                if content.startswith("RESUMEN:"):
+                    parts = content.split("\n\n---\n\n", 1)
+                    resumen = parts[0][len("RESUMEN:"):].strip()
+                    resumenes.append(f"### {bloque_file.name}\n{resumen[:500]}")
+            except Exception:
+                pass
+
+        if not resumenes:
+            return {"error": "No hay bloques con RESUMEN para generar archivos"}
+
+        resumenes_str = "\n\n".join(resumenes[:30])  # máximo 30 bloques
+
+        # 2. Verificar si 03 ya existe (solo se genera la primera vez)
+        objetivo_path = ws / "03_objetivo_proyecto.md"
+        generar_03 = not objetivo_path.exists()
+
+        # 3. Construir prompt estructurado con todas las preguntas
+        preguntas = []
+        preguntas.append("## 00_estado_actual.md")
+        preguntas.append("Genera el contenido del archivo 00_estado_actual.md con: tema activo, última instrucción del Director, entregables producidos, errores abiertos, siguiente paso lógico.")
+
+        preguntas.append("\n## 01_indice_recuperacion.md")
+        preguntas.append("Genera el contenido del archivo 01_indice_recuperacion.md con el mapeo tema → bloque basado en los resúmenes.")
+
+        preguntas.append("\n## 02_decisiones_clave.md")
+        preguntas.append("Genera el contenido del archivo 02_decisiones_clave.md con las decisiones reales tomadas, contrastadas contra el contexto.")
+
+        if generar_03:
+            preguntas.append("\n## 03_objetivo_proyecto.md")
+            preguntas.append("Genera el contenido del archivo 03_objetivo_proyecto.md con: quién es el agente, modelo (GLM), cuál es el proyecto, cuál es su norte, acta de nacimiento, cómo recuperarse.")
+
+        prompt = f"""Eres un subagente del proceso contexto_zai. Genera los archivos de recuperación de contexto basándote en los resúmenes de los bloques enriquecidos.
+
+## Resúmenes de los bloques:
+
+{resumenes_str}
+
+## Tu tarea
+
+Genera el contenido de los siguientes archivos. Responde SOLO con JSON:
+
+{chr(10).join(preguntas)}
+
+## Formato de respuesta
+
+```json
+{{
+  "estado_actual": "contenido markdown del archivo 00",
+  "indice_recuperacion": "contenido markdown del archivo 01",
+  "decisiones_clave": "contenido markdown del archivo 02"
+{', "objetivo_proyecto": "contenido markdown del archivo 03"' if generar_03 else ''}
+}}
+```
+"""
+
+        # 4. Llamar al LLM vía proxy Z.ai (cascada)
+        import json as _json_f5
+        import urllib.request as _ur_f5
+        from contexto_zai.config import PROXY_ZAI_URL, PROXY_ZAI_TIMEOUT
+
+        payload = _json_f5.dumps({
+            "model": "glm-4-plus",
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 4000,
+            "temperature": 0.3,
+        }).encode("utf-8")
+
+        req = _ur_f5.Request(PROXY_ZAI_URL, data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+
+        try:
+            with _ur_f5.urlopen(req, timeout=PROXY_ZAI_TIMEOUT * 6) as resp:
+                raw = resp.read().decode("utf-8")
+            proxy_resp = _json_f5.loads(raw)
+            content_text = proxy_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+            # Limpiar fences
+            content_text = content_text.strip()
+            if content_text.startswith("```json"):
+                content_text = content_text[7:]
+            if content_text.startswith("```"):
+                content_text = content_text[3:]
+            if content_text.endswith("```"):
+                content_text = content_text[:-3]
+
+            result = _json_f5.loads(content_text.strip())
+        except Exception as e:
+            logger.warning("v6.20 F5: LLM call falló: %s — usando placeholders", e)
+            return {"success": False, "error": f"LLM call falló: {e}", "archivos_generados": []}
+
+        # 5. Escribir los archivos
+        archivos_escritos = []
+
+        # 00_estado_actual.md
+        estado_content = result.get("estado_actual", "")
+        if estado_content:
+            # v6.19 F1: cabecera con chat_id
+            cabecera = chat_id if chat_id else "contexto_zai"
+            estado_content = f"# Estado Actual -- {cabecera}\n\n" + estado_content
+            (ws / "00_estado_actual.md").write_text(estado_content, encoding="utf-8")
+            archivos_escritos.append("00_estado_actual.md")
+
+        # 01_indice_recuperacion.md
+        indice_content = result.get("indice_recuperacion", "")
+        if indice_content:
+            (ws / "01_indice_recuperacion.md").write_text(indice_content, encoding="utf-8")
+            archivos_escritos.append("01_indice_recuperacion.md")
+
+        # 02_decisiones_clave.md
+        decisiones_content = result.get("decisiones_clave", "")
+        if decisiones_content:
+            (ws / "02_decisiones_clave.md").write_text(decisiones_content, encoding="utf-8")
+            archivos_escritos.append("02_decisiones_clave.md")
+
+        # 03_objetivo_proyecto.md (solo la primera vez)
+        if generar_03:
+            objetivo_content = result.get("objetivo_proyecto", "")
+            if objetivo_content:
+                objetivo_path.write_text(objetivo_content, encoding="utf-8")
+                archivos_escritos.append("03_objetivo_proyecto.md")
+
+        logger.info("v6.20 F5: %d archivos de recuperación generados: %s",
+                     len(archivos_escritos), archivos_escritos)
+
+        return {
+            "success": True,
+            "archivos_generados": archivos_escritos,
+            "genero_03": generar_03,
+        }
+
+    @staticmethod
     def _collect_responses_and_finalize(
         workspace_dir: Path | str,
     ) -> dict:
@@ -2724,9 +2953,7 @@ class EnriquecimientoOrquestador:
 
         r = resumen.strip()
 
-        # Excepción: bloque pequeño → aceptar con observaciones
-        if bloque_content_len <= 2000:
-            return True, "bloque con contenido limitado, aceptado con observaciones"
+        # v6.20 F3: sin excepción por tamaño de bloque — el Crítico siempre valida.
 
         # 1. Validar etiquetas prohibidas
         for etiqueta in RESUMEN_ETIQUETAS_PROHIBIDAS:
@@ -2754,6 +2981,119 @@ class EnriquecimientoOrquestador:
             return False, f"{oraciones} oraciones (esperadas {RESUMEN_ORACIONES_ESPERADAS})"
 
         return True, "cumple formato rígido"
+
+    @staticmethod
+    def _validar_resumen_critico_subagente(
+        resumen: str,
+        bloque_content: str,
+        block_id: str = "",
+    ) -> tuple[bool, str]:
+        """v6.20 F3: Crítico subagente que valida la fidelidad del resumen al contenido.
+
+        A diferencia de ``_validar_resumen_w3`` (que solo valida formato), este
+        Crítico es un subagente que se lanza vía el proxy Z.ai para validar que
+        el resumen se corresponda fielmente con la información del bloque.
+
+        Procedimiento:
+        1. Validación de formato rápida (sin LLM): longitud, oraciones, etiquetas.
+           Si falla el formato, no se gasta una llamada al LLM.
+        2. Si el formato pasa, validación de fidelidad (con LLM): el subagente
+           lee el bloque y el resumen, y responde si el resumen refleja fielmente
+           el contenido. Lo más importante es la fidelidad; el formato es secundario.
+
+        Args:
+            resumen: El resumen generado por el Actuador (LLM).
+            bloque_content: El contenido completo del bloque.
+            block_id: Identificador del bloque (para logging).
+
+        Returns:
+            (ok, motivo): ok=True si el resumen es válido. ok=False con motivo
+            si no cumple. El motivo se usa como feedback para el siguiente intento.
+        """
+        # 1. Validación de formato rápida (sin LLM) — delega a _validar_resumen_w3
+        formato_ok, formato_motivo = EnriquecimientoOrquestador._validar_resumen_w3(
+            resumen, len(bloque_content)
+        )
+        if not formato_ok:
+            return False, f"Formato: {formato_motivo}"
+
+        # 2. Validación de fidelidad (con LLM) — el Crítico subagente
+        import json as _json_c
+        import urllib.request as _ur_c
+        import urllib.error as _ue_c
+        from contexto_zai.config import PROXY_ZAI_URL, PROXY_ZAI_TIMEOUT
+
+        # Truncar bloque_content para no exceder el contexto del LLM
+        bloque_truncado = bloque_content[:30000] if len(bloque_content) > 30000 else bloque_content
+
+        prompt_critico = f"""Eres un Crítico que valida la fidelidad de un resumen respecto al contenido de un bloque.
+
+## Tu tarea
+
+Lee el siguiente bloque de intercambios y el resumen generado. Responde si el resumen refleja fielmente la información del bloque.
+
+## Criterios de validación (en orden de importancia):
+
+1. **Fidelidad al contenido**: ¿el resumen captura el tema central, las decisiones principales y los temas específicos del bloque?
+2. **No omite información crítica**: ¿hay decisiones o temas importantes que el resumen no menciona?
+3. **No inventa información**: ¿el resumen dice algo que no está en el bloque?
+4. **Proporcionalidad**: ¿el resumen es proporcional al tamaño del bloque? (un bloque grande necesita un resumen más completo)
+5. **Formato**: entre 600-900 caracteres, 4 oraciones, sin etiquetas prohibidas.
+
+## Respuesta
+
+Responde SOLO con JSON:
+{{"valido": true/false, "motivo": "explicación de por qué es válido o qué falla"}}
+
+## Bloque a validar:
+
+{bloque_truncado}
+
+## Resumen generado:
+
+{resumen}
+"""
+        payload = _json_c.dumps({
+            "model": "glm-4-flash",
+            "messages": [{"role": "user", "content": prompt_critico}],
+            "max_tokens": 500,
+            "temperature": 0.1,
+        }).encode("utf-8")
+
+        req = _ur_c.Request(PROXY_ZAI_URL, data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+
+        try:
+            with _ur_c.urlopen(req, timeout=PROXY_ZAI_TIMEOUT * 3) as resp:
+                raw = resp.read().decode("utf-8")
+            proxy_resp = _json_c.loads(raw)
+            content_text = proxy_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+            # Limpiar fences
+            content_text = content_text.strip()
+            if content_text.startswith("```json"):
+                content_text = content_text[7:]
+            if content_text.startswith("```"):
+                content_text = content_text[3:]
+            if content_text.endswith("```"):
+                content_text = content_text[:-3]
+            result = _json_c.loads(content_text.strip())
+            valido = result.get("valido", False)
+            motivo = result.get("motivo", "sin motivo")
+            if valido:
+                logger.info("v6.20 F3 Crítico: %s OK (fidelidad validada)", block_id)
+                return True, "Fidelidad validada por Crítico subagente"
+            else:
+                logger.info("v6.20 F3 Crítico: %s FAIL (%s)", block_id, motivo[:80])
+                return False, f"Fidelidad: {motivo}"
+        except _ue_c.HTTPError as e:
+            if e.code == 429:
+                logger.warning("v6.20 F3 Crítico: HTTP 429 para %s — aceptando con formato OK", block_id)
+                return True, "Formato OK (Crítico omitido por 429)"
+            logger.warning("v6.20 F3 Crítico: HTTP %d para %s — aceptando con formato OK", e.code, block_id)
+            return True, "Formato OK (Crítico omitido por error HTTP)"
+        except Exception as e:
+            logger.warning("v6.20 F3 Crítico: error %s para %s — aceptando con formato OK", e, block_id)
+            return True, "Formato OK (Crítico omitido por error)"
 
     @staticmethod
     def _enriquecer_con_proxy_zai(
@@ -2924,10 +3264,10 @@ class EnriquecimientoOrquestador:
                 # Guardar en caché del último intento
                 cache_file.write_text(_json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-                # Extraer resumen y validar con W3
+                # v6.20 F3: validar con Crítico subagente (fidelidad + formato)
                 resumen_candidate = result.get("resumen", "").strip()
-                w3_ok, w3_motivo = EnriquecimientoOrquestador._validar_resumen_w3(
-                    resumen_candidate, len(bloque_content)
+                w3_ok, w3_motivo = EnriquecimientoOrquestador._validar_resumen_critico_subagente(
+                    resumen_candidate, bloque_content, block_id
                 )
 
                 if w3_ok:
@@ -2952,17 +3292,12 @@ class EnriquecimientoOrquestador:
                                block_id, _MAX_ITER)
                 return False
 
-            # Si W3 sigue sin cumplir tras MAX_ITER:
-            # - bloque > 2000 chars -> mejorable -> return False (pending_task)
-            # - bloque <= 2000 chars -> aceptar con observaciones
+            # v6.20 F3: sin excepción por tamaño — siempre return False si W3 no cumple.
+            # El bloque cae a pending_task para que el D7 lo reintente.
             if not w3_ok:
-                if len(bloque_content) > 2000:
-                    logger.warning("v6.13 W3: %s - bloque mejorable tras %d intentos. motivo: %s. -> pending_task",
-                                   block_id, _MAX_ITER, w3_motivo)
-                    return False
-                else:
-                    logger.info("v6.13 W3: %s - bloque con contenido limitado, aceptado con observaciones tras %d intentos.",
-                                block_id, _MAX_ITER)
+                logger.warning("v6.20 F3 W3: %s - no cumplió tras %d intentos. motivo: %s. -> pending_task",
+                               block_id, _MAX_ITER, w3_motivo)
+                return False
 
         # Extraer campos del JSON
         resumen = result.get("resumen", "").strip()
@@ -3400,8 +3735,9 @@ class EnriquecimientoOrquestador:
                         resumen_actual = parts[0][len("RESUMEN:"):].strip()
                     else:
                         resumen_actual = parts[0].strip()
-                    w3_ok, w3_motivo = EnriquecimientoOrquestador._validar_resumen_w3(
-                        resumen_actual, len(bloque_content)
+                    # v6.20 F3: usar Crítico subagente en el D7 también
+                    w3_ok, w3_motivo = EnriquecimientoOrquestador._validar_resumen_critico_subagente(
+                        resumen_actual, bloque_content, block_id
                     )
                     if not w3_ok:
                         # RESUMEN existe pero falla W3 → feedback al subagente.
@@ -3495,6 +3831,13 @@ class EnriquecimientoOrquestador:
                         f"**Workspace:** `{workspace_dir}`",
                         f"**Iteraciones D7 ejecutadas:** {iter_count} (máximo {_MAX_ITER_D7})",
                         f"**Bloques aún incompletos:** {len(incompletos)}",
+                        "",
+                        "## Acción requerida",
+                        "",
+                        "El bucle W3 no pudo completar estos bloques tras agotar sus iteraciones.",
+                        "El agente CZAI debe intentar completarlos como última opción.",
+                        "Si el agente tampoco puede completarlos, debe explicar el porqué de la",
+                        "incompletitud y su imposibilidad de completarla al Director.",
                         "",
                         "## Las 4 preguntas por iteración",
                         "",

@@ -93,12 +93,17 @@ class BloqueGenerator:
 
         # v6.13 P1 / v6.14 F7: cabecera según origen.
         # bloque_01 = más nuevo (cronológico) o primer externo (externo).
-        block_num = block.filename.replace("bloque_", "").replace(".md", "")
+        # v6.20 F2: extraer número del bloque según tipo de filename
+        block_num = block.filename.replace(".md", "")
+        if "temático_" in block_num:
+            block_num = block_num.split("temático_")[-1]
+        else:
+            block_num = block_num.replace("bloque_", "")
         temas_str = ", ".join(block.temas) if block.temas else "general"
         if origen == "externo":
             # v6.14 F7 (criterio 23): cabecera para bloques externos.
             header_lines: list[str] = [
-                f"# Bloque externo {block_num}",
+                f"# Bloque temático {block_num}",
                 "",
                 f"**Source:** ampliar_contexto (documento externo)",
             ]

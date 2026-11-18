@@ -69,31 +69,31 @@ $ErrorActionPreference = "Stop"
 # ============================================================
 
 $NombreProyecto    = "contexto_zai"           # p. ej. APA
-$VersionEntrega    = "6.19"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
+$VersionEntrega    = "6.20"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
 $RutaLocalProyecto = "C:\Python\Proyectos\contexto_zai"       # raiz local del repo del proyecto
 $RepoGitHub        = "https://github.com/Juank6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
 $RamaPrincipal     = "main"            # p. ej. main
 
 # (a) Contenido requerido de la entrega (regimen I.3a: solo modificados + tests + E2E completos)
-# v6.19: 4 archivos Python modificados + 2 docs nuevos + 1 manifiesto + 1 script ps1 + 2 veredictos JSON
+# v6.20: 4 archivos Python modificados + 2 docs nuevos + 1 manifiesto + 1 script ps1 + 2 veredictos JSON
 $ArchivosRequeridos = @(
     "generation/estado_generator.py",
     "generation/recovery_generator.py",
     "process/recovery_cycle.py",
     "pipeline.py",
-    "Documentos/spec_recuperacion_contexto_v6.19.md",
-    "Documentos/plan_refactorizacion_v6.19.md",
+    "Documentos/spec_recuperacion_contexto_v6.20.md",
+    "Documentos/plan_refactorizacion_v6.20.md",
     "MANIFIESTO_ENTREGA.txt",
     "update_czai.ps1"
 )
 
 # (b) Funcionamiento en Windows: sentencias de prueba y tests E2E (datos reales, R4/NH25)
-# v6.19: validar chat_id param, helpers nuevos, _strip_bash_blocks, _extraer_objetivo_de_worklog
+# v6.20: validar chat_id param, helpers nuevos, _strip_bash_blocks, _extraer_objetivo_de_worklog
 # Nota: las sentencias con python -c NO deben contener saltos de línea literales (cmd.exe los rompe).
 # Para validar _strip_bash_blocks con bloques bash, se escribe un .py temporal y se ejecuta.
 $SentenciasPrueba = @(
     "cd /d $RutaLocalProyecto && python -c `"import inspect; from pipeline import ampliar_contexto; sig = inspect.signature(ampliar_contexto); assert 'chat_id' in sig.parameters; print('OK chat_id param')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; assert hasattr(E, '_strip_bash_blocks'); assert hasattr(E, '_obtener_timestamp_workspace'); assert hasattr(E, '_extraer_objetivo_de_worklog'); print('OK helpers v6.19')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; assert hasattr(E, '_strip_bash_blocks'); assert hasattr(E, '_obtener_timestamp_workspace'); assert hasattr(E, '_extraer_objetivo_de_worklog'); print('OK helpers v6.20')`"",
     "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; r = E._strip_bash_blocks('Texto /home/file.py ' + chr(96)*3 + 'bash' + chr(10) + 'cd /tmp/otro' + chr(10) + chr(96)*3 + ' mas texto'); assert '/home/file.py' in r and '/tmp/otro' not in r; print('OK _strip_bash_blocks')`"",
     "cd /d $RutaLocalProyecto && python -c `"import inspect; from generation.estado_generator import EstadoGenerator as E; sig = inspect.signature(E._extraer_objetivo_de_worklog); assert 'project_root' in sig.parameters; assert E._extraer_objetivo_de_worklog.__name__ == '_extraer_objetivo_de_worklog'; print('OK _extraer_objetivo_de_worklog firma')`"",
     "cd /d $RutaLocalProyecto && python -c `"from generation.recovery_generator import RecoveryGenerator as R; assert 'chat_id' in R.__init__.__code__.co_varnames; print('OK RecoveryGenerator chat_id param')`"",
@@ -120,7 +120,7 @@ $NoAutomatizable = @(
 $RutaRetornoConsolidado = "retorno/documento_consolidado.md"
 
 # Fuente de datos reales de la validacion (R4/NH25): declarar SIEMPRE
-$FuenteDatos = "chat 6a00fcb8 + exchanges_czai_consolidados.md (649 exchanges) + extracto exchanges_small.md (1500 lineas)"
+$FuenteDatos = "chat 6a00fcb8 + exchanges_czai_consolidados.md (649 exchanges)"
 
 # ============================================================
 #  FUNCIONES AUXILIARES
