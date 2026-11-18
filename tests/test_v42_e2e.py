@@ -1110,11 +1110,11 @@ def test_v64_sort_global():
 
     blocks = packer.pack(exchanges_by_topic)
 
-    # Verificar que dentro de cada bloque, los intercambios estén ordenados por timestamp
+    # Verificar que dentro de cada bloque, los intercambios estén ordenados por timestamp DESCENDENTE (v6.20 F2)
     for block in blocks:
         timestamps = [ex.start_timestamp for ex in block.exchanges]
-        assert timestamps == sorted(timestamps), \
-            f"Bloque {block.filename}: timestamps deben estar ordenados, got {timestamps}"
+        assert timestamps == sorted(timestamps, reverse=True), \
+            f"Bloque {block.filename}: timestamps deben estar ordenados descendente, got {timestamps}"
     print(f"[OK] v6.4 F5: BlockPacker ordena intercambios globalmente dentro de cada bloque ({len(blocks)} bloques)")
 
 
