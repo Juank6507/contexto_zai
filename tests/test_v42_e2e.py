@@ -1110,7 +1110,7 @@ def test_v64_sort_global():
 
     blocks = packer.pack(exchanges_by_topic)
 
-    # Verificar que dentro de cada bloque, los intercambios estén ordenados por timestamp DESCENDENTE (v6.20 F2)
+    # Verificar que dentro de cada bloque, los intercambios estén ordenados por timestamp
     for block in blocks:
         timestamps = [ex.start_timestamp for ex in block.exchanges]
         assert timestamps == sorted(timestamps, reverse=True), \

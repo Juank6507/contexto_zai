@@ -93,7 +93,6 @@ class BloqueGenerator:
 
         # v6.13 P1 / v6.14 F7: cabecera según origen.
         # bloque_01 = más nuevo (cronológico) o primer externo (externo).
-        # v6.20 F2: extraer número del bloque según tipo de filename
         block_num = block.filename.replace(".md", "")
         if "temático_" in block_num:
             block_num = block_num.split("temático_")[-1]

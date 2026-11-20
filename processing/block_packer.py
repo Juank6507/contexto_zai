@@ -163,7 +163,6 @@ class BlockPacker:
                 ex, self._max_tokens
             ):
                 block_counter += 1
-                # v6.20 F2: naming según origen
                 if origen == "externo":
                     filename = f"bloque_temático_{block_counter:02d}.md"
                 else:
@@ -179,15 +178,14 @@ class BlockPacker:
             origen, len(blocks), len(all_exchanges),
         )
 
-        # v6.4 F5 → v6.20 F2: ordenar intercambios globalmente dentro de cada bloque
-        # por timestamp DESCENDENTE (más reciente primero). Garantiza que dentro de cada
-        # bloque, los intercambios estén en orden descendente, igual que entre bloques.
-        # Si todos los timestamps son 0.0 (docs externas sin cronología), el sort es
-        # estable (no cambia el orden).
+        # v6.4 F5: ordenar intercambios globalmente dentro de cada bloque por timestamp.
+        # Garantiza que dentro de cada bloque, los intercambios estén en orden cronológico
+        # sin importar de qué tema venga cada uno. Si todos los timestamps son 0.0
+        # (docs externas sin cronología), el sort es estable (no cambia el orden).
         # v6.14 F9: para origen="externo" no se ordena dentro del bloque (preserva entrada).
         if origen != "externo":
             for block in blocks:
-                block.exchanges.sort(key=lambda ex: ex.start_timestamp, reverse=True)
+                block.exchanges.sort(key=lambda ex: ex.start_timestamp, reverse=True)  # v6.20 F2: descendente
 
         return blocks
 

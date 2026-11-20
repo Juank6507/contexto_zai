@@ -1,36 +1,39 @@
-# Spec v6.20 — Reorganización del pipeline + Crítico subagente + subproceso de archivos
+# Spec v6.20 — W3 externo a la cascada + Crítico subagente + subproceso de archivos
 
 **Versión:** 6.20
-**Fecha:** 2026-11-16
+**Fecha:** 2026-11-18
 **Estado:** Implementada.
-**Especifica continuación de:** spec v6.19.
 
 ## 1. Propósito
 
-Reorganizar el pipeline en un solo camino, con la cascada como único mecanismo de acceso al LLM, el bucle W3 con Crítico subagente, el ciclo D7 que manda al W3, y un subproceso nuevo que genera los 4 archivos de recuperación con una sola llamada al LLM.
+El W3 es el bucle externo que llama a la cascada como servicio de acceso al LLM. La cascada no sabe nada del Crítico ni del W3. El Crítico valida después de que la cascada devuelve la respuesta.
 
-## 2. Decisiones conciliadas
+## 2. Arquitectura
 
-1. Orden descendente dentro de cada bloque (no solo entre bloques).
-2. Bloques se llaman bloques_NN (cronológico) y bloques_temáticos_NN (no cronológico).
-3. Crítico del W3 es un subagente que valida fidelidad al contenido (no solo formato).
-4. Sin excepción automática por tamaño de bloque.
-5. D7 manda a pending task, el W3 corrige, el agente es última opción.
-6. Subproceso de archivos: una sola llamada al LLM, genera 00/01/02/03.
-7. Daemon unificado: chat_id, force_rebuild, /collect-responses, /generar-archivos.
-8. Hash SHA256 en ambas ramas, piden autorización al Director.
-9. Eliminadas copias viejas (Worker Bun v6.0 y daemon roto).
+```
+W3 (ciclo de enriquecimiento y calidad)
+│
+├── 1. Llamar a la cascada para que el LLM genere el resumen
+│   └── La cascada intenta sus 3 niveles (Worker Bun → Proxy Z.ai → subagentes)
+│
+├── 2. El Crítico valida la respuesta (fidelidad al contenido)
+│
+├── 3. Si no pasa → mandar feedback y volver al paso 1
+│
+└── 4. Hasta 5 iteraciones. Si no completa → pending task
+```
 
-## 3. Criterios de aceptación (9)
+## 3. Criterios de aceptación (10)
 
-1. Los intercambios dentro de cada bloque están en orden descendente.
-2. Los bloques cronológicos se llaman bloques_NN y los no cronológicos bloques_temáticos_NN.
-3. El Crítico subagente valida fidelidad al contenido del bloque.
-4. No hay excepción por tamaño de bloque.
-5. El D7 manda a pending task y el W3 corrige; el agente es última opción.
-6. El subproceso de archivos hace una sola llamada al LLM y genera 00/01/02/03.
-7. El 03 se genera solo la primera vez.
-8. El daemon pasa chat_id, force_rebuild, y tiene /generar-archivos.
-9. El hash se compara en ambas ramas y pide autorización al Director.
+1. El W3 es el bucle externo que llama a la cascada.
+2. La cascada no sabe nada del Crítico ni del W3.
+3. El Crítico valida después de que la cascada devuelve la respuesta.
+4. Si el Crítico falla, el W3 manda feedback y vuelve a llamar a la cascada.
+5. Orden descendente dentro de cada bloque.
+6. bloques_NN y bloques_temáticos_NN.
+7. Sin excepción por tamaño de bloque.
+8. Hash en ambas ramas, pide autorización.
+9. Subproceso de archivos: una sola llamada LLM.
+10. Daemon unificado con chat_id, force_rebuild, /collect-responses, /generar-archivos.
 
 **Fin de la spec v6.20.**
