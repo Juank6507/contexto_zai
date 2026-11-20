@@ -660,7 +660,7 @@ def test_v62_proxy_disponible_worker_completa():
         with patch("contexto_zai.pipeline._proxy_zai_disponible", return_value=True), \
              patch.object(CascadaAccesoLLM, "_nivel1_worker_bun", side_effect=mock_arrancar_nivel1), \
              patch.object(CascadaAccesoLLM, "_nivel2_proxy_zai", return_value=True), \
-             patch.object(CascadaAccesoLLM, "_nivel3_subagentes", return_value=True):
+             patch.object(CascadaAccesoLLM, "_nivel3_subagentes", return_value=True),              patch.object(EnriquecimientoOrquestador, "_validar_resumen_critico_subagente", return_value=(True, "Mock OK")):
             pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)} tarea(s)"
@@ -763,7 +763,7 @@ def test_v62_worker_falla_parcialmente():
         with patch("contexto_zai.pipeline._proxy_zai_disponible", return_value=True), \
              patch.object(CascadaAccesoLLM, "_nivel1_worker_bun", side_effect=mock_n1_parcial), \
              patch.object(CascadaAccesoLLM, "_nivel2_proxy_zai", return_value=False), \
-             patch.object(EnriquecimientoOrquestador, "_enriquecer_con_proxy_zai", return_value=False):
+             patch.object(EnriquecimientoOrquestador, "_enriquecer_con_proxy_zai", return_value=False),              patch.object(EnriquecimientoOrquestador, "_validar_resumen_critico_subagente", return_value=(True, "Mock OK")):
             pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         # 3 bloques completados por Nivel 1. Los 2 restantes caen a Nivel 2 (False)

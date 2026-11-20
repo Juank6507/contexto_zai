@@ -2762,26 +2762,59 @@ Responde SOLE con JSON:
                 return []
 
             logger.info(
-                "v6.15 F7: %d bloque(s) sin RESUMEN. CascadaAccesoLLM por bloque.",
+                "v6.15 F7: %d bloque(s) sin RESUMEN. W3 + cascada por bloque.",
                 len(bloques_sin_resumen),
             )
 
-            # 2. v6.15 F7: una instancia de CascadaAccesoLLM, reutilizada por bloque.
-            cascada = CascadaAccesoLLM(workspace_dir=workspace_dir)
-            for bloque in bloques_sin_resumen:
-                completado = cascada.procesar_tarea(bloque)
-                if not completado:
-                    # La propia cascada ya publicó la pending_task en Nivel 3
-                    # (no hace falta re-publicarla aquí). Continuar con el
-                    # siguiente bloque: el arnés nunca se detiene.
-                    logger.info(
-                        "v6.15 F7: bloque %s no completado — pending_task publicada "
-                        "en cascada.get_pending_tasks(). Continuando con el siguiente.",
-                        getattr(bloque, "filename", str(bloque)),
-                    )
+            # v6.20 F1: el W3 es el bucle externo que llama a la cascada.
+            # _ciclo_w3 llama a CascadaAccesoLLM.procesar_tarea y valida con el Crítico.
+            pending_tasks: list = []
 
-            # 3. Recoger las pending_tasks acumuladas durante todo P14.
-            pending_tasks = cascada.get_pending_tasks()
+            # v6.20: si el proxy no está disponible, la cascada no podrá acceder al LLM.
+            # Publicar pending tasks para todos los bloques sin intentar la cascada.
+            try:
+                proxy_disponible = _proxy_zai_disponible()
+            except Exception:
+                proxy_disponible = False
+
+            if not proxy_disponible:
+                logger.info("v6.20: proxy no disponible — publicando pending tasks sin cascada")
+                from contexto_zai.models import SubagentTask
+                for bloque in bloques_sin_resumen:
+                    block_id_skip = bloque.filename.replace(".md", "")
+                    task_skip = SubagentTask(
+                        task_id=f"enriquecer_{block_id_skip}",
+                        purpose=f"v6.20.proxy_caido.{bloque.filename}",
+                        prompt=f"Enriquece el bloque {bloque.filename}.",
+                        context={"filename": bloque.filename},
+                    )
+                    pending_tasks.append(task_skip)
+                    EnriquecimientoOrquestador._persistir_pending_task_en_disco(
+                        workspace_dir=workspace_dir, task=task_skip
+                    )
+            else:
+                for bloque in bloques_sin_resumen:
+                    completado = EnriquecimientoOrquestador._ciclo_w3(bloque, workspace_dir)
+                    if not completado:
+                        # El W3 no pudo completar tras 5 iteraciones → pending task
+                        from contexto_zai.models import SubagentTask
+                        block_id_w3 = getattr(bloque, "filename", str(bloque)).replace(".md", "")
+                        task_w3 = SubagentTask(
+                            task_id=f"w3_fallo_{block_id_w3}",
+                            purpose=f"v6.20.w3_fallo.{getattr(bloque, 'filename', 'bloque')}",
+                            prompt=f"El bloque {getattr(bloque, 'filename', '?')} no pudo ser enriquecido tras 5 iteraciones del W3.",
+                            context={"filename": getattr(bloque, "filename", "")},
+                        )
+                        pending_tasks.append(task_w3)
+                        EnriquecimientoOrquestador._persistir_pending_task_en_disco(
+                            workspace_dir=workspace_dir, task=task_w3
+                        )
+                        logger.info(
+                            "v6.20 W3: bloque %s no completado → pending_task. Continuando.",
+                            getattr(bloque, "filename", str(bloque)),
+                        )
+
+            # 3. v6.20: las pending_tasks ya se acumularon en el bucle W3 arriba.
 
             # 4. Sincronizar _processed_blocks.json con el estado físico real.
             AuditorWorkspace.sincronizar_registro(workspace_dir)
@@ -2986,68 +3019,71 @@ Responde SOLO con JSON:
         El W3 usa la cascada para acceder al LLM. No al revés.
 
         Flujo:
-        1. Llama a la cascada con el prompt del bloque.
-        2. La cascada intenta sus 3 niveles y devuelve la respuesta del LLM.
-        3. El Crítico valida la respuesta (fidelidad al contenido).
-        4. Si no pasa, manda feedback y vuelve a llamar a la cascada.
-        5. Hasta 5 iteraciones. Si no completa, devuelve False (pending task).
+        1. Llama a la cascada (CascadaAccesoLLM.procesar_tarea) que intenta N1→N2→N3.
+        2. Si la cascada completa el bloque, el Crítico valida la respuesta.
+        3. Si el Crítico falla, elimina el RESUMEN y vuelve a llamar a la cascada.
+        4. Hasta 5 iteraciones. Si no completa, devuelve False (pending task).
         """
         from contexto_zai.config import MAX_ITER_W3 as _MAX_ITER_W3
-        from contexto_zai.models import ThematicBlock
 
         ws = Path(workspace_dir)
-        bloque_path = ws / bloque.filename
-        if not bloque_path.exists():
-            return False
-
-        bloque_content = bloque_path.read_text(encoding="utf-8", errors="ignore")
-        max_chars = 50000
-        if len(bloque_content) > max_chars:
-            bloque_content = bloque_content[:max_chars] + "\n...(contenido truncado)..."
-
-        from contexto_zai.pipeline import PROMPT_FUSIONADO_W1W2W3
         block_id = bloque.filename.replace(".md", "")
 
-        # Bucle W3: llamar a la cascada → Crítico valida → feedback si falla
-        messages = [{"role": "user", "content": PROMPT_FUSIONADO_W1W2W3.format(bloque_content=bloque_content)}]
+        # Crear una instancia de la cascada para usarla
+        cascada = CascadaAccesoLLM(workspace_dir=workspace_dir)
 
         for intento in range(1, _MAX_ITER_W3 + 1):
-            # 1. Llamar a la cascada (que intenta N1 → N2 → N3)
-            # La cascada devuelve la respuesta del LLM o None si falló
-            respuesta = EnriquecimientoOrquestador._llamar_cascada_llm(
-                messages, workspace_dir, block_id
-            )
+            # 1. Llamar a la cascada (intenta N1 → N2 → N3)
+            # La cascada escribe los artefactos si tiene éxito
+            cascada_ok = cascada.procesar_tarea(bloque)
 
-            if respuesta is None:
-                # La cascada no pudo acceder al LLM en ningún nivel
-                logger.warning("v6.20 W3: %s - cascada sin respuesta en intento %d", block_id, intento)
-                continue
+            if not cascada_ok:
+                # La cascada no pudo completar el bloque en ningún nivel
+                # (N3 publicó pending tasks o todos fallaron).
+                # No hay nada que validar — el bloque sigue incompleto.
+                # No reintentar: la cascada ya intentó sus 3 niveles.
+                logger.warning("v6.20 W3: %s - cascada falló en intento %d", block_id, intento)
+                return False
 
-            # 2. El Crítico valida la respuesta
-            resumen = respuesta.get("resumen", "").strip()
+            # 2. La cascada completó el bloque. El Crítico valida la calidad.
+            bloque_path = ws / bloque.filename
+            if not bloque_path.exists():
+                logger.warning("v6.20 W3: %s - cascada OK pero archivo no existe", block_id)
+                return False
+
+            bloque_content = bloque_path.read_text(encoding="utf-8", errors="ignore")
+            if not bloque_content.startswith("RESUMEN:"):
+                # La cascada dijo que completó pero no hay RESUMEN — inconsistencia
+                logger.warning("v6.20 W3: %s - cascada dijo OK pero sin RESUMEN", block_id)
+                return False
+
+            parts = bloque_content.split("\n\n---\n\n", 1)
+            resumen = parts[0][len("RESUMEN:"):].strip()
+
             w3_ok, w3_motivo = EnriquecimientoOrquestador._validar_resumen_critico_subagente(
                 resumen, bloque_content, block_id
             )
 
             if w3_ok:
-                # 3. Escribir los 4 artefactos del bloque
-                EnriquecimientoOrquestador._escribir_artefactos_bloque(
-                    workspace_dir, bloque, respuesta
-                )
                 logger.info("v6.20 W3: %s OK en intento %d (%s)", block_id, intento, w3_motivo)
                 return True
 
-            # 4. Feedback para el siguiente intento
-            logger.info("v6.20 W3: %s intento %d falló (%s) — reintentando con feedback",
+            # 3. El Crítico falló — eliminar RESUMEN y archivos auxiliares para reintentar
+            logger.info("v6.20 W3: %s intento %d falló Crítico (%s) — reintentando",
                         block_id, intento, w3_motivo[:80])
-            messages.append({"role": "assistant", "content": str(respuesta)})
-            messages.append({"role": "user", "content":
-                f"El resumen no cumple: {w3_motivo}. Genera de nuevo cumpliendo: "
-                f"600-900 caracteres, 4 oraciones, sin etiquetas prohibidas, "
-                f"texto natural en un solo párrafo que refleje fielmente el contenido del bloque."
-            })
+            # Restaurar el bloque sin RESUMEN
+            if len(parts) > 1:
+                bloque_path.write_text(parts[1], encoding="utf-8")
+            else:
+                bloque_path.write_text("", encoding="utf-8")
+            # Eliminar archivos auxiliares
+            for aux_file in ws.glob(f"_responses/{block_id}_*.txt"):
+                try:
+                    aux_file.unlink()
+                except Exception:
+                    pass
 
-        # 5. Agotadas las 5 iteraciones → pending task
+        # 4. Agotadas las 5 iteraciones → pending task
         logger.warning("v6.20 W3: %s no completó tras %d intentos → pending task", block_id, _MAX_ITER_W3)
         return False
 
@@ -3236,128 +3272,68 @@ Responde SOLO con JSON:
             except Exception:
                 result = None
         else:
-            # v6.13 C10: Loop MAX_ITER_W3 con validación W3 ajena al ejecutor.
-            # Si el LLM no cumple el formato rígido (600-900, 4 oraciones, sin
-            # etiquetas), reintenta con feedback. Tras MAX_ITER_W3: si el bloque
-            # tiene >2000 chars -> pending_task (return False); si no, aceptar.
-            from contexto_zai.config import MAX_ITER_W3 as _MAX_ITER
-
-            # v6.15 F5 (criterio 32): resetear el flag de clase antes de empezar.
-            # La gestión del 429 la hace ``CascadaAccesoLLM._nivel2_proxy_zai()``
-            # con polling de progreso (5s × 3 = 15s), NO esta función. Aquí
-            # solo se setea el flag al recibir 429 y se devuelve False.
+            # v6.20 F1: la cascada NO hace W3. Solo hace 1 llamada al LLM.
+            # El W3 (con Crítico y feedback) lo hace _ciclo_w3 externamente.
             EnriquecimientoOrquestador._ultimo_error_proxy_429 = False
 
             messages = [{"role": "user", "content": prompt}]
             result = None
-            w3_ok = False
-            w3_motivo = ""
-            intento = 0
 
-            while intento < _MAX_ITER:
-                intento += 1
+            # Una sola llamada al LLM (sin bucle W3 interno)
+            payload = _json.dumps({
+                "model": "glm-4-plus",
+                "messages": messages,
+                "max_tokens": 3000,
+                "temperature": 0.3,
+            }).encode("utf-8")
 
-                payload = _json.dumps({
-                    "model": "glm-4-plus",
-                    "messages": messages,
-                    "max_tokens": 3000,
-                    "temperature": 0.3 if intento == 1 else 0.5,
-                }).encode("utf-8")
+            req = _ur.Request(PROXY_ZAI_URL, data=payload, method="POST")
+            req.add_header("Content-Type", "application/json")
 
-                req = _ur.Request(PROXY_ZAI_URL, data=payload, method="POST")
-                req.add_header("Content-Type", "application/json")
-
-                try:
-                    with _ur.urlopen(req, timeout=PROXY_ZAI_TIMEOUT * 6) as resp:
-                        raw = resp.read().decode("utf-8")
-                except _ue.HTTPError as e:
-                    if e.code == 429:
-                        # v6.15 F5 (criterio 32): se eliminó el backoff exponencial.
-                        # Setear el flag de clase y devolver False inmediatamente.
-                        # La gestión del 429 (polling de progreso, reintento, o
-                        # caída a Nivel 3) la hace CascadaAccesoLLM._nivel2_proxy_zai().
-                        EnriquecimientoOrquestador._ultimo_error_proxy_429 = True
-                        logger.warning(
-                            "v6.15 F5: HTTP 429 para %s (intento %d/%d). "
-                            "Flag _ultimo_error_proxy_429=True, return False "
-                            "(gestión delegada a CascadaAccesoLLM._nivel2_proxy_zai).",
-                            block_id, intento, _MAX_ITER,
-                        )
-                        return False
-                    else:
-                        logger.warning("v6.13 Nivel 2: HTTP %d para %s (intento %d/%d).",
-                                       e.code, block_id, intento, _MAX_ITER)
-                        return False
-                except Exception as e:
-                    logger.warning("v6.13 Nivel 2: error %s para %s (intento %d/%d).",
-                                   e, block_id, intento, _MAX_ITER)
-                    return False
-
-                # Parsear respuesta del proxy
-                try:
-                    proxy_resp = _json.loads(raw)
-                    content_text = proxy_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
-                except Exception:
-                    logger.warning("v6.13 Nivel 2: respuesta no parseable para %s.", block_id)
-                    return False
-
-                # Parsear JSON del contenido (el LLM debe devolver JSON)
-                try:
-                    content_text = content_text.strip()
-                    if content_text.startswith("```json"):
-                        content_text = content_text[7:]
-                    if content_text.startswith("```"):
-                        content_text = content_text[3:]
-                    if content_text.endswith("```"):
-                        content_text = content_text[:-3]
-                    content_text = content_text.strip()
-
-                    result = _json.loads(content_text)
-                except Exception:
-                    logger.warning("v6.13 Nivel 2: JSON no parseable para %s (intento %d). Raw: %s...",
-                                   block_id, intento, content_text[:200])
-                    # Añadir feedback para el siguiente intento
-                    messages.append({"role": "assistant", "content": content_text})
-                    messages.append({"role": "user", "content":
-                        "Tu respuesta no es JSON válido. Responde SOLO con el JSON, "
-                        "sin texto adicional ni markdown."})
-                    continue
-
-                # Guardar en caché del último intento
-                cache_file.write_text(_json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-
-                # Extraer resumen y validar con W3
-                resumen_candidate = result.get("resumen", "").strip()
-                w3_ok, w3_motivo = EnriquecimientoOrquestador._validar_resumen_w3(
-                    resumen_candidate, len(bloque_content)
-                )
-
-                if w3_ok:
-                    logger.info("v6.13 Nivel 2 W3: %s OK en intento %d (%s).",
-                                block_id, intento, w3_motivo)
-                    break
+            try:
+                with _ur.urlopen(req, timeout=PROXY_ZAI_TIMEOUT * 6) as resp:
+                    raw = resp.read().decode("utf-8")
+            except _ue.HTTPError as e:
+                if e.code == 429:
+                    EnriquecimientoOrquestador._ultimo_error_proxy_429 = True
+                    logger.warning("v6.20 Cascada N2: HTTP 429 para %s", block_id)
                 else:
-                    logger.warning("v6.13 Nivel 2 W3: %s fallo intento %d/%d: %s",
-                                   block_id, intento, _MAX_ITER, w3_motivo)
-                    if intento < _MAX_ITER:
-                        # Feedback al LLM para el siguiente intento
-                        messages.append({"role": "assistant", "content": content_text})
-                        messages.append({"role": "user", "content":
-                            f"El resumen que generaste NO cumple el formato rígido: {w3_motivo}. "
-                            "Genera de nuevo el JSON con un resumen que cumpla: "
-                            "600-900 caracteres, exactamente 4 oraciones (separadas por punto y seguido), "
-                            "SIN etiquetas como 'Tema central:', 'Decisiones:', etc., "
-                            "SIN listas con guiones, SIN negritas, texto natural en un solo párrafo."})
-
-            if result is None:
-                logger.warning("v6.13 Nivel 2: %s - sin respuesta JSON válida tras %d intentos.",
-                               block_id, _MAX_ITER)
+                    logger.warning("v6.20 Cascada N2: HTTP %d para %s", e.code, block_id)
+                return False
+            except Exception as e:
+                logger.warning("v6.20 Cascada N2: error %s para %s", e, block_id)
                 return False
 
-            # v6.20 F3: sin excepción por tamaño — siempre return False si no cumple.
-            if not w3_ok:
-                logger.warning("v6.20 W3: %s - no cumplió tras %d intentos. -> pending_task",
-                               block_id, _MAX_ITER)
+            # Parsear respuesta del proxy
+            try:
+                proxy_resp = _json.loads(raw)
+                content_text = proxy_resp.get("choices", [{}])[0].get("message", {}).get("content", "")
+            except Exception:
+                logger.warning("v6.20 Cascada N2: respuesta no parseable para %s", block_id)
+                return False
+
+            # Parsear JSON del contenido
+            try:
+                content_text = content_text.strip()
+                if content_text.startswith("```json"):
+                    content_text = content_text[7:]
+                if content_text.startswith("```"):
+                    content_text = content_text[3:]
+                if content_text.endswith("```"):
+                    content_text = content_text[:-3]
+                content_text = content_text.strip()
+                result = _json.loads(content_text)
+            except Exception:
+                logger.warning("v6.20 Cascada N2: JSON no parseable para %s", block_id)
+                return False
+
+            # Guardar en caché
+            cache_file.write_text(_json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            # v6.20 F1: la cascada NO valida. El Crítico (en _ciclo_w3) lo hará.
+            logger.info("v6.20 Cascada N2: %s respuesta recibida", block_id)
+
+            if result is None:
                 return False
 
         # Extraer campos del JSON
