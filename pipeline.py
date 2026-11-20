@@ -2780,12 +2780,18 @@ Responde SOLE con JSON:
             if not proxy_disponible:
                 logger.info("v6.20: proxy no disponible — publicando pending tasks sin cascada")
                 from contexto_zai.models import SubagentTask
+                from contexto_zai.pipeline import PROMPT_FUSIONADO_W1W2W3
                 for bloque in bloques_sin_resumen:
                     block_id_skip = bloque.filename.replace(".md", "")
+                    bloque_path_skip = Path(workspace_dir) / bloque.filename
+                    bloque_content_skip = ""
+                    if bloque_path_skip.exists():
+                        bloque_content_skip = bloque_path_skip.read_text(encoding="utf-8", errors="ignore")[:50000]
+                    prompt_skip = PROMPT_FUSIONADO_W1W2W3.format(bloque_content=bloque_content_skip)
                     task_skip = SubagentTask(
                         task_id=f"enriquecer_{block_id_skip}",
                         purpose=f"v6.20.proxy_caido.{bloque.filename}",
-                        prompt=f"Enriquece el bloque {bloque.filename}.",
+                        prompt=prompt_skip,
                         context={"filename": bloque.filename},
                     )
                     pending_tasks.append(task_skip)
@@ -2794,24 +2800,18 @@ Responde SOLE con JSON:
                     )
             else:
                 for bloque in bloques_sin_resumen:
-                    completado = EnriquecimientoOrquestador._ciclo_w3(bloque, workspace_dir)
+                    completado, w3_pending = EnriquecimientoOrquestador._ciclo_w3(bloque, workspace_dir)
                     if not completado:
-                        # El W3 no pudo completar tras 5 iteraciones → pending task
-                        from contexto_zai.models import SubagentTask
-                        block_id_w3 = getattr(bloque, "filename", str(bloque)).replace(".md", "")
-                        task_w3 = SubagentTask(
-                            task_id=f"w3_fallo_{block_id_w3}",
-                            purpose=f"v6.20.w3_fallo.{getattr(bloque, 'filename', 'bloque')}",
-                            prompt=f"El bloque {getattr(bloque, 'filename', '?')} no pudo ser enriquecido tras 5 iteraciones del W3.",
-                            context={"filename": getattr(bloque, "filename", "")},
-                        )
-                        pending_tasks.append(task_w3)
-                        EnriquecimientoOrquestador._persistir_pending_task_en_disco(
-                            workspace_dir=workspace_dir, task=task_w3
-                        )
+                        # El W3 no pudo completar — las pending tasks vienen del W3
+                        pending_tasks.extend(w3_pending)
+                        for task_w3 in w3_pending:
+                            EnriquecimientoOrquestador._persistir_pending_task_en_disco(
+                                workspace_dir=workspace_dir, task=task_w3
+                            )
                         logger.info(
-                            "v6.20 W3: bloque %s no completado → pending_task. Continuando.",
+                            "v6.20 W3: bloque %s no completado → %d pending task(s). Continuando.",
                             getattr(bloque, "filename", str(bloque)),
+                            len(w3_pending),
                         )
 
             # 3. v6.20: las pending_tasks ya se acumularon en el bucle W3 arriba.
@@ -3013,7 +3013,7 @@ Responde SOLO con JSON:
     def _ciclo_w3(
         bloque,
         workspace_dir: Path | str,
-    ) -> bool:
+    ) -> tuple[bool, list]:
         """v6.20 F1: El ciclo W3 es el bucle externo que llama a la cascada.
 
         El W3 usa la cascada para acceder al LLM. No al revés.
@@ -3022,7 +3022,12 @@ Responde SOLO con JSON:
         1. Llama a la cascada (CascadaAccesoLLM.procesar_tarea) que intenta N1→N2→N3.
         2. Si la cascada completa el bloque, el Crítico valida la respuesta.
         3. Si el Crítico falla, elimina el RESUMEN y vuelve a llamar a la cascada.
-        4. Hasta 5 iteraciones. Si no completa, devuelve False (pending task).
+        4. Hasta 5 iteraciones. Si no completa, devuelve (False, pending_tasks).
+        5. Si la cascada cae a N3, recoge las pending tasks de la cascada y las devuelve.
+
+        Returns:
+            Tupla (completado, pending_tasks). Si completado=True, pending_tasks=[].
+            Si completado=False, pending_tasks contiene las tareas que el agente debe ejecutar.
         """
         from contexto_zai.config import MAX_ITER_W3 as _MAX_ITER_W3
 
@@ -3034,28 +3039,43 @@ Responde SOLO con JSON:
 
         for intento in range(1, _MAX_ITER_W3 + 1):
             # 1. Llamar a la cascada (intenta N1 → N2 → N3)
-            # La cascada escribe los artefactos si tiene éxito
             cascada_ok = cascada.procesar_tarea(bloque)
 
             if not cascada_ok:
-                # La cascada no pudo completar el bloque en ningún nivel
-                # (N3 publicó pending tasks o todos fallaron).
-                # No hay nada que validar — el bloque sigue incompleto.
-                # No reintentar: la cascada ya intentó sus 3 niveles.
-                logger.warning("v6.20 W3: %s - cascada falló en intento %d", block_id, intento)
-                return False
+                # La cascada no pudo completar el bloque en ningún nivel.
+                # Si N3 publicó pending tasks, recogerlas.
+                pending_de_cascada = cascada.get_pending_tasks()
+                if pending_de_cascada:
+                    logger.info("v6.20 W3: %s - cascada falló, %d pending tasks de N3",
+                                block_id, len(pending_de_cascada))
+                    return False, pending_de_cascada
+                # Si N3 no publicó pending tasks, crear una propia
+                from contexto_zai.models import SubagentTask
+                from contexto_zai.pipeline import PROMPT_FUSIONADO_W1W2W3
+                bloque_path_n3 = ws / bloque.filename
+                bloque_content_n3 = ""
+                if bloque_path_n3.exists():
+                    bloque_content_n3 = bloque_path_n3.read_text(encoding="utf-8", errors="ignore")[:50000]
+                prompt_n3 = PROMPT_FUSIONADO_W1W2W3.format(bloque_content=bloque_content_n3)
+                task_n3 = SubagentTask(
+                    task_id=f"enriquecer_{block_id}",
+                    purpose=f"v6.20.w3_cascada_fallo.{bloque.filename}",
+                    prompt=prompt_n3,
+                    context={"filename": bloque.filename},
+                )
+                logger.warning("v6.20 W3: %s - cascada falló, pending task creada", block_id)
+                return False, [task_n3]
 
             # 2. La cascada completó el bloque. El Crítico valida la calidad.
             bloque_path = ws / bloque.filename
             if not bloque_path.exists():
                 logger.warning("v6.20 W3: %s - cascada OK pero archivo no existe", block_id)
-                return False
+                return False, []
 
             bloque_content = bloque_path.read_text(encoding="utf-8", errors="ignore")
             if not bloque_content.startswith("RESUMEN:"):
-                # La cascada dijo que completó pero no hay RESUMEN — inconsistencia
                 logger.warning("v6.20 W3: %s - cascada dijo OK pero sin RESUMEN", block_id)
-                return False
+                return False, []
 
             parts = bloque_content.split("\n\n---\n\n", 1)
             resumen = parts[0][len("RESUMEN:"):].strip()
@@ -3066,10 +3086,10 @@ Responde SOLO con JSON:
 
             if w3_ok:
                 logger.info("v6.20 W3: %s OK en intento %d (%s)", block_id, intento, w3_motivo)
-                return True
+                return True, []
 
             # 3. El Crítico falló — eliminar RESUMEN y archivos auxiliares para reintentar
-            logger.info("v6.20 W3: %s intento %d falló Crítico (%s) — reintentando",
+            logger.info("v6.20 W3: %s intento %d falló Crítico (%s) — reintentando con feedback",
                         block_id, intento, w3_motivo[:80])
             # Restaurar el bloque sin RESUMEN
             if len(parts) > 1:
@@ -3082,10 +3102,45 @@ Responde SOLO con JSON:
                     aux_file.unlink()
                 except Exception:
                     pass
+            # v6.20 F4: inyectar feedback del Crítico en el contenido del bloque
+            # para que la cascada lo pase al LLM en el siguiente intento.
+            # Se añade como nota al inicio del contenido del bloque.
+            feedback_note = (
+                f"\n\n## FEEDBACK DEL CRÍTICO (intento {intento} falló)\n\n"
+                f"El resumen anterior no cumplió: {w3_motivo}\n"
+                f"Genera de nuevo cumpliendo: 600-900 caracteres, 4 oraciones, "
+                f"sin etiquetas prohibidas, texto natural que refleje fielmente el contenido.\n"
+            )
+            current_content = bloque_path.read_text(encoding="utf-8", errors="ignore")
+            if "FEEDBACK DEL CRÍTICO" not in current_content:
+                bloque_path.write_text(current_content + feedback_note, encoding="utf-8")
+            else:
+                # Reemplazar el feedback anterior
+                import re as _re_fb
+                cleaned = _re_fb.sub(r"\n\n## FEEDBACK DEL CRÍTICO.*$", "", current_content, flags=_re_fb.DOTALL).strip()
+                bloque_path.write_text(cleaned + feedback_note, encoding="utf-8")
 
         # 4. Agotadas las 5 iteraciones → pending task
         logger.warning("v6.20 W3: %s no completó tras %d intentos → pending task", block_id, _MAX_ITER_W3)
-        return False
+        # Recoger pending tasks de N3 si las hay
+        pending_de_cascada_final = cascada.get_pending_tasks()
+        if pending_de_cascada_final:
+            return False, pending_de_cascada_final
+        # Crear una propia si N3 no publicó
+        from contexto_zai.models import SubagentTask
+        from contexto_zai.pipeline import PROMPT_FUSIONADO_W1W2W3
+        bloque_path_final = ws / bloque.filename
+        bloque_content_final = ""
+        if bloque_path_final.exists():
+            bloque_content_final = bloque_path_final.read_text(encoding="utf-8", errors="ignore")[:50000]
+        prompt_final = PROMPT_FUSIONADO_W1W2W3.format(bloque_content=bloque_content_final)
+        task_final = SubagentTask(
+            task_id=f"enriquecer_{block_id}",
+            purpose=f"v6.20.w3_agotado.{bloque.filename}",
+            prompt=prompt_final,
+            context={"filename": bloque.filename},
+        )
+        return False, [task_final]
 
     @staticmethod
     def _llamar_cascada_llm(

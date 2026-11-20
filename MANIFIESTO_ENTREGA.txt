@@ -1,5 +1,5 @@
 MANIFIESTO DE ENTREGA — contexto_zai v6.20
-Fecha: 2026-11-20 01:06:12
+Fecha: 2026-11-20 11:12:52
 Versión: 6.20
 VERSION: 6.20
 Total: 183 archivos
@@ -117,7 +117,7 @@ mini-services/worker-cascade/setup.ps1|faa1146020f37d4198d9d078779f0b59c4ca10595
 mini-services/worker-cascade/setup.sh|59ebb2081d070f88dc704050ed1b030bf8269b8a53551ddf07a92c2052532c46|4768
 mini-services/worker-cascade/tests/self_test.ts|bc6c62ca46190093c016aa14de409eb0901a837dbc4b8fdf1f2cc9c8fac35012|14837
 models.py|fb720087a22c76ce39ad0abcc6d92a6970576e52338aebb1be1017c28fc124f4|35068
-pipeline.py|5e5fd5c4d4c989e152db739d6833baac1be9b6338b0f5b4fe68c19f77a1060d6|278743
+pipeline.py|7279fc2b94e981c90a7cb84d17409fd8765786def5085af9c79fbffb91bf3922|281936
 procesadores/__init__.py|adb35543ce16281ff5ec4ef072e7af73cca95b712134a1657f8438ab29901c41|1061
 procesadores/procesador_consulta.py|3bb67a9fd628468911384b1625c1103873bfeafb5dc0ca674236d8361c3aed4e|17949
 procesadores/procesador_documento.py|3d6e3d262dc94bdf3b46006b3bdc83108e647d23d48dd12322759d8cce6c221f|20882
