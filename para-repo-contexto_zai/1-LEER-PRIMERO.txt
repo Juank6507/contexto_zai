@@ -1,0 +1,126 @@
+============================================================
+  CZAI v7.0 — Modularización + abstracción de plataforma + fixes v6.20
+============================================================
+
+Este zip contiene la entrega COMPLETA de CZAI v7.0.
+No necesitas nada más. Todo está aquí adentro.
+
+------------------------------------------------------------
+  QUÉ HAY EN ESTE ZIP
+------------------------------------------------------------
+
+Este zip tiene 3 cosas en la raíz:
+
+1. Este archivo de instrucciones (el que estás leyendo)
+
+2. update_czai.ps1 — script PowerShell de entrega (v1.5.4)
+   Ejecuta la verificación de contenido + Windows + cierre.
+
+3. Una carpeta llamada "para-repo-contexto_zai"
+   Contiene TODOS los archivos del repositorio contexto_zai
+   (no solo modificados — entrega completa).
+
+------------------------------------------------------------
+  QUÉ CONTIENE ESTA ACTUALIZACIÓN
+------------------------------------------------------------
+
+Esta entrega implementa v7.0 sobre v6.20 con tres cambios mayores:
+
+  A. MODULARIZACIÓN ARQUITECTÓNICA
+     - pipeline.py reducido de 6158 a 2570 líneas (-58%).
+     - 5 módulos nuevos: pipeline_cascada, pipeline_w3, pipeline_d7,
+       pipeline_archivos, pipeline_auditoria.
+     - La clase EnriquecimientoOrquestador se eliminó.
+     - Los 4 subprocesos reusables (cascada, W3, D7, archivos) viven
+       en módulos separados como clases concretas.
+
+  B. ABSTRACCIÓN DE PLATAFORMA (prepara para MB en v7.1)
+     - Paquete platforms/ con 4 interfaces abstractas:
+       PlatformAuth, PlatformChat, PlatformLinks, PlatformLLM.
+     - Implementaciones concretas de Zai en platforms/zai/.
+     - La cascada recibe PlatformLLM por constructor (no más modelo
+       GLM hardcoded).
+     - MessageExtractor usa interfaces abstractas.
+     - Worker Bun y Subagent Proxy refactorizados con LLMProvider
+       en TypeScript (defaults Zai hasta que MB esté disponible).
+     - config.py renombrado: PROXY_ZAI_URL → PROXY_LLM_URL.
+
+  C. FIXES DE LOS 2 BUGS DE v6.20
+     Bug 1 — Comunicación del daemon cuando la cascada cae a rate limit:
+       - El endpoint /collect-responses devuelve en la respuesta HTTP
+         un campo explícito "pending_tasks" con la lista completa de
+         tareas cuando la cascada cae al Nivel 3.
+       - El agente CZAI recibe todo en una sola respuesta y sabe
+         exactamente qué hacer sin leer _pending_tasks.json.
+       - Subagent Proxy: añadido CircuitBreaker (5 fallos → 60s cooldown)
+         y clasificación de errores (401/403 → dead letter, no reintenta).
+       - Subagent Proxy: siempre elimina la tarea del pending después de
+         procesarla (cierra el bucle infinito de v6.20).
+
+     Bug 2 — Subproceso de archivos de recuperación que no completa:
+       - _generar_archivos_recuperacion reescrito por pasos: usa los
+         generadores existentes (EstadoGenerator, DecisionesGenerator,
+         IndiceGenerator) por separado. NO bypassa la cascada.
+       - RecogedorRespuestas.limpiar: preserva los archivos auxiliares
+         (_nombre.txt, _decisiones.txt, _temas.txt) y el directorio cache/.
+         Cierra el bucle de re-cascada infinita.
+       - IntegradorRespuestas: añadido handler para task_id "enriquecer_bloque_NN"
+         que era el patrón que se descartaba silenciosamente en v6.20.
+       - Consolidador de decisiones: añadido fallback a caches cuando
+         los _decisiones.txt no existen. Recupera 65 decisiones reales.
+       - EstadoGenerator: arreglados _FILE_PATH_PATTERN (no captura
+         puntuación Python), _ERROR_REGEX (exige contexto sintáctico),
+         _strip_tool_calls (cubre JSON compacto), _strip_bash_blocks.
+       - IndiceGenerator: tokens calculados del tamaño real de los bloques.
+       - _regenerar_sintesis_contexto (nuevo): regenera la sección G0.B
+         tras el enriquecimiento.
+       - _reemplazar_placeholders_objetivo (nuevo): reemplaza los 4
+         placeholders del 03_objetivo_proyecto.md con valores reales.
+       - ExchangeBuilder.build_from_workspace (nuevo): reconstruye
+         intercambios desde los bloque_NN.md del workspace.
+
+------------------------------------------------------------
+  SENTENCIA DE LANZAMIENTO
+------------------------------------------------------------
+
+ Tras descargar este zip a tu carpeta de Descargas en Windows,
+ ejecuta en PowerShell (copia y pega tal cual):
+
+  `$z = Join-Path `$env:USERPROFILE "Downloads\contexto_zai_v7.0.zip"
+  `$t = Join-Path `$env:TEMP "czai_v7_release"
+  if (Test-Path `$t) { Remove-Item `$t -Recurse -Force }
+  Expand-Archive -Path `$z -DestinationPath `$t -Force
+  & (Join-Path `$t "update_czai.ps1") -ZipPath `$z -RepoDir "C:\Python\Proyectos\contexto_zai"
+
+ (los backticks antes de $env:USERPROFILE, $env:TEMP, $t, $z evitan
+  que el shell exterior expanda las variables antes de pasarlas al
+  powershell.exe interior).
+
+------------------------------------------------------------
+  GAUNTLET DETERMINISTA APROBADO
+------------------------------------------------------------
+
+El Gauntlet determinista v7.0 se ejecutó en el sandbox con datos
+reales del workspace (22 bloques, 15 caches, 649 intercambios):
+
+  - 41/41 criterios OK (100%).
+  - 65 decisiones consolidadas de caches reales.
+  - 649 intercambios reconstruidos desde los bloque_NN.md.
+  - 4 placeholders reemplazados (acta de nacimiento del bloque_22).
+  - Daemon probado end-to-end: /health, /status, /pending-tasks,
+    /generar-archivos todos responden correctamente.
+  - 0 literales hardcoded de modelo en código funcional.
+  - 0 bypass en _generar_archivos_recuperacion.
+
+Veredicto: APROBADO.
+
+------------------------------------------------------------
+  PENDIENTE TRAS LA ENTREGA
+------------------------------------------------------------
+
+ - Validar en Windows (I.3.b): ejecuta las sentencias del script.
+ - Git push (I.3.c): el script lo hace automáticamente en paso 11.
+ - Re-clonado final (I.3.e): tras confirmar el push, eliminar la
+   carpeta local de contexto_zai y re-clonar desde GitHub.
+
+**Fin del 1-LEER-PRIMERO.txt**

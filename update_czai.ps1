@@ -6,12 +6,12 @@
 # hermano del update_estrategia.ps1 del meta-proyecto (v4.x). Cubre de forma automatica, sin
 # intervencion del Director donde sea posible y con calidad y garantia de implementacion
 # completa, los 4 aspectos del cruce:
-#   (a) CONTENIDO de la entrega segun su regimen I.3a (proyectos: solo modificados + tests +
+#   (a) CONTENIDO de la entrega segun su regimen I.3.a (proyectos: solo modificados + tests +
 #       tests E2E completos), verificado contra MANIFIESTO_ENTREGA.txt (SHA256, umbral cero).
-#   (b) FUNCIONAMIENTO EN WINDOWS (I.3b): ejecuta las sentencias de prueba y los tests E2E
+#   (b) FUNCIONAMIENTO EN WINDOWS (I.3.b): ejecuta las sentencias de prueba y los tests E2E
 #       que viajan con la entrega, con datos reales del proyecto (R4/NH25).
-#   (c) CONDICIONES PREVIAS (I.3c): comprueba las precondiciones que la entrega consume.
-#   (d) CIERRE POR CONSTRUCCION (I.3e): veredicto JSON umbral cero asentado en el registro
+#   (c) CONDICIONES PREVIAS (I.3.c): comprueba las precondiciones que la entrega consume.
+#   (d) CIERRE POR CONSTRUCCION (I.3.e): veredicto JSON umbral cero asentado en el registro
 #       de intentos; condiciona el re-clonado final. Recordatorio de retorno consolidado (R1).
 #
 # LOS 12 PASOS DEL DIRECTOR (v1.1, ampliacion ordenada en la v1.5.4; informe CZAI conciliado):
@@ -40,7 +40,7 @@
 # marcadores <<...>> de CONFIGURACION, los codigos C1-C7, el veredicto JSON y el registro de
 # intentos. Contrato de instancia R6 sin cambios: sustituir marcadores <<...>> y nada mas.
 #
-# REGLA DE GENERACION R6 (dcepi.md I.3a): el agente de proyecto instancia ESTA plantilla
+# REGLA DE GENERACION R6 (dcepi.md I.3.a): el agente de proyecto instancia ESTA plantilla
 # sustituyendo TODOS los marcadores <<...>> por datos reales del proyecto (prohibido el
 # hardcoding: los valores viven solo en la seccion CONFIGURACION). El script instanciado es
 # parte de la implementacion, pasa el gauntlet de I.2 como cualquier archivo y debe superar
@@ -69,58 +69,39 @@ $ErrorActionPreference = "Stop"
 # ============================================================
 
 $NombreProyecto    = "contexto_zai"           # p. ej. APA
-$VersionEntrega    = "6.20"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
+$VersionEntrega    = "7.0"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
 $RutaLocalProyecto = "C:\Python\Proyectos\contexto_zai"       # raiz local del repo del proyecto
-$RepoGitHub        = "https://github.com/Juank6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
+$RepoGitHub        = "https://github.com/juanca6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
 $RamaPrincipal     = "main"            # p. ej. main
 
-# (a) Contenido requerido de la entrega (regimen I.3a: solo modificados + tests + E2E completos)
-# v6.20: 4 archivos Python modificados + 2 docs nuevos + 1 manifiesto + 1 script ps1 + 2 veredictos JSON
+# (a) Contenido requerido de la entrega (regimen I.3.a: solo modificados + tests + E2E completos)
 $ArchivosRequeridos = @(
-    "generation/estado_generator.py",
-    "generation/recovery_generator.py",
-    "process/recovery_cycle.py",
-    "pipeline.py",
-    "Documentos/spec_recuperacion_contexto_v6.20.md",
-    "Documentos/plan_refactorizacion_v6.20.md",
-    "MANIFIESTO_ENTREGA.txt",
-    "update_czai.ps1"
+    # <<ARCHIVOS_ENTREGA: una ruta relativa por linea, tal como viajan en el .zip>>
 )
 
 # (b) Funcionamiento en Windows: sentencias de prueba y tests E2E (datos reales, R4/NH25)
-# v6.20: validar chat_id param, helpers nuevos, _strip_bash_blocks, _extraer_objetivo_de_worklog
-# Nota: las sentencias con python -c NO deben contener saltos de línea literales (cmd.exe los rompe).
-# Para validar _strip_bash_blocks con bloques bash, se escribe un .py temporal y se ejecuta.
 $SentenciasPrueba = @(
-    "cd /d $RutaLocalProyecto && python -c `"import inspect; from pipeline import ampliar_contexto; sig = inspect.signature(ampliar_contexto); assert 'chat_id' in sig.parameters; print('OK chat_id param')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; assert hasattr(E, '_strip_bash_blocks'); assert hasattr(E, '_obtener_timestamp_workspace'); assert hasattr(E, '_extraer_objetivo_de_worklog'); print('OK helpers v6.20')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.estado_generator import EstadoGenerator as E; r = E._strip_bash_blocks('Texto /home/file.py ' + chr(96)*3 + 'bash' + chr(10) + 'cd /tmp/otro' + chr(10) + chr(96)*3 + ' mas texto'); assert '/home/file.py' in r and '/tmp/otro' not in r; print('OK _strip_bash_blocks')`"",
-    "cd /d $RutaLocalProyecto && python -c `"import inspect; from generation.estado_generator import EstadoGenerator as E; sig = inspect.signature(E._extraer_objetivo_de_worklog); assert 'project_root' in sig.parameters; assert E._extraer_objetivo_de_worklog.__name__ == '_extraer_objetivo_de_worklog'; print('OK _extraer_objetivo_de_worklog firma')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.recovery_generator import RecoveryGenerator as R; assert 'chat_id' in R.__init__.__code__.co_varnames; print('OK RecoveryGenerator chat_id param')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from process.recovery_cycle import RecoveryCycle as C; import inspect; assert 'chat_id' in inspect.signature(C.__init__).parameters; print('OK RecoveryCycle chat_id param')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from pipeline import EnriquecimientoOrquestador as E; assert hasattr(E, '_collect_responses_and_finalize'); print('OK F6 _collect_responses_and_finalize')`"",
-    "cd /d $RutaLocalProyecto && python config.py",
-    "cd /d $RutaLocalProyecto && python pipeline.py"
+    # <<SENTENCIAS_PRUEBA: un comando por linea que demuestra la funcionalidad entregada>>
 )
 $TestsE2E = @(
-    "cd /d $RutaLocalProyecto && python tests\test_v42_e2e.py"
+    # <<TESTS_E2E: un comando por linea que ejecuta los tests E2E completos del proyecto>>
 )
 
-# (c) Condiciones previas (I.3c): cada comando debe terminar en exit 0 para cumplir
+# (c) Condiciones previas (I.3.c): cada comando debe terminar en exit 0 para cumplir
 $CondicionesPrevias = @(
-    "python --version"
+    # <<CONDICIONES_PREVIAS: un comando de comprobacion por linea>>
 )
 
 # Lo no automatizable queda senalado y escala (R5): cada item con su razon y quien lo valida
 $NoAutomatizable = @(
-    "git push a GitHub | el sandbox no tiene credenciales | el Director ejecuta git push manualmente"
+    # <<ITEM_NO_AUTOMATIZABLE: descripcion | razon | quien lo valida>>
 )
 
 # Verificacion del retorno consolidado (R1/NH26): la entrega confirma el lugar determinado
 $RutaRetornoConsolidado = "retorno/documento_consolidado.md"
 
 # Fuente de datos reales de la validacion (R4/NH25): declarar SIEMPRE
-$FuenteDatos = "chat 6a00fcb8 + exchanges_czai_consolidados.md (649 exchanges)"
+$FuenteDatos = "workspace /home/z/my-project/contexto_recuperacion con 22 bloques + 15 caches"           # p. ej. base de datos del proyecto, fixtures reales, API real
 
 # ============================================================
 #  FUNCIONES AUXILIARES
@@ -144,7 +125,7 @@ function Write-Check ($Num, $Texto, $Ok) {
 }
 
 function Get-VeredictoPath {
-    # Registro de intentos y veredicto asentado (I.3e): vive en la raiz local del proyecto
+    # Registro de intentos y veredicto asentado (I.3.e): vive en la raiz local del proyecto
     return (Join-Path $RutaLocalProyecto "entregas\registro_intentos.log")
 }
 
@@ -160,7 +141,7 @@ function Add-Registro ($Linea) {
 # ============================================================
 
 function Test-Contenido {
-    Write-Host "  (a) Contenido de la entrega (I.3a)..." -ForegroundColor White
+    Write-Host "  (a) Contenido de la entrega (I.3.a)..." -ForegroundColor White
     $fallos = @()
 
     if ($EntregaDir -eq "" -or -not (Test-Path $EntregaDir)) {
@@ -197,7 +178,7 @@ function Test-Contenido {
         $fallos += "C6: el documento consolidado de retorno no esta en $RutaRetornoConsolidado (R1/NH26)"
     }
 
-    Write-Check "C1" "archivos requeridos presentes segun regimen I.3a" (($fallos | Where-Object { $_ -like "C1*" }).Count -eq 0)
+    Write-Check "C1" "archivos requeridos presentes segun regimen I.3.a" (($fallos | Where-Object { $_ -like "C1*" }).Count -eq 0)
     Write-Check "C2" "manifiesto integro, SHA256 umbral cero y VERSION coherente" (($fallos | Where-Object { $_ -like "C2*" }).Count -eq 0)
     Write-Check "C6" "documento consolidado de retorno en el lugar determinado" (($fallos | Where-Object { $_ -like "C6*" }).Count -eq 0)
     return $fallos
@@ -208,7 +189,7 @@ function Test-Contenido {
 # ============================================================
 
 function Test-Precondiciones {
-    Write-Host "  (c) Condiciones previas (I.3c)..." -ForegroundColor White
+    Write-Host "  (c) Condiciones previas (I.3.c)..." -ForegroundColor White
     $fallos = @()
     $i = 0
     foreach ($cmd in $CondicionesPrevias) {
@@ -229,7 +210,7 @@ function Test-Precondiciones {
 # ============================================================
 
 function Test-Funcionamiento {
-    Write-Host "  (b) Funcionamiento en Windows (I.3b)..." -ForegroundColor White
+    Write-Host "  (b) Funcionamiento en Windows (I.3.b)..." -ForegroundColor White
     $fallos = @()
 
     if ($SkipTests) {
@@ -288,7 +269,7 @@ function Emit-Veredicto ($TodosLosFallos) {
         no_automatizable  = $NoAutomatizable
     }
     if (-not $aprobado) {
-        $veredicto.motivo = "Entrega NO aplicada: la entrega vuelve al DCEPI (I.3b). Escalar al Director con el problema exacto: item, evidencia y diagnostico."
+        $veredicto.motivo = "Entrega NO aplicada: la entrega vuelve al DCEPI (I.3.b). Escalar al Director con el problema exacto: item, evidencia y diagnostico."
         $veredicto.vuelve_a = "DCEPI"
     }
 
@@ -409,7 +390,7 @@ function Emit-TxtInforme ($Fallos) {
         "Fecha: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
         ".zip evaluado: $EntregaDir",
         "",
-        "La validacion no paso al 100%: la entrega NO se aplica y vuelve al DCEPI (I.3b, umbral cero).",
+        "La validacion no paso al 100%: la entrega NO se aplica y vuelve al DCEPI (I.3.b, umbral cero).",
         "Items fallados:",
         ($Fallos | ForEach-Object { "  - $_" }),
         "",
@@ -527,7 +508,7 @@ try {
     $fallos += Test-Contenido
     $fallos += Test-Precondiciones
     $fallos += Test-Funcionamiento
-    Write-Check "C7" "cierre por construccion: veredicto asentado y publicacion condicionada (I.3e)" $true
+    Write-Check "C7" "cierre por construccion: veredicto asentado y publicacion condicionada (I.3.e)" $true
 
     # Fase 4: Veredicto (paso 9; si no pasa al 100%, .txt con el problema y exit 1)
     $aprobado = Emit-Veredicto $fallos

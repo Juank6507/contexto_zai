@@ -1,0 +1,11 @@
+{
+  "name": "pipeline-daemon",
+  "version": "1.0.0",
+  "description": "Mini-servicio daemon del proceso contexto_zai (puerto 8088). v6.14 F5 criterios 20, 21.",
+  "main": "index.py",
+  "scripts": {
+    "start": "python3 index.py"
+  },
+  "keywords": ["contexto_zai", "pipeline", "daemon", "v6.14"],
+  "license": "MIT"
+}
