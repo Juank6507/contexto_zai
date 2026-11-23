@@ -26,10 +26,10 @@ log = logging.getLogger("h2_e2e")
 def main():
     log.info("=== Test REAL H2 E2E: RecoveryCycle + EstadoGenerator con launcher ===")
 
-    from contexto_zai.client.credential_manager import CredentialManager
-    from contexto_zai.process.recovery_cycle import RecoveryCycle
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from client.credential_manager import CredentialManager
+    from process.recovery_cycle import RecoveryCycle
+    from generation.estado_generator import EstadoGenerator
+    from subagents.launcher import SubagentLauncher
 
     cm = CredentialManager()
     jwt = cm.get_jwt()
@@ -93,9 +93,9 @@ def main():
     # Para eso necesitamos los intercambios. Los re-extraemos rápido.
     log.info("\n--- FASE 3: Re-extraer intercambios para generar con launcher ---")
 
-    from contexto_zai.client.auth_client import AuthClient
-    from contexto_zai.client.chat_client import ChatClient
-    from contexto_zai.processing.exchange_builder import ExchangeBuilder
+    from client.auth_client import AuthClient
+    from client.chat_client import ChatClient
+    from processing.exchange_builder import ExchangeBuilder
 
     ac = AuthClient(token=jwt)
     cc = ChatClient(token=jwt)

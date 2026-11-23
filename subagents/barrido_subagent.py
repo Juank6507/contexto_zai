@@ -36,10 +36,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
+from subagents.launcher import SubagentLauncher, SubagentResponse
 
 if TYPE_CHECKING:
-    from contexto_zai.models import RecoveryMetadata
+    from models import RecoveryMetadata
 
 logger = logging.getLogger(__name__)
 

@@ -43,8 +43,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import WORKSPACE_OUTPUT_DIR
-from contexto_zai.models import SubagentTask
+from config import WORKSPACE_OUTPUT_DIR
+from models import SubagentTask
 
 logger = logging.getLogger(__name__)
 
@@ -63,8 +63,8 @@ class EntregadorTareas:
         workspace_dir: Directorio del workspace donde vive _pending_tasks.json.
 
     Usage (proceso):
-        >>> from contexto_zai.coordinador import EntregadorTareas
-        >>> from contexto_zai.models import SubagentTask
+        >>> from coordinador import EntregadorTareas
+        >>> from models import SubagentTask
         >>> entregador = EntregadorTareas(workspace_dir="/path/to/ws")
         >>> tareas = [SubagentTask(task_id="estado_d4", prompt="...")]
         >>> entregador.publicar(tareas)

@@ -25,9 +25,9 @@ log = logging.getLogger("pipeline-runner")
 
 
 def main() -> int:
-    from contexto_zai.client.credential_manager import CredentialManager
-    from contexto_zai.models import DetectionTrigger
-    from contexto_zai.pipeline import run
+    from client.credential_manager import CredentialManager
+    from models import DetectionTrigger
+    from pipeline import run
 
     cm = CredentialManager()
     jwt = cm.get_jwt()

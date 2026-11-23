@@ -30,8 +30,8 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from contexto_zai.detection.lexic_trigger import LexicTrigger
-from contexto_zai.detection.self_questions import SelfQuestions
-from contexto_zai.detection.token_counter import TokenCounter
+from detection.lexic_trigger import LexicTrigger
+from detection.self_questions import SelfQuestions
+from detection.token_counter import TokenCounter
 
 __all__ = ["LexicTrigger", "TokenCounter", "SelfQuestions"]

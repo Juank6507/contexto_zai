@@ -16,8 +16,8 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-from contexto_zai.platforms.interfaces import PlatformLLM
-from contexto_zai.platforms.zai.zai_config import (
+from platforms.interfaces import PlatformLLM
+from platforms.zai.zai_config import (
     ZAI_PROXY_LLM_URL,
     ZAI_PROXY_LLM_TIMEOUT,
     ZAI_DEFAULT_MODEL_HEAVY,

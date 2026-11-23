@@ -41,11 +41,11 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from contexto_zai.config import TOKEN_LIMITS
-from contexto_zai.models import RecoveryMetadata
+from config import TOKEN_LIMITS
+from models import RecoveryMetadata
 
 if TYPE_CHECKING:
-    from contexto_zai.models import ThematicBlock
+    from models import ThematicBlock
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +431,7 @@ class IndiceGenerator:
                 if not temas:
                     temas = ["anterior"]
                 # Crear ThematicBlock sin exchanges (solo para el índice)
-                from contexto_zai.models import ThematicBlock as _TB
+                from models import ThematicBlock as _TB
                 block = _TB(filename=p.name, temas=temas)
                 blocks.append(block)
                 added += 1
@@ -455,7 +455,7 @@ if __name__ == "__main__":
     # -- Validación interna de indice_generator.py --
     print("=== Validacion de indice_generator.py ===\n")
 
-    from contexto_zai.models import Exchange, Message, MessageRole, ThematicBlock
+    from models import Exchange, Message, MessageRole, ThematicBlock
 
     gen = IndiceGenerator()
 
@@ -493,7 +493,7 @@ if __name__ == "__main__":
     print(f"[OK] Resumen de bloques con temas listados")
 
     # Test 4: con metadata
-    from contexto_zai.models import RecoveryMetadata
+    from models import RecoveryMetadata
     meta = RecoveryMetadata(chat_id="abc", share_id="def")
     meta.registrar_tema("validaciones", "bloque_01.md")
     meta.registrar_tema("configuracion_proyecto", "bloque_01.md")

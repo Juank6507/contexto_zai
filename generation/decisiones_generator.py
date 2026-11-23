@@ -51,12 +51,12 @@ else:
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
-from contexto_zai.config import DECISIONES_LOTE_SIZE, TOKEN_LIMITS
-from contexto_zai.models import Decision
-from contexto_zai.subagents.launcher import SubagentLauncher
+from config import DECISIONES_LOTE_SIZE, TOKEN_LIMITS
+from models import Decision
+from subagents.launcher import SubagentLauncher
 
 if TYPE_CHECKING:
-    from contexto_zai.models import Exchange
+    from models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +79,14 @@ class DecisionesGenerator:
 
     Usage (modo v4.0 con launcher)::
 
-        >>> from contexto_zai.subagents.launcher import SubagentLauncher
+        >>> from subagents.launcher import SubagentLauncher
         >>> launcher = SubagentLauncher()
         >>> gen = DecisionesGenerator(launcher=launcher)
         >>> content, summary = gen.generate(exchanges)
 
     Usage (modo backward compatible con extractor)::
 
-        >>> from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
+        >>> from subagents.decisiones_subagent import DecisionesSubagent
         >>> extractor = DecisionesSubagent().extract
         >>> gen = DecisionesGenerator(extractor=extractor)
         >>> content, summary = gen.generate(exchanges)
@@ -366,7 +366,7 @@ if __name__ == "__main__":
     # -- Validación interna de decisiones_generator.py --
     print("=== Validacion de decisiones_generator.py ===\n")
 
-    from contexto_zai.models import Decision, Exchange, Message, MessageRole
+    from models import Decision, Exchange, Message, MessageRole
 
     # Test 1: modo offline (sin extractor)
     gen_off = DecisionesGenerator()
@@ -437,7 +437,7 @@ if __name__ == "__main__":
     def mock_invoker_decisiones(prompt: str) -> str:
         return "DECISION: Usar OOP\nALCANCE: ClasificadorSubagent\nRAZON: Directiva."
 
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from subagents.launcher import SubagentLauncher
     launcher_mock = SubagentLauncher(task_invoker=mock_invoker_decisiones)
     gen_v4 = DecisionesGenerator(launcher=launcher_mock)
 

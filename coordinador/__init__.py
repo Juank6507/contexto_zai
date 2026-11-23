@@ -13,9 +13,9 @@ Exporta:
 
 from __future__ import annotations
 
-from contexto_zai.coordinador.entregador_tareas import EntregadorTareas
-from contexto_zai.coordinador.recogedor_respuestas import RecogedorRespuestas
-from contexto_zai.coordinador.orquestador import Orquestador
-from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas
+from coordinador.entregador_tareas import EntregadorTareas
+from coordinador.recogedor_respuestas import RecogedorRespuestas
+from coordinador.orquestador import Orquestador
+from coordinador.integrador_respuestas import IntegradorRespuestas
 
 __all__ = ["EntregadorTareas", "RecogedorRespuestas", "Orquestador", "IntegradorRespuestas"]

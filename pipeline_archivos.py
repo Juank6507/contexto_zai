@@ -29,9 +29,9 @@ from pathlib import Path
 from typing import Optional
 
 # v7.0 F2: import tipado de la ABC (no se instancia directamente).
-from contexto_zai.platforms.interfaces import PlatformLLM  # noqa: F401
+from platforms.interfaces import PlatformLLM  # noqa: F401
 
-from contexto_zai.pipeline_auditoria import AuditorWorkspace
+from pipeline_auditoria import AuditorWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class SubprocesoArchivos:
         # v7.0 F2: resolver el LLM a usar. Default ZaiLLM() si no se inyecta.
         if llm is None:
             try:
-                from contexto_zai.platforms.zai.zai_llm import ZaiLLM
+                from platforms.zai.zai_llm import ZaiLLM
                 llm = ZaiLLM()
             except Exception as e:
                 return {
@@ -107,9 +107,9 @@ class SubprocesoArchivos:
         # Genera el archivo usando EstadoGenerator con los intercambios
         # reconstruidos desde los bloques (vía el worklog y el metadata).
         try:
-            from contexto_zai.generation.estado_generator import EstadoGenerator
-            from contexto_zai.generation.recovery_generator import RecoveryGenerator
-            from contexto_zai.models import RecoveryMetadata
+            from generation.estado_generator import EstadoGenerator
+            from generation.recovery_generator import RecoveryGenerator
+            from models import RecoveryMetadata
             import json as _json
 
             # Leer metadata del workspace.
@@ -132,7 +132,7 @@ class SubprocesoArchivos:
             # Si no hay bloques, generamos una lista vacía y el EstadoGenerator
             # producirá el archivo con secciones vacías.
             try:
-                from contexto_zai.processing.exchange_builder import ExchangeBuilder
+                from processing.exchange_builder import ExchangeBuilder
                 exchanges = ExchangeBuilder.build_from_workspace(ws)
             except Exception:
                 # Si ExchangeBuilder no tiene método build_from_workspace,
@@ -240,15 +240,15 @@ class SubprocesoArchivos:
             ``completados``, ``pendientes``, ``error``.
         """
         # Lazy imports para evitar dependencia circular.
-        from contexto_zai.pipeline_w3 import (
+        from pipeline_w3 import (
             CicloW3,
             _descubrir_bloques_incompletos,
             _enriquecer_bloques_con_fallback,
         )
-        from contexto_zai.pipeline_cascada import _actualizar_estado_daemon
+        from pipeline_cascada import _actualizar_estado_daemon
         # ``ContextoPipeline.collect_responses`` sigue en pipeline.py
         # (API pública). Lazy import para evitar dependencia circular.
-        from contexto_zai.pipeline import ContextoPipeline
+        from pipeline import ContextoPipeline
 
         ws = Path(workspace_dir)
         if not ws.exists():
@@ -630,7 +630,7 @@ class SubprocesoArchivos:
         # 4. Regenerar 01_indice_recuperacion.md.
         if bloques_con_temas > 0 or provisionales_eliminados > 0:
             try:
-                from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas
+                from coordinador.integrador_respuestas import IntegradorRespuestas
                 IntegradorRespuestas._regenerar_indice_recuperacion(ws, metadata)
                 logger.info(
                     "v6.10 F4: índice regenerado (%d bloque(s) con temas, %d provisional(es) eliminado(s)).",
@@ -859,7 +859,7 @@ class SubprocesoArchivos:
         # __MODELO_AGENTE__: leer del ZaiLLM. Sin fallback hardcoded: si
         # ZaiLLM no se puede construir, devolvemos error (no placeholder).
         try:
-            from contexto_zai.platforms.zai.zai_llm import ZaiLLM
+            from platforms.zai.zai_llm import ZaiLLM
             llm = ZaiLLM()
             modelo_agente = llm.get_default_model_heavy()
         except Exception as e:
@@ -875,7 +875,7 @@ class SubprocesoArchivos:
         # Antes de v7.0, importaba directo ``CredentialManager``. Ahora usa
         # la interfaz abstracta ``PlatformAuth`` implementada por ``ZaiAuth``.
         try:
-            from contexto_zai.platforms.zai.zai_auth import ZaiAuth
+            from platforms.zai.zai_auth import ZaiAuth
             auth = ZaiAuth()
             email = auth.get_email() or "Director (email no disponible)"
             # Nombre del Director derivado del email (parte antes del @).

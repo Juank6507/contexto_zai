@@ -54,8 +54,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import WORKSPACE_OUTPUT_DIR
-from contexto_zai.models import RecoveryFile, ThematicBlock
+from config import WORKSPACE_OUTPUT_DIR
+from models import RecoveryFile, ThematicBlock
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,7 @@ class ContextoGenerator(ABC):
     def _leer_ultimo_timestamp_previo(self) -> float:
         """v6.7 F3: Lee el ultimo_timestamp del metadata ANTES de actualizarlo."""
         try:
-            from contexto_zai.metadata.manager import MetadataManager
+            from metadata.manager import MetadataManager
             mgr = MetadataManager(output_dir=self._workspace_dir)
             metadata = mgr.read()
             return metadata.ultimo_timestamp or 0
@@ -216,15 +216,15 @@ class ContextoGenerator(ABC):
     # -- Métodos comunes (implementados en la base) -----------------
 
     def _empaquetar(self, exchanges: list) -> list[ThematicBlock]:
-        from contexto_zai.processing.block_packer import BlockPacker
+        from processing.block_packer import BlockPacker
         packer = BlockPacker()
         blocks = packer.pack_from_exchanges(exchanges)
         logger.info("ContextoGenerator: %d intercambios → %d bloques", len(exchanges), len(blocks))
         return blocks
 
     def _escribir_bloques(self, blocks: list[ThematicBlock]) -> None:
-        from contexto_zai.generation.bloque_generator import BloqueGenerator
-        from contexto_zai.processing.content_cleaner import ContentCleaner
+        from generation.bloque_generator import BloqueGenerator
+        from processing.content_cleaner import ContentCleaner
 
         self._workspace_dir.mkdir(parents=True, exist_ok=True)
         gen = BloqueGenerator()
@@ -238,7 +238,7 @@ class ContextoGenerator(ABC):
         logger.info("ContextoGenerator: %d bloques escritos en %s", escritos, self._workspace_dir)
 
     def _actualizar_metadata(self, blocks: list[ThematicBlock], exchanges: list) -> None:
-        from contexto_zai.metadata.manager import MetadataManager
+        from metadata.manager import MetadataManager
         from datetime import datetime, timezone
 
         mgr = MetadataManager(output_dir=self._workspace_dir)
@@ -257,8 +257,8 @@ class ContextoGenerator(ABC):
         logger.info("ContextoGenerator: metadata actualizada")
 
     def _actualizar_indice(self, blocks: list[ThematicBlock]) -> None:
-        from contexto_zai.generation.indice_generator import IndiceGenerator
-        from contexto_zai.metadata.manager import MetadataManager
+        from generation.indice_generator import IndiceGenerator
+        from metadata.manager import MetadataManager
 
         indice_gen = IndiceGenerator()
         mgr = MetadataManager(output_dir=self._workspace_dir)
@@ -280,7 +280,7 @@ class ContextoGenerator(ABC):
         Las importa de pipeline.py para no duplicar lógica.
         """
         try:
-            from contexto_zai.pipeline import (
+            from pipeline import (
                 _enriquecer_bloques_con_fallback,
                 _consolidar_decisiones_llm,
                 _normalizar_bloques_externos,
@@ -301,9 +301,9 @@ class ContextoGenerator(ABC):
         exchanges: list,
         blocks: list[ThematicBlock],
     ) -> int:
-        from contexto_zai.generation.recovery_generator import RecoveryGenerator
-        from contexto_zai.metadata.manager import MetadataManager
-        from contexto_zai.models import FileCategory
+        from generation.recovery_generator import RecoveryGenerator
+        from metadata.manager import MetadataManager
+        from models import FileCategory
 
         mgr = MetadataManager(output_dir=self._workspace_dir)
         metadata = mgr.read()
@@ -344,7 +344,7 @@ if __name__ == "__main__":
     print("=== Validacion de contexto_generator.py ===\n")
 
     import tempfile
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
 
     # Test 1: ContextoGenerator es abstracta
     try:

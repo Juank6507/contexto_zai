@@ -34,10 +34,10 @@ import time
 from pathlib import Path
 from dataclasses import dataclass
 
-from contexto_zai.subagents.launcher import SubagentLauncher
-from contexto_zai.subagents.estado_subagent import EstadoSubagent
-from contexto_zai.subagents.barrido_subagent import BarridoSubagent
-from contexto_zai.models import Exchange, Message, MessageRole, RecoveryMetadata
+from subagents.launcher import SubagentLauncher
+from subagents.estado_subagent import EstadoSubagent
+from subagents.barrido_subagent import BarridoSubagent
+from models import Exchange, Message, MessageRole, RecoveryMetadata
 
 
 def _create_test_workspace():

@@ -16,11 +16,11 @@ log = logging.getLogger("enrich-v614")
 
 import time
 from pathlib import Path
-from contexto_zai.models import ThematicBlock
+from models import ThematicBlock
 # v7.0 modularización: ``_enriquecer_con_proxy_zai`` ahora vive en
 # ``pipeline_cascada``; ``AuditorWorkspace`` vive en ``pipeline_auditoria``.
 # Ambos se re-exportan desde ``pipeline.py`` para backward-compat.
-from contexto_zai.pipeline import _enriquecer_con_proxy_zai, AuditorWorkspace
+from pipeline import _enriquecer_con_proxy_zai, AuditorWorkspace
 
 WORKSPACE = "/home/z/my-project/contexto_recuperacion"
 

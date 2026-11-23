@@ -56,8 +56,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Generic, Optional, TypeVar
 
-from contexto_zai.config import CLASIFICADOR_MAX_CONTEXT_TOKENS, CLASIFICADOR_TIMEOUT_SECONDS
-from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
+from config import CLASIFICADOR_MAX_CONTEXT_TOKENS, CLASIFICADOR_TIMEOUT_SECONDS
+from subagents.launcher import SubagentLauncher, SubagentResponse
 
 logger = logging.getLogger(__name__)
 

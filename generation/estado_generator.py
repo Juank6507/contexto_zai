@@ -57,15 +57,15 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from contexto_zai.config import (
+from config import (
     ESTADO_TRUNCADO_RESUMEN_TOKENS,
     ESTADO_TRUNCADO_TEXTUAL_TOKENS,
     TOKEN_LIMITS,
 )
-from contexto_zai.subagents.launcher import SubagentLauncher
+from subagents.launcher import SubagentLauncher
 
 if TYPE_CHECKING:
-    from contexto_zai.models import Exchange
+    from models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -477,7 +477,7 @@ class EstadoGenerator:
 
         # v6.3 F3: filtrar volcados externos (> A1_VOLCADO_UMBRAL_CHARS)
         try:
-            from contexto_zai.config import A1_VOLCADO_UMBRAL_CHARS
+            from config import A1_VOLCADO_UMBRAL_CHARS
         except ImportError:
             A1_VOLCADO_UMBRAL_CHARS = 10000
 
@@ -510,7 +510,7 @@ class EstadoGenerator:
 
         # Construir el texto cronológico del tema activo
         # v6.4 F2: aplicar ContentCleaner al contenido del agente para parsear tool_calls
-        from contexto_zai.processing.content_cleaner import ContentCleaner as _ContentCleaner
+        from processing.content_cleaner import ContentCleaner as _ContentCleaner
         _cleaner = _ContentCleaner()
         texto_tema_parts: list[str] = []
         for ex in intercambios_tema:
@@ -550,7 +550,7 @@ class EstadoGenerator:
         resumen_texto = ""
         if self._launcher is not None and contenido_truncado:
             # Crear un exchange sintético con el contenido truncado
-            from contexto_zai.models import Exchange as _Exchange, Message as _Message, MessageRole as _MessageRole
+            from models import Exchange as _Exchange, Message as _Message, MessageRole as _MessageRole
             exchange_sintetico = _Exchange(
                 id=0,
                 director_msg=_Message(
@@ -1050,7 +1050,7 @@ no esperar a que el Director lo confirme.
             return  # No sobrescribir si ya existe (v6.19: una sola vez)
 
         # Localizar el workspace raíz del proyecto (donde está el worklog canónico)
-        from contexto_zai.config import WORKSPACE_ROOT as _PROJECT_ROOT
+        from config import WORKSPACE_ROOT as _PROJECT_ROOT
 
         contenido_objetivo = self._extraer_objetivo_de_worklog(_PROJECT_ROOT)
         if not contenido_objetivo:
@@ -1512,7 +1512,7 @@ no esperar a que el Director lo confirme.
         if not self._workspace_dir:
             return
         try:
-            from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+            from procesadores.procesador_intercambios import ProcesadorIntercambios
             # Verificar que el launcher es un ProcesadorIntercambios
             if not isinstance(self._launcher, ProcesadorIntercambios):
                 logger.debug("F3 v4.3: launcher no es ProcesadorIntercambios, no se prepara SINTESIS_CONTEXTO")
@@ -1649,7 +1649,7 @@ if __name__ == "__main__":
     # -- Validación interna de estado_generator.py (v4.0) --
     print("=== Validacion de estado_generator.py (v4.0) ===\n")
 
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
 
     # Test sin launcher (backward compatible)
     gen = EstadoGenerator()
@@ -1768,7 +1768,7 @@ if __name__ == "__main__":
     def mock_invoker_resumen(prompt: str) -> str:
         return "Resumen del contenido truncado: se detectaron 5 intercambios sobre OOP."
 
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from subagents.launcher import SubagentLauncher
     launcher_mock = SubagentLauncher(task_invoker=mock_invoker_resumen)
     gen_with_launcher = EstadoGenerator(launcher=launcher_mock)
 
@@ -1883,7 +1883,7 @@ if __name__ == "__main__":
             encoding="utf-8",
         )
         # Mock WORKSPACE_ROOT apuntando a tmpdir
-        import contexto_zai.config as _cfg
+        import config as _cfg
         original_root = _cfg.WORKSPACE_ROOT
         _cfg.WORKSPACE_ROOT = Path(tmpdir)
         try:
@@ -1913,7 +1913,7 @@ if __name__ == "__main__":
             }
         }), encoding="utf-8")
         # Mock WORKSPACE_ROOT
-        import contexto_zai.config as _cfg_b
+        import config as _cfg_b
         original_root_b = _cfg_b.WORKSPACE_ROOT
         _cfg_b.WORKSPACE_ROOT = Path(tmpdir)
         try:
@@ -1932,7 +1932,7 @@ if __name__ == "__main__":
 
     # Test (F5 v4.3): Caso C — si no hay ni documentación ni bloques, contenido mínimo
     with _tempfile_f5.TemporaryDirectory() as tmpdir:
-        import contexto_zai.config as _cfg_c
+        import config as _cfg_c
         original_root_c = _cfg_c.WORKSPACE_ROOT
         _cfg_c.WORKSPACE_ROOT = Path(tmpdir)
         try:
@@ -1952,7 +1952,7 @@ if __name__ == "__main__":
 
     # Test (F5 v4.3): si el archivo ya existe, NO se sobrescribe
     with _tempfile_f5.TemporaryDirectory() as tmpdir:
-        import contexto_zai.config as _cfg_d
+        import config as _cfg_d
         original_root_d = _cfg_d.WORKSPACE_ROOT
         _cfg_d.WORKSPACE_ROOT = Path(tmpdir)
         try:

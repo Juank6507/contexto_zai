@@ -40,13 +40,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
-from contexto_zai.metadata.manager import MetadataManager
-from contexto_zai.models import RecoveryFile
-from contexto_zai.processing.block_packer import BlockPacker
-from contexto_zai.processing.classifier import MessageClassifier
-from contexto_zai.processing.exchange_builder import ExchangeBuilder
-from contexto_zai.processing.message_extractor import MessageExtractor
+from config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
+from metadata.manager import MetadataManager
+from models import RecoveryFile
+from processing.block_packer import BlockPacker
+from processing.classifier import MessageClassifier
+from processing.exchange_builder import ExchangeBuilder
+from processing.message_extractor import MessageExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -264,8 +264,8 @@ class IncrementalCycle:
         los bloques actualizados (incluyendo los reempaquetados).
         """
         try:
-            from contexto_zai.generation.indice_generator import IndiceGenerator
-            from contexto_zai.models import ThematicBlock
+            from generation.indice_generator import IndiceGenerator
+            from models import ThematicBlock
 
             indice_gen = IndiceGenerator()
 
@@ -331,8 +331,8 @@ class IncrementalCycle:
         para que el formato sea canónico (# Bloque tematico: <temas>).
         """
         try:
-            from contexto_zai.generation.bloque_generator import BloqueGenerator
-            from contexto_zai.processing.content_cleaner import ContentCleaner
+            from generation.bloque_generator import BloqueGenerator
+            from processing.content_cleaner import ContentCleaner
         except ImportError as e:
             logger.warning("v6.6 F5: no se pudo importar BloqueGenerator: %s", e)
             return
@@ -365,9 +365,9 @@ class IncrementalCycle:
         generadores, dejando el estado congelado en la última recuperación.
         """
         try:
-            from contexto_zai.generation.estado_generator import EstadoGenerator
-            from contexto_zai.generation.decisiones_generator import DecisionesGenerator
-            from contexto_zai.config import ESTADO_ACTUAL_FILENAME, DECISIONES_CLAVE_FILENAME
+            from generation.estado_generator import EstadoGenerator
+            from generation.decisiones_generator import DecisionesGenerator
+            from config import ESTADO_ACTUAL_FILENAME, DECISIONES_CLAVE_FILENAME
 
             # Estado (00_estado_actual.md)
             estado_gen = EstadoGenerator(workspace_dir=self._workspace_dir)

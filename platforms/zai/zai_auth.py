@@ -13,9 +13,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from contexto_zai.platforms.interfaces import PlatformAuth
-from contexto_zai.client.credential_manager import CredentialManager
-from contexto_zai.client.auth_client import AuthClient
+from platforms.interfaces import PlatformAuth
+from client.credential_manager import CredentialManager
+from client.auth_client import AuthClient
 
 logger = logging.getLogger(__name__)
 

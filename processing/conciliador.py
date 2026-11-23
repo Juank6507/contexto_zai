@@ -44,12 +44,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from contexto_zai.config import DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS
-from contexto_zai.models import IndiceConsolidado, IndiceParcial
+from config import DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS
+from models import IndiceConsolidado, IndiceParcial
 
 if TYPE_CHECKING:
     # Evitar import circular: conciliador.py ← subagents/__init__.py ← conciliador_subagent.py ← conciliador.py
-    from contexto_zai.subagents.launcher import SubagentResponse
+    from subagents.launcher import SubagentResponse
 
 logger = logging.getLogger(__name__)
 

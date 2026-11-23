@@ -43,8 +43,8 @@ from typing import Optional
 
 import httpx
 
-from contexto_zai.client.browser_session import BrowserSession
-from contexto_zai.client.zai_config import API_CONFIG
+from client.browser_session import BrowserSession
+from client.zai_config import API_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +260,7 @@ if __name__ == "__main__":
 
     import tempfile
     from pathlib import Path
-    from contexto_zai.client.browser_session import BrowserSession
+    from client.browser_session import BrowserSession
 
     # Test 1: modo legacy con token
     auth_legacy = AuthClient(token="eyJhbG.test.payload.signature")

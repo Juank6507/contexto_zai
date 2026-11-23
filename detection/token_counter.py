@@ -36,10 +36,10 @@ else:
 import logging
 from typing import TYPE_CHECKING
 
-from contexto_zai.config import TOKEN_LIMITS
+from config import TOKEN_LIMITS
 
 if TYPE_CHECKING:
-    from contexto_zai.models import Exchange
+    from models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     # -- Validación interna de token_counter.py --
     print("=== Validacion de token_counter.py ===\n")
 
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
 
     # Counter con umbral bajo para tests
     counter = TokenCounter(threshold_pct=0.5)  # 50% para tests

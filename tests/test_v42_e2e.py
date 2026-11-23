@@ -26,14 +26,14 @@ _workspace = _here.parent.parent
 if str(_workspace) not in sys.path:
     sys.path.insert(0, str(_workspace))
 
-from contexto_zai.coordinador import (
+from coordinador import (
     EntregadorTareas,
     IntegradorRespuestas,
     Orquestador,
     RecogedorRespuestas,
 )
-from contexto_zai.models import SubagentResponse, SubagentTask
-from contexto_zai.pipeline import collect_responses
+from models import SubagentResponse, SubagentTask
+from pipeline import collect_responses
 
 
 def test_entregador_publicar_leer():
@@ -196,7 +196,7 @@ def test_flujo_completo_collect_responses():
 
 def test_procesadores_documentos():
     """ProcesadorDocumento decide según tamaño (trivial, mediano, grande)."""
-    from contexto_zai.procesadores import ProcesadorDocumento
+    from procesadores import ProcesadorDocumento
 
     with tempfile.TemporaryDirectory() as tmpdir:
         proc = ProcesadorDocumento(workspace_dir=tmpdir)
@@ -226,8 +226,8 @@ def test_procesadores_documentos():
 
 def test_procesador_intercambios():
     """ProcesadorIntercambios procesa intercambios en distintos modos."""
-    from contexto_zai.procesadores import ProcesadorIntercambios
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from procesadores import ProcesadorIntercambios
+    from models import Exchange, Message, MessageRole
 
     with tempfile.TemporaryDirectory() as tmpdir:
         proc = ProcesadorIntercambios(workspace_dir=tmpdir)
@@ -257,7 +257,7 @@ def test_procesador_intercambios():
 
 def test_procesador_consulta():
     """ProcesadorConsulta identifica bloques candidatos y decide modo."""
-    from contexto_zai.procesadores import ProcesadorConsulta
+    from procesadores import ProcesadorConsulta
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Crear contexto simulado
@@ -281,7 +281,7 @@ def test_clasificacion_temas_e2e():
 
     Verifica que el modo CLASIFICACION_TEMAS ya no se puede usar.
     """
-    from contexto_zai.procesadores import ProcesadorIntercambios
+    from procesadores import ProcesadorIntercambios
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -290,7 +290,7 @@ def test_clasificacion_temas_e2e():
         # v6.0: CLASIFICACION_TEMAS ya no es un modo válido.
         assert "CLASIFICACION_TEMAS" not in ProcesadorIntercambios.MODOS_VALIDOS if hasattr(ProcesadorIntercambios, "MODOS_VALIDOS") else True
         # Verificar que el enum ya no tiene CLASIFICACION_TEMAS
-        from contexto_zai.subagents.intercambios_clasificador_subagent import ModoClasificador
+        from subagents.intercambios_clasificador_subagent import ModoClasificador
         assert not hasattr(ModoClasificador, "CLASIFICACION_TEMAS")
         print("  [OK] CLASIFICACION_TEMAS eliminado del enum (v6.0)")
         print("  [PASS] PASO")
@@ -307,9 +307,9 @@ def test_query_context_encuentra_bloque_externo():
     4. query_context() encuentra el bloque externo por el tema real, sin
        necesitar 01_indice_recuperacion.md.
     """
-    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
-    from contexto_zai.procesadores import ProcesadorDocumento
-    from contexto_zai.pipeline import collect_responses, query_context
+    from coordinador import Orquestador, RecogedorRespuestas
+    from procesadores import ProcesadorDocumento
+    from pipeline import collect_responses, query_context
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -378,7 +378,7 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
             f"v6.10 F4: archivo_a_source debe tener el bloque: {metadata.get('archivo_a_source')}"
 
         # v6.10 F4: simular que el enriquecimiento ya corrió: escribir _responses/<bloque>_temas.txt
-        from contexto_zai.pipeline import _regenerar_indice_tras_enriquecimiento
+        from pipeline import _regenerar_indice_tras_enriquecimiento
         responses_dir = ws / "_responses"
         responses_dir.mkdir(exist_ok=True)
         bloque_filename = bloques_externos[0].name
@@ -418,10 +418,10 @@ def test_sintesis_contexto_e2e():
     4. collect_responses() aplica la respuesta vía _integrar_sintesis_contexto.
     5. 00_estado_actual.md actualizado: G0.B pasa del placeholder al contenido.
     """
-    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
-    from contexto_zai.procesadores import ProcesadorIntercambios
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.pipeline import collect_responses
+    from coordinador import Orquestador, RecogedorRespuestas
+    from procesadores import ProcesadorIntercambios
+    from generation.estado_generator import EstadoGenerator
+    from pipeline import collect_responses
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -441,7 +441,7 @@ def test_sintesis_contexto_e2e():
         # 3. EstadoGenerator con workspace genera el archivo con G0.A+G0.B+G1
         gen = EstadoGenerator(workspace_dir=ws, launcher=proc_intercambios)
         # Crear intercambios sinteticos para que generate() no falle
-        from contexto_zai.models import Exchange, Message, MessageRole
+        from models import Exchange, Message, MessageRole
         exchanges = [
             Exchange(
                 id=1,
@@ -506,8 +506,8 @@ def test_orchestrator_4_casos_decision():
     3. Otro chat distinto (metadata con distinto chat_id) → recovery.
     """
     from unittest.mock import patch
-    from contexto_zai.process.orchestrator import Orchestrator, OrchestratorResult
-    from contexto_zai.models import DetectionTrigger
+    from process.orchestrator import Orchestrator, OrchestratorResult
+    from models import DetectionTrigger
 
     # Caso 1: primera vez (sin metadata)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -568,7 +568,7 @@ def test_query_context_atajo_resumenes():
     palabras de la pregunta, query_context devuelve el resumen directamente
     (modo ``resumen_atajo``) sin preparar prompts para subagentes.
     """
-    from contexto_zai.pipeline import query_context
+    from pipeline import query_context
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -618,8 +618,8 @@ def test_v62_proxy_disponible_worker_completa():
     """v6.2 E2E 1: proxy Z.ai disponible + worker completa todo → pending_tasks vacío."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from contexto_zai.models import ThematicBlock
+    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=0)
@@ -674,8 +674,8 @@ def test_v62_proxy_caido_fallback_agente():
     """v6.2 E2E 2: proxy Z.ai caído → pending_tasks con N tareas para todos los bloques."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from contexto_zai.models import ThematicBlock
+    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = _crear_workspace_con_bloques(tmp, num_bloques=4, con_resumen_hasta=0)
@@ -701,8 +701,8 @@ def test_v62_worker_falla_parcialmente():
     """v6.2 E2E 3: proxy OK + worker procesa algunos, falla otros → fallback solo para los faltantes."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from contexto_zai.models import ThematicBlock
+    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         # 5 bloques, worker escribirá RESUMEN: solo en los primeros 3
@@ -776,8 +776,8 @@ def test_v62_worker_timeout():
     """v6.2 E2E 4: worker timeout → fallback para todos los bloques."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from contexto_zai.models import ThematicBlock
+    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=0)
@@ -801,8 +801,8 @@ def test_v62_recorrer_con_todos_resumidos():
     """v6.2 E2E 5: re-correr cuando todos los bloques ya tienen RESUMEN: → no hace nada."""
     import tempfile
     from unittest.mock import patch
-    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador, _proxy_zai_disponible
-    from contexto_zai.models import ThematicBlock
+    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador, _proxy_zai_disponible
+    from models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         # 3 bloques, todos con RESUMEN:
@@ -830,8 +830,8 @@ def test_v62_recorrer_con_todos_resumidos():
 def test_v63_sort_cronologico():
     """v6.3 F4: ExchangeBuilder ordena intercambios por timestamp."""
     import tempfile
-    from contexto_zai.processing.exchange_builder import ExchangeBuilder
-    from contexto_zai.models import Message, MessageRole
+    from processing.exchange_builder import ExchangeBuilder
+    from models import Message, MessageRole
 
     builder = ExchangeBuilder()
     # Mensajes desordenados (timestamps 5, 1, 3, 2, 4)
@@ -860,8 +860,8 @@ def test_v63_sort_cronologico():
 def test_v63_a1_sin_volcados():
     """v6.3 F3: _build_a1 filtra volcados externos (> 10K chars)."""
     import tempfile
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from generation.estado_generator import EstadoGenerator
+    from models import Exchange, Message, MessageRole
 
     gen = EstadoGenerator()
 
@@ -899,8 +899,8 @@ def test_v63_a1_sin_volcados():
 def test_v63_indice_preserva_anteriores():
     """v6.3 F2: IndiceGenerator incluye bloques preexistentes del workspace."""
     import tempfile
-    from contexto_zai.generation.indice_generator import IndiceGenerator
-    from contexto_zai.models import ThematicBlock
+    from generation.indice_generator import IndiceGenerator
+    from models import ThematicBlock
 
     gen = IndiceGenerator()
 
@@ -956,7 +956,7 @@ def test_v63_resumen_riguroso():
 
 def test_v63_config_constantes():
     """v6.3: config.py tiene las constantes nuevas de calidad de contexto."""
-    from contexto_zai.config import (
+    from config import (
         A1_VOLCADO_UMBRAL_CHARS,
         RESUMEN_MIN_CHARS,
         RESUMEN_MAX_CHARS,
@@ -977,7 +977,7 @@ def test_v64_decisiones_consolidadas():
     """v6.4 F1: _consolidar_decisiones_llm() lee _responses/ y escribe 02_decisiones_clave.md."""
     import tempfile
     from pathlib import Path
-    from contexto_zai.pipeline import _consolidar_decisiones_llm
+    from pipeline import _consolidar_decisiones_llm
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
@@ -1011,8 +1011,8 @@ def test_v64_decisiones_consolidadas():
 def test_v64_a1_sin_tool_calls():
     """v6.4 F2: _build_a1 limpia tool_calls del contenido del agente."""
     import tempfile
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from generation.estado_generator import EstadoGenerator
+    from models import Exchange, Message, MessageRole
 
     gen = EstadoGenerator()
     # Crear intercambio con tool_calls en agent_msgs
@@ -1039,7 +1039,7 @@ def test_v64_g0b_con_resumen():
     """v6.4 F3: G0.B contiene el RESUMEN del bloque del tema activo."""
     import tempfile
     from pathlib import Path
-    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from generation.estado_generator import EstadoGenerator
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
@@ -1072,9 +1072,9 @@ def test_v64_g0b_con_resumen():
 
 def test_v64_fallback_mismo_prompt():
     """v6.4 F4: el prompt del fallback contiene las restricciones rigurosas."""
-    from contexto_zai.config import PROMPT_RESUMEN_RIGIDO
-    from contexto_zai.models import ThematicBlock
-    from contexto_zai.pipeline import _construir_pending_task_para_bloque
+    from config import PROMPT_RESUMEN_RIGIDO
+    from models import ThematicBlock
+    from pipeline import _construir_pending_task_para_bloque
 
     bloque = ThematicBlock(filename="bloque_01.md")
     task = _construir_pending_task_para_bloque(bloque, chat_label="test")
@@ -1090,8 +1090,8 @@ def test_v64_fallback_mismo_prompt():
 def test_v64_sort_global():
     """v6.4 F5: BlockPacker ordena intercambios globalmente dentro de cada bloque."""
     import tempfile
-    from contexto_zai.processing.block_packer import BlockPacker
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from processing.block_packer import BlockPacker
+    from models import Exchange, Message, MessageRole
 
     packer = BlockPacker()
     # Crear intercambios de 2 temas con timestamps cruzados

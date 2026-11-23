@@ -51,7 +51,7 @@ from typing import Optional
 # v3.4: INTENTION_THEMES se centraliza en config.py para configuración sin tocar código.
 # Se mantiene el fallback local para compatibilidad con tests standalone.
 try:
-    from contexto_zai.config import INTENTION_THEMES as _CONFIG_INTENTION_THEMES
+    from config import INTENTION_THEMES as _CONFIG_INTENTION_THEMES
     INTENTION_THEMES: dict[str, list[str]] = _CONFIG_INTENTION_THEMES
 except ImportError:
     # Fallback standalone (si config.py no está disponible)
@@ -232,7 +232,7 @@ if __name__ == "__main__":
     print(f"[OK] get_themes: {len(themes)} temas disponibles")
 
     # Test 12: classify_exchange
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
     ex = Exchange(
         id=1,
         director_msg=Message(seq=1, role=MessageRole.USER, timestamp=1, content="Correcto"),

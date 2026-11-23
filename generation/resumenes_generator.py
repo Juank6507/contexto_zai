@@ -45,7 +45,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+from config import WORKSPACE_OUTPUT_DIR
 
 logger = logging.getLogger(__name__)
 

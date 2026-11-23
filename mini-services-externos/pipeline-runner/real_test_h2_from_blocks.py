@@ -23,7 +23,7 @@ log = logging.getLogger("h2_blocks")
 
 def parse_bloque_to_exchanges(bloque_path: Path) -> list:
     """Parsea un bloque temático y construye intercambios sintéticos."""
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
 
     content = bloque_path.read_text(encoding="utf-8")
     exchanges = []
@@ -93,8 +93,8 @@ def main():
     # 2. Generar 00_estado_actual.md con launcher real
     log.info("\n--- Generar 00_estado_actual.md con launcher real ---")
 
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from generation.estado_generator import EstadoGenerator
+    from subagents.launcher import SubagentLauncher
 
     launcher = SubagentLauncher()
     gen = EstadoGenerator(launcher=launcher)

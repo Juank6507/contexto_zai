@@ -40,10 +40,10 @@ else:
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
-from contexto_zai.models import Decision
+from models import Decision
 
 if TYPE_CHECKING:
-    from contexto_zai.models import Exchange
+    from models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         pass
     print("=== Validacion de decisiones_subagent.py ===\n")
 
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
 
     # Test 1: extractor simulado
     def mock_extractor(exs):

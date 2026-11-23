@@ -265,7 +265,7 @@ Respuesta:"""
         devuelve su respuesta.
         """
         try:
-            from contexto_zai.subagents._task_bridge import launch_task
+            from subagents._task_bridge import launch_task
             result = launch_task(prompt)
             return result
         except Exception as e:

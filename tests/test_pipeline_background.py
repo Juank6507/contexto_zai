@@ -136,8 +136,8 @@ signal.signal(signal.SIGHUP, on_signal)
 # SIGKILL no se puede capturar, pero lo documentamos
 
 # Lanzar el pipeline en background
-from contexto_zai.client.credential_manager import CredentialManager
-from contexto_zai.process.recovery_cycle import RecoveryCycle
+from client.credential_manager import CredentialManager
+from process.recovery_cycle import RecoveryCycle
 
 cm = CredentialManager()
 jwt = cm.get_jwt()

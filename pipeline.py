@@ -69,16 +69,16 @@ from pathlib import Path
 from typing import Optional
 import time  # v6.13 C10: para sleep en backoff HTTP 429
 
-from contexto_zai.config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
-from contexto_zai.models import DetectionTrigger
-from contexto_zai.process.orchestrator import Orchestrator, OrchestratorResult
+from config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
+from models import DetectionTrigger
+from process.orchestrator import Orchestrator, OrchestratorResult
 
 # v7.0 modularización: imports de los nuevos módulos.
-from contexto_zai.pipeline_auditoria import (
+from pipeline_auditoria import (
     AuditorWorkspace,
     ProgressMonitor,
 )
-from contexto_zai.pipeline_cascada import (
+from pipeline_cascada import (
     CascadaAccesoLLM,
     _proxy_zai_disponible as _cascada_proxy_zai_disponible,
     _arrancar_worker_y_esperar as _cascada_arrancar_worker_y_esperar,
@@ -88,14 +88,14 @@ from contexto_zai.pipeline_cascada import (
     _escribir_artefactos_bloque as _cascada_escribir_artefactos_bloque,
     _enriquecer_con_proxy_zai as _cascada_enriquecer_con_proxy_zai,
 )
-from contexto_zai.pipeline_w3 import (
+from pipeline_w3 import (
     CicloW3,
     PROMPT_FUSIONADO_W1W2W3,
 )
-from contexto_zai.pipeline_d7 import (
+from pipeline_d7 import (
     CicloD7,
 )
-from contexto_zai.pipeline_archivos import (
+from pipeline_archivos import (
     SubprocesoArchivos,
 )
 
@@ -162,8 +162,8 @@ class ContextoPipeline:
                     el CredentialManager).
 
             Example:
-                >>> from contexto_zai.pipeline import run
-                >>> from contexto_zai.models import DetectionTrigger
+                >>> from pipeline import run
+                >>> from models import DetectionTrigger
                 >>> # Caso 1: chat actual del agente (JWT se carga automáticamente)
                 >>> result = run(chat_id="13b43432-...")
                 >>> # Caso 2: chat externo vía link /s/ (v4.2)
@@ -175,7 +175,7 @@ class ContextoPipeline:
             # el punto de entrada conoce la plataforma, los módulos internos no.
             if not jwt:
                 try:
-                    from contexto_zai.client.credential_manager import CredentialManager
+                    from client.credential_manager import CredentialManager
                     cm = CredentialManager()
                     jwt = cm.get_jwt() or ""
                     if jwt:
@@ -295,7 +295,7 @@ class ContextoPipeline:
                 - Si no hay candidatos: {"error": "No hay información relevante..."}
 
             Example:
-                >>> from contexto_zai.pipeline import query_context
+                >>> from pipeline import query_context
                 >>> result = query_context("¿Qué se decidió sobre OOP?")
                 >>> if "error" not in result:
                 ...     # Lanzar subagente(s) con el Task tool usando result["prompts"]
@@ -303,7 +303,7 @@ class ContextoPipeline:
             """
             import json as _json
             import re as _re
-            from contexto_zai.config import (
+            from config import (
                 QUERY_DIRECT_MODE_THRESHOLD_TOKENS,
                 QUERY_MAX_RESULTS,
             )
@@ -578,7 +578,7 @@ class ContextoPipeline:
                 - "error": mensaje de error si algo falló.
 
             Example:
-                >>> from contexto_zai.pipeline import ampliar_contexto
+                >>> from pipeline import ampliar_contexto
                 >>> result = ampliar_contexto("file", "/path/to/doc.pdf", chat_id="abc-123")
                 >>> if result.get("needs_agent_read"):
                 ...     # El agente lee el archivo directo
@@ -588,7 +588,7 @@ class ContextoPipeline:
             """
             import json as _json
             import hashlib as _hashlib
-            from contexto_zai.config import (
+            from config import (
                 AMPLIAR_SMALL_FILE_THRESHOLD_TOKENS,
                 AMPLIAR_URL_DOWNLOAD_TIMEOUT,
                 AMPLIAR_URL_MAX_SIZE_BYTES,
@@ -641,11 +641,11 @@ class ContextoPipeline:
                     # v6.9/v6.11 F4: extraer el contenido del chat como texto plano
                     # v6.11 F4: usa MessageExtractor en vez de importar directamente de client/
                     try:
-                        from contexto_zai.processing.message_extractor import MessageExtractor
+                        from processing.message_extractor import MessageExtractor
                         extractor = MessageExtractor(jwt=jwt_para_run, chat_id=id_extraido if es_link_chat else "")
                         if es_link_share:
                             # /s/ — share_id directo
-                            from contexto_zai.client.chat_client import ChatClient as _CC
+                            from client.chat_client import ChatClient as _CC
                             with _CC(token=jwt_para_run) as client:
                                 messages = client.extract_all(share_id=id_extraido, chat_id=None)
                         else:
@@ -792,7 +792,7 @@ class ContextoPipeline:
             # Si estructura="arbitrario": sigue el flujo actual
             # (ProcesadorDocumento).
             if estructura == "cronologico":
-                from contexto_zai.process.recovery_cycle import RecoveryCycle
+                from process.recovery_cycle import RecoveryCycle
 
                 # Parsear intercambios desde el contenido del archivo externo.
                 messages = _parsear_intercambios_desde_contenido(
@@ -895,7 +895,7 @@ class ContextoPipeline:
                 # Guardar el archivo original en indexed para referencia
                 # (no necesita temp_path: los intercambios ya están
                 # materializados como bloques en el workspace).
-                from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
+                from config import ATTACHMENTS_INDEXED_DIR
                 ATTACHMENTS_INDEXED_DIR.mkdir(parents=True, exist_ok=True)
                 indexed_path = ATTACHMENTS_INDEXED_DIR / safe_filename
                 try:
@@ -1180,8 +1180,8 @@ class ContextoPipeline:
                     except Exception as e:
                         logger.warning("v6.20 F7: no se pudo eliminar %s: %s", bloque_file, e)
 
-            from contexto_zai.coordinador import Orquestador
-            from contexto_zai.procesadores import ProcesadorDocumento
+            from coordinador import Orquestador
+            from procesadores import ProcesadorDocumento
 
             # Guardar en temp primero
             ATTACHMENTS_TEMP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1205,7 +1205,7 @@ class ContextoPipeline:
             )
 
             # Mover el archivo de temp a indexed
-            from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
+            from config import ATTACHMENTS_INDEXED_DIR
             ATTACHMENTS_INDEXED_DIR.mkdir(parents=True, exist_ok=True)
             indexed_path = ATTACHMENTS_INDEXED_DIR / safe_filename
             if temp_path.exists():
@@ -1326,7 +1326,7 @@ class ContextoPipeline:
                 - "errores": lista de errores (si los hubo).
 
             Example:
-                >>> from contexto_zai.pipeline import run, collect_responses
+                >>> from pipeline import run, collect_responses
                 >>> result = run(chat_id="...", jwt="...")
                 >>> if result.pending_tasks:
                 ...     # El agente lanza los subagentes con el Task tool
@@ -1398,12 +1398,12 @@ def export_context(
         Ruta del .zip creado, o None si no había archivos.
 
     Example:
-        >>> from contexto_zai.pipeline import export_context
+        >>> from pipeline import export_context
         >>> path = export_context(chat_id="abc-123")
         >>> if path:
         ...     print(f"Contexto exportado: {path}")
     """
-    from contexto_zai.context.exporter import ContextExporter
+    from context.exporter import ContextExporter
 
     exporter = ContextExporter(workspace_dir=workspace_dir)
     return exporter.export(chat_id=chat_id, output_dir=output_dir)
@@ -1423,13 +1423,13 @@ def import_context(
         Contenido de las instrucciones de recuperación, o None si falló.
 
     Example:
-        >>> from contexto_zai.pipeline import import_context
+        >>> from pipeline import import_context
         >>> instrucciones = import_context("/path/to/contexto.zip")
         >>> if instrucciones:
         ...     print("Contexto cargado. Instrucciones:")
         ...     print(instrucciones)
     """
-    from contexto_zai.context.importer import ContextImporter
+    from context.importer import ContextImporter
 
     importer = ContextImporter(workspace_dir=workspace_dir)
     return importer.import_from(zip_path)
@@ -1446,7 +1446,7 @@ def find_context_packages(
     Returns:
         Lista de rutas de archivos .zip ordenados por fecha (más reciente primero).
     """
-    from contexto_zai.context.importer import ContextImporter
+    from context.importer import ContextImporter
 
     importer = ContextImporter(workspace_dir=WORKSPACE_OUTPUT_DIR)
     return importer.find_packages(search_dir)
@@ -1485,20 +1485,20 @@ def index_document(
         del archivo indexado, o None si falló.
 
     Example:
-        >>> from contexto_zai.pipeline import index_document
+        >>> from pipeline import index_document
         >>> result = index_document(file_id="abc-123", jwt="eyJ...", filename="doc.pdf")
         >>> if result and result.success:
         ...     print(f"Indexado: {result.filename}")
         ...     print(f"Resumen: {result.resumen_breve}")
         ...     print(f"Temas: {result.temas_nombres}")
     """
-    from contexto_zai.client.attachment_client import AttachmentClient
-    from contexto_zai.models import Attachment
-    from contexto_zai.processing.content_delegator import DocumentDelegator
-    from contexto_zai.subagents.documento_indexer_subagent import (
+    from client.attachment_client import AttachmentClient
+    from models import Attachment
+    from processing.content_delegator import DocumentDelegator
+    from subagents.documento_indexer_subagent import (
         DocumentoIndexerSubagent,
     )
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from subagents.launcher import SubagentLauncher
 
     # Construir objeto Attachment
     attachment = Attachment(
@@ -1519,13 +1519,13 @@ def index_document(
             client = AttachmentClient(token=jwt)
             content_bytes = client.download(file_id)
             # Guardar en indexed/ directamente
-            from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
+            from config import ATTACHMENTS_INDEXED_DIR
             indexed_path = ATTACHMENTS_INDEXED_DIR / f"{file_id}_{attachment.filename}"
             indexed_path.parent.mkdir(parents=True, exist_ok=True)
             indexed_path.write_bytes(content_bytes)
             client.close()
             # Devolver resultado sin delegar al subagente
-            from contexto_zai.subagents.documento_indexer_subagent import DocumentoIndexResult
+            from subagents.documento_indexer_subagent import DocumentoIndexResult
             return DocumentoIndexResult(
                 attachment_id=file_id,
                 filename=attachment.filename,
@@ -1576,13 +1576,13 @@ def index_document_large(
     Returns:
         DocumentoIndexResult con el resumen, temas y ruta, o None si falló.
     """
-    from contexto_zai.client.attachment_client import AttachmentClient
-    from contexto_zai.config import PARTITION_THRESHOLD_TOKENS
-    from contexto_zai.models import Attachment
-    from contexto_zai.subagents.documento_indexer_subagent import (
+    from client.attachment_client import AttachmentClient
+    from config import PARTITION_THRESHOLD_TOKENS
+    from models import Attachment
+    from subagents.documento_indexer_subagent import (
         DocumentoIndexerSubagent,
     )
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from subagents.launcher import SubagentLauncher
 
     # Construir Attachment
     attachment = Attachment(
@@ -1823,7 +1823,7 @@ def recuperar_contexto_si_necesario(
     # JWT: cargar del CredentialManager si llega vacío.
     if not jwt:
         try:
-            from contexto_zai.client.credential_manager import CredentialManager
+            from client.credential_manager import CredentialManager
             cm = CredentialManager()
             jwt = cm.get_jwt() or ""
         except Exception as e:
@@ -1872,7 +1872,7 @@ def recuperar_contexto_si_necesario(
                 "v6.17 F6: contexto_recuperacion no existe — creando desde el chat %s",
                 chat_id[:12] if chat_id else "(sin chat_id)",
             )
-            from contexto_zai.process.recovery_cycle import RecoveryCycle
+            from process.recovery_cycle import RecoveryCycle
             cycle = RecoveryCycle(
                 jwt=jwt,
                 chat_id=chat_id,
@@ -1927,8 +1927,8 @@ def _construir_pending_task_para_bloque(
     Returns:
         SubagentTask lista para que el agente principal la ejecute con Task tool.
     """
-    from contexto_zai.models import SubagentTask
-    from contexto_zai.config import PROMPT_RESUMEN_RIGIDO
+    from models import SubagentTask
+    from config import PROMPT_RESUMEN_RIGIDO
     filename = bloque.filename
     # v6.4 F4: usar el mismo prompt riguroso del Worker Bun (600-900 chars, 4 oraciones)
     prompt = PROMPT_RESUMEN_RIGIDO.format(bloque_content=f"(Lee el archivo {filename} en el workspace)")
@@ -2040,7 +2040,7 @@ def _parsear_intercambios_desde_contenido(content_bytes: bytes) -> list:
         return []
 
     # Pre-importar para evitar repetir en cada iteración.
-    from contexto_zai.models import Message, MessageRole
+    from models import Message, MessageRole
 
     messages: list = []
     seq = 0
@@ -2161,7 +2161,7 @@ if __name__ == "__main__":
     print("=== Validacion de pipeline.py ===\n")
 
     import tempfile
-    from contexto_zai.models import DetectionTrigger
+    from models import DetectionTrigger
 
     # Test 1: status() en directorio vacío
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -2219,7 +2219,7 @@ if __name__ == "__main__":
 
     # Test 8 (v3.4): export -> import ciclo completo
     import json as _json
-    from contexto_zai.models import RecoveryMetadata
+    from models import RecoveryMetadata
     with tempfile.TemporaryDirectory() as tmpdir:
         # Crear contexto simulado
         ctx_dir = Path(tmpdir) / "contexto_recuperacion"
@@ -2477,7 +2477,7 @@ if __name__ == "__main__":
     # Bug Windows: Path.rename() lanza FileExistsError si el destino ya existe.
     # v4.2: el código elimina el destino antes de renombrar — comportamiento cross-platform.
     with tempfile.TemporaryDirectory() as tmpdir:
-        from contexto_zai.config import ATTACHMENTS_INDEXED_DIR
+        from config import ATTACHMENTS_INDEXED_DIR
         # Limpiar el indexed_dir por si quedó de tests anteriores
         indexed_anterior = ATTACHMENTS_INDEXED_DIR / "documento_grande.txt"
         if indexed_anterior.exists():

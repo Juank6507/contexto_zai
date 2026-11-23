@@ -43,8 +43,8 @@ from unittest.mock import MagicMock, patch
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from contexto_zai.models import Message, MessageRole
-from contexto_zai.process.recovery_cycle import RecoveryCycle
+from models import Message, MessageRole
+from process.recovery_cycle import RecoveryCycle
 
 def _patched_context_manager(mock_class, **method_returns):
     """Configura un mock de clase para que funcione como context manager.

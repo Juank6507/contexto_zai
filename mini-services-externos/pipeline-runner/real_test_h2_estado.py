@@ -37,9 +37,9 @@ def main():
         log.error("No se puede conectar a TaskBridgeServer: %s", e)
         return 1
 
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.subagents.launcher import SubagentLauncher
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from generation.estado_generator import EstadoGenerator
+    from subagents.launcher import SubagentLauncher
+    from models import Exchange, Message, MessageRole
 
     # Intercambios con restricciones claras para que D4 detecte
     exchanges = [

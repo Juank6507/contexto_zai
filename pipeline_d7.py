@@ -26,7 +26,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.pipeline_auditoria import AuditorWorkspace
+from pipeline_auditoria import AuditorWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +92,14 @@ class CicloD7:
         """
         import json as _json
         import time as _time
-        from contexto_zai.config import MAX_ITER_D7 as _MAX_ITER_D7
-        from contexto_zai.models import ThematicBlock as _TB
+        from config import MAX_ITER_D7 as _MAX_ITER_D7
+        from models import ThematicBlock as _TB
         # Lazy imports para evitar dependencia circular.
-        from contexto_zai.pipeline_cascada import _persistir_pending_task_en_disco
-        from contexto_zai.pipeline_w3 import CicloW3
+        from pipeline_cascada import _persistir_pending_task_en_disco
+        from pipeline_w3 import CicloW3
         # ``_construir_pending_task_para_bloque`` sigue en pipeline.py
         # como utility (no es parte de ningún subproceso). Lazy import.
-        from contexto_zai.pipeline import _construir_pending_task_para_bloque
+        from pipeline import _construir_pending_task_para_bloque
 
         ws_path = Path(workspace_dir)
         if not ws_path.exists():
@@ -391,7 +391,7 @@ class CicloD7:
             SubagentTask con prompt corregido lista para que el agente
             CZAI la ejecute con el Task tool.
         """
-        from contexto_zai.models import SubagentTask
+        from models import SubagentTask
         block_id = filename.replace(".md", "")
         prompt = f"""Eres un subagente Actuador del proceso contexto_zai. Estás en el bucle D7 (P17)
 de garantía de completitud: revisar la falla respecto al spec, corregirla,
@@ -493,8 +493,8 @@ Respuesta:"""
         if not pending_tasks:
             return []
 
-        from contexto_zai.config import MAX_ITER_D7 as _MAX_ITER_D7
-        from contexto_zai.models import OrchestratorResult
+        from config import MAX_ITER_D7 as _MAX_ITER_D7
+        from models import OrchestratorResult
 
         ws_path = Path(workspace_dir)
         if not ws_path.exists():

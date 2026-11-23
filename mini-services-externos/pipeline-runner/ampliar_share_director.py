@@ -54,7 +54,7 @@ def main() -> int:
     # Antes de invocar ampliar_contexto: obtener el arbol para
     # mostrar al Director cuantos exchanges hay y donde empieza el proyecto.
     log.info("--- Pre-exploracion: arbol de mensajes ---")
-    from contexto_zai.client.chat_client import ChatClient
+    from client.chat_client import ChatClient
 
     with ChatClient(token=jwt) as client:
         tree_data = client.get_message_tree(SHARE_ID)
@@ -65,7 +65,7 @@ def main() -> int:
         log.info("Total mensajes en arbol: %d", len(messages_map))
 
     # Invocar ampliar_contexto() — es el path publico del proceso
-    from contexto_zai.pipeline import ampliar_contexto
+    from pipeline import ampliar_contexto
 
     t0 = time.time()
     try:

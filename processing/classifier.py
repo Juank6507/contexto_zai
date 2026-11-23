@@ -50,8 +50,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from contexto_zai.config import DEFAULT_THEME_RULES, ThemeRule
-from contexto_zai.models import Exchange
+from config import DEFAULT_THEME_RULES, ThemeRule
+from models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     # -- Validación interna de classifier.py (atómico standalone) --
     print("=== Validacion de classifier.py ===\n")
 
-    from contexto_zai.models import Message, MessageRole
+    from models import Message, MessageRole
 
     cl = MessageClassifier()
 

@@ -44,8 +44,8 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import WORKSPACE_OUTPUT_DIR
-from contexto_zai.models import SubagentResponse
+from config import WORKSPACE_OUTPUT_DIR
+from models import SubagentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -901,7 +901,7 @@ class IntegradorRespuestas:
         temas_tentativos = [f"documento_externo_{lote_idx}"]
 
         # Construir ThematicBlock con tema genérico y external_size_chars
-        from contexto_zai.models import ThematicBlock as _TB
+        from models import ThematicBlock as _TB
         block_temp = _TB(
             filename=bloque_filename,
             temas=temas_tentativos,
@@ -1146,8 +1146,8 @@ class IntegradorRespuestas:
         físicos), loguea warning y continua — no rompe el flujo principal.
         """
         try:
-            from contexto_zai.generation.indice_generator import IndiceGenerator
-            from contexto_zai.models import ThematicBlock, RecoveryMetadata
+            from generation.indice_generator import IndiceGenerator
+            from models import ThematicBlock, RecoveryMetadata
 
             indice_gen = IndiceGenerator()
 

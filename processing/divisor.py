@@ -40,12 +40,12 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
-from contexto_zai.config import MAX_TOKENS_POR_SUBAGENTE_N2
-from contexto_zai.models import Porcion
+from config import MAX_TOKENS_POR_SUBAGENTE_N2
+from models import Porcion
 
 if TYPE_CHECKING:
     # Evitar import circular: divisor.py ← subagents/__init__.py ← divisor_subagent.py ← divisor.py
-    from contexto_zai.subagents.launcher import SubagentLauncher, SubagentRequest, SubagentResponse
+    from subagents.launcher import SubagentLauncher, SubagentRequest, SubagentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,7 @@ class Divisor(ABC):
             prompt_builder = self._default_prompt_builder
 
         # Lazy import para evitar import circular
-        from contexto_zai.subagents.launcher import SubagentRequest
+        from subagents.launcher import SubagentRequest
 
         requests = [
             SubagentRequest(

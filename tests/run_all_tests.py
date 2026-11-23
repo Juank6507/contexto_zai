@@ -50,7 +50,7 @@ except (AttributeError, io.UnsupportedOperation):
 
 # ── Detectar workspace y configurar PYTHONPATH ─────────────────────
 # Esto se hace ANTES de importar cualquier modulo de contexto_zai
-# para que los tests puedan hacer `from contexto_zai.X import Y`.
+# para que los tests puedan hacer `from X import Y`.
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 
 def detect_package_dir() -> Path:
@@ -80,7 +80,7 @@ def get_pythonpath() -> str:
     pkg_dir = detect_package_dir()
     if pkg_dir == WORKSPACE_ROOT:
         # Estructura B: el nombre del paquete es el nombre del workspace.
-        # Para que `from contexto_zai.X import Y` funcione, PYTHONPATH debe
+        # Para que `from X import Y` funcione, PYTHONPATH debe
         # apuntar al directorio padre del workspace.
         return str(WORKSPACE_ROOT.parent)
     else:

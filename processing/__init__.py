@@ -31,10 +31,10 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from contexto_zai.processing.block_packer import BlockPacker
-from contexto_zai.processing.classifier import MessageClassifier
-from contexto_zai.processing.content_cleaner import ContentCleaner
-from contexto_zai.processing.exchange_builder import ExchangeBuilder
+from processing.block_packer import BlockPacker
+from processing.classifier import MessageClassifier
+from processing.content_cleaner import ContentCleaner
+from processing.exchange_builder import ExchangeBuilder
 
 __all__ = [
     "ExchangeBuilder",

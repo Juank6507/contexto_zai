@@ -41,7 +41,7 @@ else:
 import logging
 from typing import Optional
 
-from contexto_zai.models import Attachment
+from models import Attachment
 
 logger = logging.getLogger(__name__)
 

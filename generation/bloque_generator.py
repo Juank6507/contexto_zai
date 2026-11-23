@@ -38,10 +38,10 @@ else:
 import logging
 from typing import TYPE_CHECKING
 
-from contexto_zai.processing.content_cleaner import ContentCleaner
+from processing.content_cleaner import ContentCleaner
 
 if TYPE_CHECKING:
-    from contexto_zai.models import ThematicBlock
+    from models import ThematicBlock
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     # -- Validación interna de bloque_generator.py --
     print("=== Validacion de bloque_generator.py ===\n")
 
-    from contexto_zai.models import Exchange, Message, MessageRole, ThematicBlock
+    from models import Exchange, Message, MessageRole, ThematicBlock
 
     gen = BloqueGenerator()
     cleaner = ContentCleaner()

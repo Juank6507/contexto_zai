@@ -17,12 +17,12 @@ log = logging.getLogger("real_test_h1_restricciones")
 def main():
     log.info("=== Test REAL H1 TEST 2: modo RESTRICCIONES_TEMA (M3 D4) ===")
 
-    from contexto_zai.subagents.intercambios_clasificador_subagent import (
+    from subagents.intercambios_clasificador_subagent import (
         IntercambiosClasificadorSubagent,
         ModoClasificador,
     )
-    from contexto_zai.subagents.launcher import SubagentLauncher
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from subagents.launcher import SubagentLauncher
+    from models import Exchange, Message, MessageRole
 
     exchanges = [
         Exchange(

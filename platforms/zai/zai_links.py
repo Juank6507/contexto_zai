@@ -15,8 +15,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.platforms.interfaces import PlatformLinks
-from contexto_zai.client.attachment_client import AttachmentClient
+from platforms.interfaces import PlatformLinks
+from client.attachment_client import AttachmentClient
 
 logger = logging.getLogger(__name__)
 

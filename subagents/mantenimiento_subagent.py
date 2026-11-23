@@ -35,10 +35,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
-from contexto_zai.metadata.manager import MetadataManager
+from metadata.manager import MetadataManager
 
 if TYPE_CHECKING:
-    from contexto_zai.models import Exchange, Message, RecoveryMetadata
+    from models import Exchange, Message, RecoveryMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +158,7 @@ if __name__ == "__main__":
 
     import tempfile
     from pathlib import Path
-    from contexto_zai.models import Message, MessageRole
+    from models import Message, MessageRole
 
     # Test 1: mantenimiento exitoso con mensajes nuevos
     with tempfile.TemporaryDirectory() as tmpdir:

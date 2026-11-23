@@ -36,10 +36,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
+from subagents.launcher import SubagentLauncher, SubagentResponse
 
 if TYPE_CHECKING:
-    from contexto_zai.models import Exchange, RecoveryMetadata
+    from models import Exchange, RecoveryMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     print("=== Validacion de estado_subagent.py ===\n")
 
     import tempfile
-    from contexto_zai.models import Exchange, Message, MessageRole, RecoveryMetadata
+    from models import Exchange, Message, MessageRole, RecoveryMetadata
 
     # Test 1: subagente devuelve contexto
     def mock_invoker(prompt: str) -> str:

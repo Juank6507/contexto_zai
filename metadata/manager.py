@@ -46,8 +46,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import METADATA_FILENAME
-from contexto_zai.models import RecoveryMetadata
+from config import METADATA_FILENAME
+from models import RecoveryMetadata
 
 logger = logging.getLogger(__name__)
 

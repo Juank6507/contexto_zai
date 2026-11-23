@@ -24,7 +24,7 @@ _workspace = _here.parent.parent
 if str(_workspace) not in sys.path:
     sys.path.insert(0, str(_workspace))
 
-from contexto_zai.client.credential_manager import CredentialManager
+from client.credential_manager import CredentialManager
 
 
 def test_credential_manager_guardar_leer():

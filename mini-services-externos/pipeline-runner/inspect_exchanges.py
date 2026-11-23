@@ -20,9 +20,9 @@ SHARE_ID = "db717d70-95a7-4e2d-8992-fb4b6ba10df6"
 
 
 def main() -> int:
-    from contexto_zai.client.chat_client import ChatClient
-    from contexto_zai.processing.exchange_builder import ExchangeBuilder
-    from contexto_zai.models import DetectionTrigger
+    from client.chat_client import ChatClient
+    from processing.exchange_builder import ExchangeBuilder
+    from models import DetectionTrigger
     import datetime
 
     creds = json.loads(Path.home().joinpath(".czai/credentials.json").read_text())
@@ -34,11 +34,11 @@ def main() -> int:
     log.warning("Total mensajes extraidos: %d", len(messages))
 
     # Construir exchanges
-    from contexto_zai.subagents.intercambios_clasificador_subagent import (
+    from subagents.intercambios_clasificador_subagent import (
         IntercambiosClasificadorSubagent,
         ModoClasificador,
     )
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from subagents.launcher import SubagentLauncher
 
     builder = ExchangeBuilder()
     exchanges = builder.build(messages)

@@ -14,8 +14,8 @@ import time
 # Asegurar que el paquete contexto_zai sea importable
 sys.path.insert(0, "/home/z/my-project")
 
-from contexto_zai.client.credential_manager import CredentialManager
-from contexto_zai.client.jwt_bridge_server import JwtBridgeServer
+from client.credential_manager import CredentialManager
+from client.jwt_bridge_server import JwtBridgeServer
 
 
 PORT = 8086

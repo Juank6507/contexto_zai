@@ -41,7 +41,7 @@ from typing import Optional
 # Asegurar que el paquete contexto_zai sea importable.
 sys.path.insert(0, "/home/z/my-project")
 
-from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+from config import WORKSPACE_OUTPUT_DIR
 
 
 PORT = 8088
@@ -197,7 +197,7 @@ class PipelineDaemonServer:
         workspace_dir = body.get("workspace_dir", "")
         force_rebuild = body.get("force_rebuild", False)
         try:
-            from contexto_zai.pipeline import ampliar_contexto
+            from pipeline import ampliar_contexto
             kwargs = {
                 "source_type": source_type,
                 "source_path": source_path,
@@ -234,7 +234,7 @@ class PipelineDaemonServer:
             # v7.0 modularización: ``_collect_responses_and_finalize`` ahora
             # vive en ``SubprocesoArchivos`` (pipeline_archivos.py). Se
             # re-exporta como función módulo-nivel en ``pipeline.py``.
-            from contexto_zai.pipeline import _collect_responses_and_finalize
+            from pipeline import _collect_responses_and_finalize
             result = _collect_responses_and_finalize(
                 workspace_dir=workspace_dir,
             )
@@ -259,7 +259,7 @@ class PipelineDaemonServer:
             # v7.0 modularización: ``_generar_archivos_recuperacion`` ahora
             # vive en ``SubprocesoArchivos`` (pipeline_archivos.py). Se
             # re-exporta como función módulo-nivel en ``pipeline.py``.
-            from contexto_zai.pipeline import _generar_archivos_recuperacion
+            from pipeline import _generar_archivos_recuperacion
             result = _generar_archivos_recuperacion(
                 workspace_dir=workspace_dir,
                 chat_id=chat_id,
@@ -280,7 +280,7 @@ class PipelineDaemonServer:
         reason = body.get("reason", "")
         chat_label = body.get("chat_label", "")
         try:
-            from contexto_zai.pipeline import run
+            from pipeline import run
             result = run(chat_id=chat_id, jwt=jwt, reason=reason, chat_label=chat_label)
             # OrchestratorResult → dict
             return {

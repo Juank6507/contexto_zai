@@ -46,14 +46,14 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-from contexto_zai.config import (
+from config import (
     MAX_SUBAGENTES_N2_PARALELOS,
     MAX_TOKENS_POR_SUBAGENTE_N2,
 )
-from contexto_zai.models import Attachment, IndiceParcial, Porcion
-from contexto_zai.processing.conciliador import ThemeSection
-from contexto_zai.processing.divisor import Divisor, DocumentoDivisor
-from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
+from models import Attachment, IndiceParcial, Porcion
+from processing.conciliador import ThemeSection
+from processing.divisor import Divisor, DocumentoDivisor
+from subagents.launcher import SubagentLauncher, SubagentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -274,8 +274,8 @@ if __name__ == "__main__":
     print("=== Validacion de divisor_subagent.py ===\n")
 
     import tempfile
-    from contexto_zai.models import Attachment, Porcion
-    from contexto_zai.subagents.launcher import SubagentLauncher
+    from models import Attachment, Porcion
+    from subagents.launcher import SubagentLauncher
 
     # Mock invoker que simula respuestas de N2
     def mock_n2_invoker(prompt: str) -> str:
@@ -358,7 +358,7 @@ SECCIONES: spec_v3, manual"""
             print(f"[OK] max_paralelos=2: {len(indices3)} índices parciales procesados")
 
     # Test 4: _parse_responses con respuesta mal formada
-    from contexto_zai.subagents.launcher import SubagentResponse
+    from subagents.launcher import SubagentResponse
     responses_malformed = [
         SubagentResponse(content="No tiene formato", success=True),
         SubagentResponse(content="", success=False, error="Task failed"),

@@ -42,9 +42,9 @@ from unittest.mock import MagicMock, patch
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from contexto_zai.models import DetectionTrigger, Message, MessageRole
-from contexto_zai.pipeline import run, status
-from contexto_zai.process.orchestrator import Orchestrator
+from models import DetectionTrigger, Message, MessageRole
+from pipeline import run, status
+from process.orchestrator import Orchestrator
 
 def _patched_context_manager(mock_class, **method_returns):
     """Configura un mock de clase para que funcione como context manager."""
@@ -296,7 +296,7 @@ def test_e2e_files_in_workspace_and_download():
 def test_e2e_windows_path_compatibility():
     """Test E2E 11: paths multiplataforma (funciona en Windows)."""
     print("\n=== Test E2E 11: compatibilidad Windows ===")
-    from contexto_zai.config import _resolve_workspace_root
+    from config import _resolve_workspace_root
     import os
 
     # La función debe aceptar paths con formato Windows (backslashes)
@@ -319,8 +319,8 @@ def test_e2e_windows_path_compatibility():
 def test_e2e_fix1_links_externos():
     """Test E2E 12 (v3.4 Fix 1): links externos se procesan como intercambios."""
     print("\n=== Test E2E 12 (v3.4 Fix 1): links externos ===")
-    from contexto_zai.client.web_reader import WebReader, ExternalContent
-    from contexto_zai.config import URL_PATTERN
+    from client.web_reader import WebReader, ExternalContent
+    from config import URL_PATTERN
 
     # 1. URL_PATTERN detecta URLs en mensajes del Director
     msg = "Lee esto: https://ejemplo.com/articulo y después dime"
@@ -352,7 +352,7 @@ def test_e2e_fix1_links_externos():
 def test_e2e_fix2_capa3_discriminator():
     """Test E2E 13 (v6.0): Capa 3 eliminada — verificar que NO hay Capa 3 en RecoveryCycle."""
     print("\n=== Test E2E 13 (v6.0): Capa 3 eliminada ===")
-    from contexto_zai.process.recovery_cycle import RecoveryCycle, RecoveryCycleResult
+    from process.recovery_cycle import RecoveryCycle, RecoveryCycleResult
 
     # 1. RecoveryCycle sin Capa 3 (v6.0: DiscriminatorSubagent eliminado)
     cycle = RecoveryCycle(jwt="x", chat_id="abc")
@@ -382,8 +382,8 @@ def test_e2e_fix2_capa3_discriminator():
 def test_e2e_fix3_truncamiento_logico():
     """Test E2E 14 (v3.4 Fix 3): estado actual con truncamiento lógico."""
     print("\n=== Test E2E 14 (v3.4 Fix 3): truncamiento lógico ===")
-    from contexto_zai.generation.estado_generator import EstadoGenerator
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from generation.estado_generator import EstadoGenerator
+    from models import Exchange, Message, MessageRole
 
     # Crear contenido suficiente para superar el limite de chars (70K)
     # Cada intercambio aporta ~1000 chars, necesitamos > 70 intercambios grandes
@@ -426,9 +426,9 @@ def test_e2e_fix3_truncamiento_logico():
 def test_e2e_v34_export_import_context():
     """Test E2E 15 (v3.4): exportación e importación de contexto."""
     print("\n=== Test E2E 15 (v3.4): export/import de contexto ===")
-    from contexto_zai.context.exporter import ContextExporter
-    from contexto_zai.context.importer import ContextImporter
-    from contexto_zai.models import RecoveryMetadata
+    from context.exporter import ContextExporter
+    from context.importer import ContextImporter
+    from models import RecoveryMetadata
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Crear contexto simulado
@@ -473,13 +473,13 @@ def test_e2e_v34_export_import_context():
 def test_e2e_v35_attachment_pipeline():
     """Test E2E 16 (v3.5): pipeline completo con attachments."""
     print("\n=== Test E2E 16 (v3.5): pipeline con attachments ===")
-    from contexto_zai.processing.attachment_detector import AttachmentDetector
-    from contexto_zai.processing.content_delegator import DocumentDelegator
-    from contexto_zai.subagents.documento_indexer_subagent import (
+    from processing.attachment_detector import AttachmentDetector
+    from processing.content_delegator import DocumentDelegator
+    from subagents.documento_indexer_subagent import (
         DocumentoIndexResult,
         ThemeSection,
     )
-    from contexto_zai.models import Attachment
+    from models import Attachment
     from pathlib import Path
 
     # 1. AttachmentDetector detecta attachments en JSON crudo
@@ -574,8 +574,8 @@ def test_e2e_v35_attachment_pipeline():
     print(f"[OK] DocumentoIndexResult: {len(result.temas_detectados)} temas, nombres={result.temas_nombres}")
 
     # 8. IndiceGenerator incluye sección de documentos indexados
-    from contexto_zai.generation.indice_generator import IndiceGenerator
-    from contexto_zai.models import RecoveryMetadata, ThematicBlock, Exchange, Message, MessageRole
+    from generation.indice_generator import IndiceGenerator
+    from models import RecoveryMetadata, ThematicBlock, Exchange, Message, MessageRole
 
     blocks = [
         ThematicBlock(filename="bloque_general.md", temas=["general"], exchanges=[]),

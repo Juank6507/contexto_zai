@@ -46,22 +46,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from contexto_zai.config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
-from contexto_zai.generation.recovery_generator import RecoveryGenerator
-from contexto_zai.metadata.manager import MetadataManager
-from contexto_zai.models import RecoveryFile
-from contexto_zai.processing.attachment_detector import AttachmentDetector
-from contexto_zai.processing.block_packer import BlockPacker
-from contexto_zai.processing.classifier import MessageClassifier
-from contexto_zai.processing.content_delegator import DocumentDelegator
-from contexto_zai.processing.exchange_builder import ExchangeBuilder
-from contexto_zai.processing.message_extractor import MessageExtractor
-from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
-from contexto_zai.subagents.documento_indexer_subagent import (
+from config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
+from generation.recovery_generator import RecoveryGenerator
+from metadata.manager import MetadataManager
+from models import RecoveryFile
+from processing.attachment_detector import AttachmentDetector
+from processing.block_packer import BlockPacker
+from processing.classifier import MessageClassifier
+from processing.content_delegator import DocumentDelegator
+from processing.exchange_builder import ExchangeBuilder
+from processing.message_extractor import MessageExtractor
+from subagents.decisiones_subagent import DecisionesSubagent
+from subagents.documento_indexer_subagent import (
     DocumentoIndexResult,
     DocumentoIndexerSubagent,
 )
-from contexto_zai.subagents.launcher import SubagentLauncher
+from subagents.launcher import SubagentLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +166,8 @@ class RecoveryCycle:
         # Si no, creamos un ProcesadorIntercambios con Orquestador y lo pasamos.
         # Esto unifica el patrón diferido para todos los generadores.
         # v6.0: Subdivider eliminado — los temas grandes se reparten en bloques (multi-bloque).
-        from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
-        from contexto_zai.coordinador.orquestador import Orquestador
+        from procesadores.procesador_intercambios import ProcesadorIntercambios
+        from coordinador.orquestador import Orquestador
 
         if subagent_launcher is not None and isinstance(subagent_launcher, ProcesadorIntercambios):
             procesador_intercambios = subagent_launcher
@@ -186,8 +186,8 @@ class RecoveryCycle:
         # F4 v4.2: pasar ProcesadorIntercambios al RecoveryGenerator para que
         # EstadoGenerator y DecisionesGenerator publiquen tareas vía el Orquestador.
         if procesador_intercambios is not None:
-            from contexto_zai.generation.estado_generator import EstadoGenerator
-            from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+            from generation.estado_generator import EstadoGenerator
+            from generation.decisiones_generator import DecisionesGenerator
             # v6.0 Fix 9: pasar workspace_dir al EstadoGenerator (F4 v6.0 — Fases 1-3).
             # v6.19 F1: pasar también chat_id para la cabecera de 00_estado_actual.md.
             estado_gen = EstadoGenerator(
@@ -212,7 +212,7 @@ class RecoveryCycle:
         Aquí devolvemos un DecisionesGenerator en modo offline (placeholder)
         que se actualiza después con las decisiones del LLM.
         """
-        from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+        from generation.decisiones_generator import DecisionesGenerator
         # v6.4 F1: sin extractor regex, sin launcher — modo offline placeholder.
         # Las decisiones reales llegan vía _consolidar_decisiones_llm() en pipeline.py.
         return DecisionesGenerator()
@@ -365,8 +365,8 @@ class RecoveryCycle:
             # F4 v4.2: recolectar pending_tasks del Orquestador (si hay).
             pending_tasks: list = []
             try:
-                from contexto_zai.coordinador.orquestador import Orquestador
-                from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+                from coordinador.orquestador import Orquestador
+                from procesadores.procesador_intercambios import ProcesadorIntercambios
                 if isinstance(self._launcher, ProcesadorIntercambios):
                     orquestador = self._launcher._orquestador
                     if orquestador is not None:
@@ -588,8 +588,8 @@ class RecoveryCycle:
             # Los generadores publicaron tareas vía el ProcesadorIntercambios → Orquestador.
             pending_tasks: list = []
             try:
-                from contexto_zai.coordinador.orquestador import Orquestador
-                from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+                from coordinador.orquestador import Orquestador
+                from procesadores.procesador_intercambios import ProcesadorIntercambios
                 # Si el launcher era un ProcesadorIntercambios, leer tareas del Orquestador
                 if isinstance(self._launcher, ProcesadorIntercambios):
                     # El ProcesadorIntercambios tiene referencia al Orquestador
@@ -687,7 +687,7 @@ class RecoveryCycle:
         for att in attachments:
             try:
                 # v3.6: elegir flujo según tamaño
-                from contexto_zai.config import PARTITION_THRESHOLD_TOKENS
+                from config import PARTITION_THRESHOLD_TOKENS
                 estimated_tokens = int(att.estimated_tokens)
                 if estimated_tokens > PARTITION_THRESHOLD_TOKENS:
                     # Documento grande → flujo de 3 niveles
@@ -724,8 +724,8 @@ class RecoveryCycle:
         con diffs forward y reverse.
         """
         try:
-            from contexto_zai.processing.code_detector import CodeDetector
-            from contexto_zai.processing.version_graph import VersionGraphBuilder
+            from processing.code_detector import CodeDetector
+            from processing.version_graph import VersionGraphBuilder
         except ImportError as e:
             logger.warning("CodeDetector o VersionGraph no disponibles: %s", e)
             return

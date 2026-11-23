@@ -36,12 +36,12 @@ def main():
         log.error("No se puede conectar a TaskBridgeServer: %s", e)
         return 1
 
-    from contexto_zai.subagents.intercambios_clasificador_subagent import (
+    from subagents.intercambios_clasificador_subagent import (
         IntercambiosClasificadorSubagent,
         ModoClasificador,
     )
-    from contexto_zai.subagents.launcher import SubagentLauncher
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from subagents.launcher import SubagentLauncher
+    from models import Exchange, Message, MessageRole
 
     # Intercambios de prueba
     exchanges = [

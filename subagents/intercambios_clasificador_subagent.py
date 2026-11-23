@@ -56,15 +56,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
-from contexto_zai.config import CLASIFICADOR_MAX_CONTEXT_TOKENS, CLASIFICADOR_TIMEOUT_SECONDS
-from contexto_zai.subagents.clasificador_subagent import (
+from config import CLASIFICADOR_MAX_CONTEXT_TOKENS, CLASIFICADOR_TIMEOUT_SECONDS
+from subagents.clasificador_subagent import (
     ClasificadorResult,
     ClasificadorSubagent,
 )
-from contexto_zai.subagents.launcher import SubagentLauncher
+from subagents.launcher import SubagentLauncher
 
 if True:  # TYPE_CHECKING equivalente para runtime
-    from contexto_zai.models import Exchange
+    from models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -755,7 +755,7 @@ if __name__ == "__main__":
     # -- Validación interna de intercambios_clasificador_subagent.py --
     print("=== Validacion de intercambios_clasificador_subagent.py ===\n")
 
-    from contexto_zai.models import Exchange, Message, MessageRole
+    from models import Exchange, Message, MessageRole
 
     # Mock invoker por defecto: devuelve respuesta simulada
     def mock_invoker_default(prompt: str) -> str:
