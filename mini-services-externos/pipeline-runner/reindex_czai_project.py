@@ -93,7 +93,7 @@ def main() -> int:
 
     # 1. Extraer mensajes del share EP 02
     log.info("--- Paso 1: Extrayendo mensajes del share EP 02 ---")
-    from client.chat_client import ChatClient
+    from contexto_zai.client.chat_client import ChatClient
     with ChatClient(token=jwt) as client:
         messages, raw_messages = client.extract_all_with_raw(share_id=SHARE_ID)
         tree_data = client.get_message_tree(SHARE_ID)
@@ -104,15 +104,15 @@ def main() -> int:
 
     # 2. Construir exchanges
     log.info("--- Paso 2: Construyendo exchanges ---")
-    from processing.exchange_builder import ExchangeBuilder
-    from processing.classifier import MessageClassifier
-    from processing.block_packer import BlockPacker
-    from generation.recovery_generator import RecoveryGenerator
-    from generation.estado_generator import EstadoGenerator
-    from generation.decisiones_generator import DecisionesGenerator
-    from metadata.manager import MetadataManager
-    from models import RecoveryMetadata
-    from processing.decision_extractor import DecisionExtractor
+    from contexto_zai.processing.exchange_builder import ExchangeBuilder
+    from contexto_zai.processing.classifier import MessageClassifier
+    from contexto_zai.processing.block_packer import BlockPacker
+    from contexto_zai.generation.recovery_generator import RecoveryGenerator
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+    from contexto_zai.metadata.manager import MetadataManager
+    from contexto_zai.models import RecoveryMetadata
+    from contexto_zai.processing.decision_extractor import DecisionExtractor
 
     builder = ExchangeBuilder()
     all_exchanges = builder.build(messages)

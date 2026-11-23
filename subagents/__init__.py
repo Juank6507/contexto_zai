@@ -39,27 +39,27 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from subagents.barrido_subagent import BarridoSubagent
-from subagents.clasificador_subagent import (
+from contexto_zai.subagents.barrido_subagent import BarridoSubagent
+from contexto_zai.subagents.clasificador_subagent import (
     ClasificadorResult,
     ClasificadorSubagent,
 )
-from subagents.decisiones_subagent import DecisionesSubagent
-from subagents.divisor_subagent import DivisorSubagent
-from subagents.documento_indexer_subagent import (
+from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
+from contexto_zai.subagents.divisor_subagent import DivisorSubagent
+from contexto_zai.subagents.documento_indexer_subagent import (
     DocumentoIndexResult,
     DocumentoIndexerSubagent,
     ThemeSection,
 )
-from subagents.estado_subagent import EstadoSubagent
-from subagents.intercambios_clasificador_subagent import (
+from contexto_zai.subagents.estado_subagent import EstadoSubagent
+from contexto_zai.subagents.intercambios_clasificador_subagent import (
     Decision,
     IntercambiosClasificadorSubagent,
     ModoClasificador,
     Restriccion,
 )
-from subagents.launcher import SubagentLauncher
-from subagents.mantenimiento_subagent import MantenimientoSubagent
+from contexto_zai.subagents.launcher import SubagentLauncher
+from contexto_zai.subagents.mantenimiento_subagent import MantenimientoSubagent
 
 __all__ = [
     # v4.0 — Clase base OOP y subclase de intercambios

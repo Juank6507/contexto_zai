@@ -34,6 +34,29 @@ v7.0 F2 — Abstracción de plataforma:
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
+        break
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
+
 import logging
 import os as _os
 import time
@@ -42,9 +65,9 @@ from pathlib import Path
 from typing import Optional
 
 # v7.0 F2: import tipado de la ABC (no se instancia directamente).
-from platforms.interfaces import PlatformLLM  # noqa: F401
+from contexto_zai.platforms.interfaces import PlatformLLM  # noqa: F401
 
-from pipeline_auditoria import AuditorWorkspace, ProgressMonitor
+from contexto_zai.pipeline_auditoria import AuditorWorkspace, ProgressMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +94,7 @@ def _proxy_zai_disponible(llm: Optional[PlatformLLM] = None) -> bool:
             # Lazy import para evitar dependencia circular en tiempo de
             # carga del módulo (ZaiLLM importa platforms.interfaces que
             # importa typing, no problema en runtime).
-            from platforms.zai.zai_llm import ZaiLLM
+            from contexto_zai.platforms.zai.zai_llm import ZaiLLM
             llm = ZaiLLM()
         return llm.is_available()
     except Exception as e:
@@ -105,7 +128,7 @@ def _arrancar_worker_y_esperar(
     import subprocess
     import socket as _socket
     try:
-        from config import WORKER_BUN_DIR
+        from contexto_zai.config import WORKER_BUN_DIR
     except ImportError:
         logger.warning("v6.12: no se pudo importar WORKER_BUN_DIR, fallback desactivado")
         return False
@@ -392,7 +415,7 @@ def _actualizar_estado_daemon(
     status se cambia automáticamente a ``done``.
 
     Cuenta bloques completos/pendientes con
-    ``_descubrir_bloques_incompletos()`` (F1) y escribe el estado del
+    ``_W3._descubrir_bloques_incompletos()`` (F1) y escribe el estado del
     daemon en ``_daemon_status.json``:
 
     .. code-block:: json
@@ -425,8 +448,8 @@ def _actualizar_estado_daemon(
         total = len(list(ws.glob("bloque_*.md")))
         # Lazy import para evitar dependencia circular (pipeline_w3 importa
         # pipeline_cascada en runtime).
-        from pipeline_w3 import _descubrir_bloques_incompletos
-        incompletos = _descubrir_bloques_incompletos(workspace_dir)
+        from contexto_zai.pipeline_w3 import CicloW3 as _W3
+        incompletos = _W3._descubrir_bloques_incompletos(workspace_dir)
         pendientes = len(incompletos)
         completados = max(0, total - pendientes)
     except Exception as e:
@@ -543,6 +566,9 @@ def _enriquecer_con_proxy_zai(
     import urllib.error as _ue
     import hashlib as _hashlib
 
+    # C8: definir intento para el log final (antes no estaba definida)
+    intento = 1
+
     ws = Path(workspace_dir)
     filename = bloque.filename
     block_id = filename.replace(".md", "")
@@ -569,7 +595,7 @@ def _enriquecer_con_proxy_zai(
     # v7.0 F2: resolver el LLM a usar. Default ZaiLLM() si no se inyecta.
     if llm is None:
         try:
-            from platforms.zai.zai_llm import ZaiLLM
+            from contexto_zai.platforms.zai.zai_llm import ZaiLLM
             llm = ZaiLLM()
         except Exception as e:
             logger.warning("v7.0 F2: no se pudo construir ZaiLLM default: %s", e)
@@ -579,11 +605,11 @@ def _enriquecer_con_proxy_zai(
     # en config.py que apunta al mismo valor 10). El timeout efectivo de la
     # llamada es PROXY_LLM_TIMEOUT * 6 (60s) para no cortar respuestas largas.
     try:
-        from config import PROXY_LLM_TIMEOUT
+        from contexto_zai.config import PROXY_LLM_TIMEOUT
     except ImportError:
         # Fallback: alias deprecated (backward-compat).
         try:
-            from config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
+            from contexto_zai.config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
         except ImportError:
             logger.warning("v6.13 Nivel 2: no se pudo importar config del proxy.")
             return False
@@ -591,7 +617,7 @@ def _enriquecer_con_proxy_zai(
     # v6.13 F5: Prompt fusionado W1+W2+W3
     # Lazy import para evitar dependencia circular (pipeline_w3 importa
     # pipeline_cascada en runtime).
-    from pipeline_w3 import PROMPT_FUSIONADO_W1W2W3
+    from contexto_zai.pipeline_w3 import PROMPT_FUSIONADO_W1W2W3
     prompt = PROMPT_FUSIONADO_W1W2W3.format(bloque_content=bloque_content)
 
     # v6.16 F7 (criterio 40): el hash de caché incluye la versión del
@@ -599,7 +625,7 @@ def _enriquecer_con_proxy_zai(
     # invalida, forzando re-generación de RESUMEN+artefactos con el
     # prompt vigente.
     try:
-        from config import PIPELINE_VERSION
+        from contexto_zai.config import PIPELINE_VERSION
         prompt_hash = _hashlib.sha256(
             (prompt + PIPELINE_VERSION).encode("utf-8")
         ).hexdigest()
@@ -816,7 +842,7 @@ class CascadaAccesoLLM:
     todo P14 y se resuelven en P17 (``_bucle_d7_completitud``). El nivel 3
     (subagentes del agente CZAI) no las ejecuta directamente: las publica
     para que el agente CZAI las procese con Task tool, llame
-    ``collect_responses()``, y el proceso re-verifique (criterio 31).
+    ``CicloW3.collect_responses()``, y el proceso re-verifique (criterio 31).
 
     Una instancia se crea una vez y se reutiliza por tarea (criterio 30).
 
@@ -872,7 +898,7 @@ class CascadaAccesoLLM:
         # v7.0 F2: default ZaiLLM() si no se inyecta nada.
         if llm is None:
             try:
-                from platforms.zai.zai_llm import ZaiLLM
+                from contexto_zai.platforms.zai.zai_llm import ZaiLLM
                 llm = ZaiLLM()
             except Exception as e:
                 logger.warning(
@@ -907,7 +933,7 @@ class CascadaAccesoLLM:
         """
         # Lazy import para evitar dependencia circular (pipeline_w3 importa
         # pipeline_cascada en runtime).
-        from pipeline_w3 import _bloque_esta_completo
+        from contexto_zai.pipeline_w3 import CicloW3 as _W3
 
         # Normalizar a lista.
         if isinstance(tarea_o_lote, list):
@@ -918,7 +944,7 @@ class CascadaAccesoLLM:
         # Idempotencia: filtrar tareas ya completas.
         tareas = [
             t for t in tareas_originales
-            if not _bloque_esta_completo(
+            if not _W3._bloque_esta_completo(
                 t, workspace_dir=self._workspace_dir
             )
         ]
@@ -954,7 +980,7 @@ class CascadaAccesoLLM:
         # Filtrar completas tras Nivel 1.
         tareas_restantes = [
             t for t in tareas
-            if not _bloque_esta_completo(
+            if not _W3._bloque_esta_completo(
                 t, workspace_dir=self._workspace_dir
             )
         ]
@@ -1000,7 +1026,7 @@ class CascadaAccesoLLM:
         # v6.16 F8: post-bloque para todas las tareas originales.
         # ``resultado`` por bloque = si está completo físicamente tras la cascada.
         for bloque in tareas_originales:
-            bloque_ok = _bloque_esta_completo(
+            bloque_ok = _W3._bloque_esta_completo(
                 bloque, workspace_dir=self._workspace_dir
             )
             _post_bloque(
@@ -1077,7 +1103,7 @@ class CascadaAccesoLLM:
             return True
         # Lazy import para evitar dependencia circular (pipeline_w3 importa
         # pipeline_cascada en runtime).
-        from pipeline_w3 import _bloque_esta_completo
+        from contexto_zai.pipeline_w3 import CicloW3 as _W3
         # v6.16 F5 (criterio 39): arrancar el Worker Bun directamente aquí con
         # subprocess (igual que ``_arrancar_worker_y_esperar``), sin llamar a
         # ``ProgressMonitor.esperar_y_verificar()`` (que tarda 60s). El
@@ -1087,7 +1113,7 @@ class CascadaAccesoLLM:
         import socket as _socket
         import os as _os_mod
         try:
-            from config import WORKER_BUN_DIR
+            from contexto_zai.config import WORKER_BUN_DIR
         except ImportError:
             logger.warning(
                 "v6.16 F5: no se pudo importar WORKER_BUN_DIR, fallback desactivado"
@@ -1148,7 +1174,7 @@ class CascadaAccesoLLM:
             # ¿Todas las tareas completas tras la ronda?
             completas = [
                 t for t in tareas
-                if _bloque_esta_completo(
+                if _W3._bloque_esta_completo(
                     t, workspace_dir=self._workspace_dir
                 )
             ]
@@ -1206,13 +1232,13 @@ class CascadaAccesoLLM:
         # v6.16 F6 (criterio 40): paralelismo con ThreadPoolExecutor(5).
         from concurrent.futures import ThreadPoolExecutor, as_completed
         # Lazy import para evitar dependencia circular.
-        from pipeline_w3 import _bloque_esta_completo
+        from contexto_zai.pipeline_w3 import CicloW3 as _W3
 
         # Idempotencia: filtrar tareas ya completas (no lanzar threads
         # innecesarios sobre bloques que otra ronda ya completó).
         pendientes = [
             t for t in tareas
-            if not _bloque_esta_completo(
+            if not _W3._bloque_esta_completo(
                 t, workspace_dir=self._workspace_dir
             )
         ]
@@ -1250,7 +1276,7 @@ class CascadaAccesoLLM:
         # Verificar que todas las tareas quedaron completas.
         completas = [
             t for t in tareas
-            if _bloque_esta_completo(
+            if _W3._bloque_esta_completo(
                 t, workspace_dir=self._workspace_dir
             )
         ]
@@ -1280,9 +1306,9 @@ class CascadaAccesoLLM:
         si ALGÚN thread lo vio) previene pérdida de señales 429.
         """
         # Lazy import para evitar dependencia circular.
-        from pipeline_w3 import _bloque_esta_completo
+        from contexto_zai.pipeline_w3 import CicloW3 as _W3
         # Idempotencia: si otra ronda ya completó este bloque, ok.
-        if _bloque_esta_completo(
+        if _W3._bloque_esta_completo(
             bloque, workspace_dir=self._workspace_dir
         ):
             return (True, False)
@@ -1373,9 +1399,9 @@ class CascadaAccesoLLM:
         if not tareas:
             return True
 
-        from models import SubagentTask
+        from contexto_zai.models import SubagentTask
         # Lazy import para evitar dependencia circular.
-        from pipeline_w3 import PROMPT_FUSIONADO_W1W2W3
+        from contexto_zai.pipeline_w3 import PROMPT_FUSIONADO_W1W2W3
 
         ws = Path(self._workspace_dir)
 
@@ -1445,7 +1471,7 @@ class CascadaAccesoLLM:
             True si se detectó progreso (al menos un bloque nuevo completo).
             False si tras 15s no hay progreso (caída del nivel).
         """
-        from config import (
+        from contexto_zai.config import (
             CASCADA_INTERVALO_PROGRESO as _INTERVALO,
             CASCADA_UMBRAL_SIN_PROGRESO as _UMBRAL,
         )

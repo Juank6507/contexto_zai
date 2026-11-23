@@ -26,7 +26,7 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from processing.version_graph import VersionGraphBuilder, ChangeGraph, VersionNode
+from contexto_zai.processing.version_graph import VersionGraphBuilder, ChangeGraph, VersionNode
 
 
 def test_build_graph_with_3_versions():

@@ -51,16 +51,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
-from config import (
+from contexto_zai.config import (
     ATTACHMENTS_INDEXED_DIR,
     ATTACHMENTS_TEMP_DIR,
     CLASIFICADOR_MAX_CONTEXT_TOKENS,
     CLASIFICADOR_TIMEOUT_SECONDS,
     DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS,
 )
-from models import Attachment
-from subagents.clasificador_subagent import ClasificadorSubagent
-from subagents.launcher import SubagentLauncher, SubagentResponse
+from contexto_zai.models import Attachment
+from contexto_zai.subagents.clasificador_subagent import ClasificadorSubagent
+from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -450,10 +450,10 @@ Respuesta:"""
             DocumentoIndexResult con resumen final y temas consolidados.
         """
         # Lazy imports para evitar import circular
-        from config import MAX_SUBAGENTES_N2_PARALELOS
-        from processing.divisor import DocumentoDivisor
-        from subagents.divisor_subagent import DivisorSubagent
-        from subagents.conciliador_subagent import ConciliadorSubagent
+        from contexto_zai.config import MAX_SUBAGENTES_N2_PARALELOS
+        from contexto_zai.processing.divisor import DocumentoDivisor
+        from contexto_zai.subagents.divisor_subagent import DivisorSubagent
+        from contexto_zai.subagents.conciliador_subagent import ConciliadorSubagent
 
         # 1. Descargar el archivo
         try:
@@ -556,7 +556,7 @@ if __name__ == "__main__":
     print("=== Validacion de documento_indexer_subagent.py ===\n")
 
     import tempfile
-    from models import Attachment
+    from contexto_zai.models import Attachment
 
     # Mock del AttachmentClient
     class MockAttachmentClient:

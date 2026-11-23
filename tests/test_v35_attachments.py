@@ -40,17 +40,17 @@ from unittest.mock import MagicMock, patch
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from models import Attachment, Exchange, Message, MessageRole, RecoveryMetadata
-from processing.attachment_detector import AttachmentDetector
-from processing.content_delegator import DocumentDelegator, ContentDelegator
-from client.attachment_client import AttachmentClient, AttachmentDownloadError
-from subagents.documento_indexer_subagent import (
+from contexto_zai.models import Attachment, Exchange, Message, MessageRole, RecoveryMetadata
+from contexto_zai.processing.attachment_detector import AttachmentDetector
+from contexto_zai.processing.content_delegator import DocumentDelegator, ContentDelegator
+from contexto_zai.client.attachment_client import AttachmentClient, AttachmentDownloadError
+from contexto_zai.subagents.documento_indexer_subagent import (
     DocumentoIndexerSubagent,
     DocumentoIndexResult,
     ThemeSection,
 )
-from subagents.launcher import SubagentLauncher
-from generation.indice_generator import IndiceGenerator
+from contexto_zai.subagents.launcher import SubagentLauncher
+from contexto_zai.generation.indice_generator import IndiceGenerator
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -475,7 +475,7 @@ def test_8_indice_generator_with_attachments():
     """Test 8: IndiceGenerator incluye sección de documentos indexados."""
     print("\n=== Test 8: IndiceGenerator con documentos indexados ===")
 
-    from models import ThematicBlock
+    from contexto_zai.models import ThematicBlock
 
     blocks = [ThematicBlock(filename="bloque_general.md", temas=["general"], exchanges=[])]
     metadata = RecoveryMetadata(chat_id="test-chat", share_id="test-share", total_exchanges=5)
@@ -524,7 +524,7 @@ def test_9_pipeline_index_document():
     """Test 9: pipeline.index_document() con mock."""
     print("\n=== Test 9: pipeline.index_document() ===")
 
-    from pipeline import index_document
+    from contexto_zai.pipeline import index_document
 
     # Silenciar el logger durante el test para que los errores esperados
     # (HTTP 401 con JWT inválido) no se impriman en pantalla
@@ -618,7 +618,7 @@ def test_10_full_e2e_attachment_flow():
         print(f"  [4/6] DocumentoIndexerSubagent: 4 temas, resumen {len(result.resumen_breve)} chars")
 
     # 5. IndiceGenerator actualiza índice con documentos
-    from models import ThematicBlock
+    from contexto_zai.models import ThematicBlock
     blocks = [ThematicBlock(filename="bloque_general.md", temas=["general"], exchanges=[])]
     metadata = RecoveryMetadata(chat_id="test", share_id="share", total_exchanges=5)
     indice_gen = IndiceGenerator()
@@ -727,7 +727,7 @@ def test_13_exchange_builder_with_attachments():
     """Test 13: ExchangeBuilder procesa attachments (refactor v3.5)."""
     print("\n=== Test 13: ExchangeBuilder con attachments ===")
 
-    from processing.exchange_builder import ExchangeBuilder
+    from contexto_zai.processing.exchange_builder import ExchangeBuilder
 
     # Crear builder con delegator y mock indexer (objeto con método .run())
     delegator = DocumentDelegator()
@@ -790,7 +790,7 @@ def test_14_recovery_cycle_result_with_attachments():
     """Test 14: RecoveryCycleResult incluye attachments_indexados."""
     print("\n=== Test 14: RecoveryCycleResult con attachments ===")
 
-    from process.recovery_cycle import RecoveryCycleResult
+    from contexto_zai.process.recovery_cycle import RecoveryCycleResult
 
     # Result con attachments vacío por defecto
     result = RecoveryCycleResult(success=True)
@@ -819,7 +819,7 @@ def test_15_chat_client_extract_all_with_raw():
     """Test 15: ChatClient.extract_all_with_raw() devuelve (messages, raw)."""
     print("\n=== Test 15: ChatClient.extract_all_with_raw() ===")
 
-    from client.chat_client import ChatClient
+    from contexto_zai.client.chat_client import ChatClient
 
     # Verificar que el método existe
     assert hasattr(ChatClient, "extract_all_with_raw")

@@ -108,7 +108,7 @@ MAX_ITER_W3 = 5
 # -- v6.14 F3 (criterio 18): MAX_ITER para el bucle D7 de completitud (P17) --
 # P17 garantiza que el workspace quede completo: para cada bloque incompleto
 # tras P14-P16, publica pending_tasks con feedback sobre qué falló. El
-# agente CZAI lanza los subagentes y reintegra vía collect_responses().
+# agente CZAI lanza los subagentes y reintegra vía CicloW3.collect_responses().
 # Si el bloque sigue incompleto, P17 itera hasta MAX_ITER_D7=5. Si se agota,
 # genera informe de escalado al Director con las 4 preguntas por iteración
 # (qué falló → qué se diagnosticó → cómo se corrigió → qué se implementó).

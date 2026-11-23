@@ -37,7 +37,7 @@ import logging
 import re
 from typing import Optional
 
-from config import LEXIC_TRIGGER_PHRASES
+from contexto_zai.config import LEXIC_TRIGGER_PHRASES
 
 logger = logging.getLogger(__name__)
 

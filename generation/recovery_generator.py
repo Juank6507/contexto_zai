@@ -41,21 +41,21 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from config import (
+from contexto_zai.config import (
     DECISIONES_CLAVE_FILENAME,
     ESTADO_ACTUAL_FILENAME,
     INDICE_RECUPERACION_FILENAME,
     TOKEN_LIMITS,
 )
-from generation.bloque_generator import BloqueGenerator
-from generation.decisiones_generator import DecisionesGenerator
-from generation.estado_generator import EstadoGenerator
-from generation.indice_generator import IndiceGenerator
-from models import FileCategory, RecoveryFile
-from processing.content_cleaner import ContentCleaner
+from contexto_zai.generation.bloque_generator import BloqueGenerator
+from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+from contexto_zai.generation.estado_generator import EstadoGenerator
+from contexto_zai.generation.indice_generator import IndiceGenerator
+from contexto_zai.models import FileCategory, RecoveryFile
+from contexto_zai.processing.content_cleaner import ContentCleaner
 
 if TYPE_CHECKING:
-    from models import Exchange, RecoveryMetadata, ThematicBlock
+    from contexto_zai.models import Exchange, RecoveryMetadata, ThematicBlock
 
 logger = logging.getLogger(__name__)
 
@@ -272,7 +272,7 @@ if __name__ == "__main__":
     # -- Validación interna de recovery_generator.py --
     print("=== Validacion de recovery_generator.py ===\n")
 
-    from models import (
+    from contexto_zai.models import (
         Exchange,
         Message,
         MessageRole,

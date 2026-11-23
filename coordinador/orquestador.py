@@ -49,10 +49,10 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from config import WORKSPACE_OUTPUT_DIR
-from coordinador.entregador_tareas import EntregadorTareas
-from coordinador.recogedor_respuestas import RecogedorRespuestas
-from models import SubagentResponse, SubagentTask
+from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+from contexto_zai.coordinador.entregador_tareas import EntregadorTareas
+from contexto_zai.coordinador.recogedor_respuestas import RecogedorRespuestas
+from contexto_zai.models import SubagentResponse, SubagentTask
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +69,8 @@ class Orquestador:
             y _responses/.
 
     Usage (proceso):
-        >>> from coordinador import Orquestador
-        >>> from models import SubagentTask
+        >>> from contexto_zai.coordinador import Orquestador
+        >>> from contexto_zai.models import SubagentTask
         >>> orch = Orquestador(workspace_dir="/path/to/ws")
         >>> tareas = [SubagentTask(task_id="estado_d4", prompt="...")]
         >>> orch.publicar_tareas(tareas)

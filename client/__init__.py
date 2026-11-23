@@ -30,8 +30,8 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from client.auth_client import AuthClient
-from client.browser_session import BrowserSession
-from client.chat_client import ChatClient
+from contexto_zai.client.auth_client import AuthClient
+from contexto_zai.client.browser_session import BrowserSession
+from contexto_zai.client.chat_client import ChatClient
 
 __all__ = ["AuthClient", "ChatClient", "BrowserSession"]

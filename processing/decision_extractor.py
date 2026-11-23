@@ -50,10 +50,10 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from models import Decision
+from contexto_zai.models import Decision
 
 if TYPE_CHECKING:
-    from models import Exchange
+    from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +283,7 @@ if __name__ == "__main__":
 
     print("=== Validacion de decision_extractor.py ===\n")
 
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     extractor = DecisionExtractor()
 

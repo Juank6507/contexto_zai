@@ -87,8 +87,9 @@ $SentenciasPrueba = @(
     "cd /d $RutaLocalProyecto && python -c `"from platforms.zai.zai_llm import ZaiLLM; llm = ZaiLLM(); assert llm.get_default_model_heavy() == 'glm-4-plus'; print('OK B5')`"",
     "cd /d $RutaLocalProyecto && python -c `"from coordinador.recogedor_respuestas import RecogedorRespuestas; import inspect; src = inspect.getsource(RecogedorRespuestas.limpiar); assert '_AUXILIAR_SUFFIXES' in src; print('OK D2')`"",
     "cd /d $RutaLocalProyecto && python -c `"from coordinador.integrador_respuestas import IntegradorRespuestas; assert hasattr(IntegradorRespuestas, '_integrar_enriquecer_bloque'); print('OK D1')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from pipeline_archivos import SubprocesoArchivos; assert hasattr(SubprocesoArchivos, '_reemplazar_placeholders_objetivo'); print('OK D4')`"",
-    "cd /d $RutaLocalProyecto && python -c `"import inspect; from pipeline_archivos import SubprocesoArchivos; src = inspect.getsource(SubprocesoArchivos._generar_archivos_recuperacion); assert 'urlopen' not in src; assert 'EstadoGenerator' in src; print('OK A5')`""
+    "cd /d $RutaLocalProyecto && python -c `"from pipeline_archivos import SubprocesoArchivos; assert hasattr(SubprocesoArchivos, '_reemplazar_placeholders_objetivo'); assert hasattr(SubprocesoArchivos, '_regenerar_sintesis_contexto'); print('OK D4-D11')`"",
+    "cd /d $RutaLocalProyecto && python -c `"import inspect; from pipeline_archivos import SubprocesoArchivos; src = inspect.getsource(SubprocesoArchivos._generar_archivos_recuperacion); assert 'urlopen' not in src; assert 'EstadoGenerator' in src; print('OK A5')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from generation.placeholder_replacer import PlaceholderReplacer; assert hasattr(PlaceholderReplacer, 'reemplazar'); print('OK C10')`""
 )
 $TestsE2E = @(
     "cd /d $RutaLocalProyecto && python -c `"from pipeline import run, ampliar_contexto, collect_responses, query_context; print('OK API')`"",
@@ -109,7 +110,7 @@ $NoAutomatizable = @(
 $RutaRetornoConsolidado = "retorno/documento_consolidado.md"
 
 # Fuente de datos reales de la validacion (R4/NH25): declarar SIEMPRE
-$FuenteDatos = "workspace con 22 bloques + 15 caches"           # p. ej. base de datos del proyecto, fixtures reales, API real
+$FuenteDatos = "workspace con bloques enriquecidos"           # p. ej. base de datos del proyecto, fixtures reales, API real
 
 # ============================================================
 #  FUNCIONES AUXILIARES

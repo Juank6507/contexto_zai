@@ -50,8 +50,8 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from config import DEFAULT_THEME_RULES, ThemeRule
-from models import Exchange
+from contexto_zai.config import DEFAULT_THEME_RULES, ThemeRule
+from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class MessageClassifier:
         if not scores:
             # Sin coincidencias en Capa 1 -> pasar por Capa 2 (intencion)
             try:
-                from processing.intention_classifier import IntentionClassifier
+                from contexto_zai.processing.intention_classifier import IntentionClassifier
                 intention = IntentionClassifier()
                 tema_intencion = intention.classify(director_text)
                 if tema_intencion != "general":
@@ -240,7 +240,7 @@ if __name__ == "__main__":
     # -- Validación interna de classifier.py (atómico standalone) --
     print("=== Validacion de classifier.py ===\n")
 
-    from models import Message, MessageRole
+    from contexto_zai.models import Message, MessageRole
 
     cl = MessageClassifier()
 

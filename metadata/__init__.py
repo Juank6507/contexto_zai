@@ -27,6 +27,6 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from metadata.manager import MetadataManager
+from contexto_zai.metadata.manager import MetadataManager
 
 __all__ = ["MetadataManager"]

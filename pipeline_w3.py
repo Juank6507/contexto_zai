@@ -34,15 +34,38 @@ No cambia el grafo de flujo interno: solo mueve código.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
+        break
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
+
 import logging
 from pathlib import Path
 from typing import Optional
 
 # v7.0 F2: import tipado de la ABC (no se instancia directamente).
-from platforms.interfaces import PlatformLLM  # noqa: F401
+from contexto_zai.platforms.interfaces import PlatformLLM  # noqa: F401
 
-from config import WORKSPACE_OUTPUT_DIR
-from pipeline_auditoria import AuditorWorkspace
+from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+from contexto_zai.pipeline_auditoria import AuditorWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +132,7 @@ class CicloW3:
         Regla de borde: si el bloque tiene < 2000 chars de contenido, se acepta
         el resumen con observaciones (no se exige rango estricto).
         """
-        from config import (
+        from contexto_zai.config import (
             RESUMEN_MIN_CHARS, RESUMEN_MAX_CHARS,
             RESUMEN_ORACIONES_ESPERADAS, RESUMEN_ETIQUETAS_PROHIBIDAS,
         )
@@ -180,7 +203,7 @@ class CicloW3:
         # v7.0 F2: resolver el LLM a usar. Default ZaiLLM() si no se inyecta.
         if llm is None:
             try:
-                from platforms.zai.zai_llm import ZaiLLM
+                from contexto_zai.platforms.zai.zai_llm import ZaiLLM
                 llm = ZaiLLM()
             except Exception as e:
                 logger.warning(
@@ -192,10 +215,10 @@ class CicloW3:
         # en config.py que apunta al mismo valor 10). El timeout efectivo es
         # PROXY_LLM_TIMEOUT * 3 (30s) para el Crítico (preserva v6.20 F3).
         try:
-            from config import PROXY_LLM_TIMEOUT
+            from contexto_zai.config import PROXY_LLM_TIMEOUT
         except ImportError:
             try:
-                from config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
+                from contexto_zai.config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
             except ImportError:
                 logger.warning(
                     "v6.20 F3 Crítico: %s no se pudo importar config del proxy — aceptando",
@@ -288,7 +311,7 @@ Responde SOLO con JSON:
               ``external_size_chars`` poblados para compatibilidad con
               la cascada de acceso LLM).
         """
-        from models import ThematicBlock as _TB
+        from contexto_zai.models import ThematicBlock as _TB
         ws = Path(workspace_dir)
         if not ws.exists():
             return []
@@ -428,10 +451,10 @@ Responde SOLO con JSON:
             Tupla (completado, pending_tasks). Si completado=True, pending_tasks=[].
             Si completado=False, pending_tasks contiene las tareas que el agente debe ejecutar.
         """
-        from config import MAX_ITER_W3 as _MAX_ITER_W3
+        from contexto_zai.config import MAX_ITER_W3 as _MAX_ITER_W3
         # Lazy import para evitar dependencia circular (pipeline_cascada
         # importa pipeline_w3 en runtime).
-        from pipeline_cascada import CascadaAccesoLLM
+        from contexto_zai.pipeline_cascada import CascadaAccesoLLM
 
         ws = Path(workspace_dir)
         block_id = bloque.filename.replace(".md", "")
@@ -454,7 +477,7 @@ Responde SOLO con JSON:
                                 block_id, len(pending_de_cascada))
                     return False, pending_de_cascada
                 # Si N3 no publicó pending tasks, crear una propia
-                from models import SubagentTask
+                from contexto_zai.models import SubagentTask
                 bloque_path_n3 = ws / bloque.filename
                 bloque_content_n3 = ""
                 if bloque_path_n3.exists():
@@ -530,7 +553,7 @@ Responde SOLO con JSON:
         if pending_de_cascada_final:
             return False, pending_de_cascada_final
         # Crear una propia si N3 no publicó
-        from models import SubagentTask
+        from contexto_zai.models import SubagentTask
         bloque_path_final = ws / bloque.filename
         bloque_content_final = ""
         if bloque_path_final.exists():
@@ -566,12 +589,12 @@ Responde SOLO con JSON:
         import json as _json_llm
         import urllib.error as _ue_llm
         # Lazy import para evitar dependencia circular.
-        from pipeline_cascada import CascadaAccesoLLM
+        from contexto_zai.pipeline_cascada import CascadaAccesoLLM
 
         # v7.0 F2: resolver el LLM a usar. Default ZaiLLM() si no se inyecta.
         if llm is None:
             try:
-                from platforms.zai.zai_llm import ZaiLLM
+                from contexto_zai.platforms.zai.zai_llm import ZaiLLM
                 llm = ZaiLLM()
             except Exception as e:
                 logger.warning("v6.20 Cascada: %s no se pudo construir ZaiLLM default: %s", block_id, e)
@@ -581,10 +604,10 @@ Responde SOLO con JSON:
         # deprecated en config.py que apunta al mismo valor 10). El timeout
         # efectivo es PROXY_LLM_TIMEOUT * 6 (60s) para preservar v6.20.
         try:
-            from config import PROXY_LLM_TIMEOUT
+            from contexto_zai.config import PROXY_LLM_TIMEOUT
         except ImportError:
             try:
-                from config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
+                from contexto_zai.config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
             except ImportError:
                 logger.warning("v6.20 Cascada: %s no se pudo importar config del proxy", block_id)
                 return None
@@ -641,7 +664,7 @@ Responde SOLO con JSON:
         por bloque (criterio 30). Las ``pending_tasks`` que publique la
         cascada (en Nivel 3) se devuelven al llamador para que las propague
         al ``OrchestratorResult.pending_tasks`` (procesadas por el agente CZAI
-        vía Task tool y reintegradas vía ``collect_responses()``).
+        vía Task tool y reintegradas vía ``CicloW3.collect_responses()``).
 
         Sigue siendo un arnés que NUNCA se detiene: si un bloque no se
         completa en la cascada, su pending_task se publica y el control
@@ -660,7 +683,7 @@ Responde SOLO con JSON:
             cascada para los bloques que Ni N1 ni N2 pudieron completar).
         """
         # Lazy imports para evitar dependencia circular.
-        from pipeline_cascada import (
+        from contexto_zai.pipeline_cascada import (
             _proxy_zai_disponible,
             _persistir_pending_task_en_disco,
         )
@@ -724,7 +747,7 @@ Responde SOLO con JSON:
 
         if not proxy_disponible:
             logger.info("v6.20: proxy no disponible — publicando pending tasks sin cascada")
-            from models import SubagentTask
+            from contexto_zai.models import SubagentTask
             for bloque in bloques_sin_resumen:
                 block_id_skip = bloque.filename.replace(".md", "")
                 bloque_path_skip = Path(workspace_dir) / bloque.filename
@@ -786,7 +809,7 @@ Responde SOLO con JSON:
         valor de retorno directamente (v6.8.1 re-aplicado).
 
         v6.11 F6: ``is_chat_chronological`` se acepta por simetría con
-        ``collect_responses()``. Hoy en día ``_enriquecer_bloques_post_run`` solo
+        ``CicloW3.collect_responses()``. Hoy en día ``_enriquecer_bloques_post_run`` solo
         se invoca desde ``pipeline.run()`` (chat-cronológico), pero el parámetro
         permite llamarlo en el futuro desde ``ampliar_contexto()`` para enriquecer
         bloques externos sin disparar la consolidación de los 4 archivos.
@@ -807,7 +830,7 @@ Responde SOLO con JSON:
         workspace_path = Path(workspace_dir)
         if not workspace_path.exists():
             return result
-        from models import ThematicBlock
+        from contexto_zai.models import ThematicBlock
         blocks = []
         for p in sorted(workspace_path.glob("bloque_*.md")):
             block = ThematicBlock(filename=p.name)
@@ -848,7 +871,7 @@ Responde SOLO con JSON:
         daemon/process NO re-extrae ni re-construye. Audita qué está
         completo, qué está incompleto, y completa lo faltante:
 
-        1. Audita con ``_descubrir_bloques_incompletos()`` (F1).
+        1. Audita con ``CicloW3._descubrir_bloques_incompletos()`` (F1).
         2. Completa solo los incompletos (sin re-extraer, sin
            re-construir, sin borrar caché, sin quitar RESUMENES).
         3. Auditoría final + P17 + P18 + P19.
@@ -869,9 +892,9 @@ Responde SOLO con JSON:
             - ``contexto_existia``: True si el workspace tenía bloques.
         """
         # Lazy imports para evitar dependencia circular.
-        from pipeline_cascada import CascadaAccesoLLM
-        from pipeline_d7 import CicloD7
-        from pipeline_archivos import SubprocesoArchivos
+        from contexto_zai.pipeline_cascada import CascadaAccesoLLM
+        from contexto_zai.pipeline_d7 import CicloD7
+        from contexto_zai.pipeline_archivos import SubprocesoArchivos
 
         ws = Path(workspace_dir)
         contexto_existia = ws.exists() and any(ws.glob("bloque_*.md"))
@@ -917,7 +940,7 @@ Responde SOLO con JSON:
 
         # P17 — bucle D7 encapsulado (F12) para reintentar con feedback.
         try:
-            from models import OrchestratorResult
+            from contexto_zai.models import OrchestratorResult
             dummy_result = OrchestratorResult(success=True)
             dummy_result.pending_tasks = cascada.get_pending_tasks()
             CicloD7._bucle_d7_completitud(
@@ -953,13 +976,13 @@ Responde SOLO con JSON:
     ) -> dict:
         """v4.2 → v6.17 F4 (criterio 3): Recoge respuestas y las integra al workspace.
 
-        v6.17 F4 (criterio 3): ``collect_responses()`` SOLO integra
+        v6.17 F4 (criterio 3): ``CicloW3.collect_responses()`` SOLO integra
         respuestas. Lee ``_responses/``, las aplica al workspace según
         el ``purpose`` de cada tarea, y devuelve resultado.
 
         NO verifica bloques incompletos. NO dispara la cascada W1+W2+W3
         (P14). Esa verificación y disparo la hace el proceso
-        (daemon/pipeline) tras llamar ``collect_responses()`` —
+        (daemon/pipeline) tras llamar ``CicloW3.collect_responses()`` —
         típicamente ``ContextoPipeline.run()`` invoca el enriquecimiento
         (que dispara la cascada) y luego el bucle D7
         (P17, separado de la cascada según F3).
@@ -992,12 +1015,9 @@ Responde SOLO con JSON:
             Dict con el resultado estructurado devuelto por
             ``Orquestador.aplicar_respuestas()``.
         """
-        from coordinador import Orquestador, IntegradorRespuestas
+        from contexto_zai.coordinador import Orquestador, IntegradorRespuestas
         # Lazy import para evitar dependencia circular.
-        from pipeline_archivos import (
-            _consolidar_decisiones_llm,
-            _regenerar_indice_tras_enriquecimiento,
-        )
+        from contexto_zai.pipeline_archivos import SubprocesoArchivos
 
         orch = Orquestador(workspace_dir=workspace_dir)
         integrador = IntegradorRespuestas(workspace_dir=workspace_dir)
@@ -1010,10 +1030,10 @@ Responde SOLO con JSON:
             is_chat_chronological=is_chat_chronological,
         )
 
-        # v6.17 F4 (criterio 3): collect_responses() SOLO integra.
+        # v6.17 F4 (criterio 3): CicloW3.collect_responses() SOLO integra.
         # NO verifica bloques incompletos. NO dispara la cascada de
         # acceso LLM (P14). Esa lógica la asume el proceso
-        # (daemon/pipeline) tras llamar collect_responses().
+        # (daemon/pipeline) tras llamar CicloW3.collect_responses().
         # La consolidación de decisiones y regeneración del índice se
         # mantienen aquí (no son parte de la cascada).
         #
@@ -1043,8 +1063,8 @@ Responde SOLO con JSON:
                     )
 
         if should_consolidate:
-            _consolidar_decisiones_llm(workspace_dir=workspace_dir)
-            _regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
+            SubprocesoArchivos._consolidar_decisiones_llm(workspace_dir=workspace_dir)
+            SubprocesoArchivos._regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
         else:
             logger.info(
                 "v6.17 F4: collect_responses no cronológico — solo integración. "

@@ -50,12 +50,12 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from config import (
+from contexto_zai.config import (
     AMPLIAR_SMALL_FILE_THRESHOLD_TOKENS,
     PARTITION_THRESHOLD_TOKENS,
     WORKSPACE_OUTPUT_DIR,
 )
-from models import SubagentTask
+from contexto_zai.models import SubagentTask
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class ProcesadorDocumento:
         orquestador: Orquestador para coordinar subagentes con el agente.
 
     Usage (proceso):
-        >>> from procesadores import ProcesadorDocumento
+        >>> from contexto_zai.procesadores import ProcesadorDocumento
         >>> proc = ProcesadorDocumento(workspace_dir="/path/to/ws")
         >>> result = proc.procesar(source_type="file", source_path="/path/to/doc.pdf")
         >>> if result.get("needs_agent_read"):
@@ -229,7 +229,7 @@ class ProcesadorDocumento:
         jwt: str,
     ) -> dict:
         """Documento grande: divide en lotes y un subagente por lote."""
-        from config import MAX_TOKENS_POR_SUBAGENTE_N2
+        from contexto_zai.config import MAX_TOKENS_POR_SUBAGENTE_N2
 
         num_lotes = max(1, int(tokens / MAX_TOKENS_POR_SUBAGENTE_N2) + 1)
         tasks: list[SubagentTask] = []
@@ -274,7 +274,7 @@ class ProcesadorDocumento:
         ~70K tokens. La clasificación por temas se hace después (Worker 4),
         no durante la extracción.
         """
-        from config import ATTACHMENTS_TEMP_DIR
+        from contexto_zai.config import ATTACHMENTS_TEMP_DIR
         temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{filename.replace(' ', '_')}"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_bytes(content_bytes)
@@ -334,7 +334,7 @@ Respuesta:"""
         formatearlo en estructura markdown legible. El lote es de ~70K tokens
         (no ~5K como antes) para llenar el bloque completo.
         """
-        from config import ATTACHMENTS_TEMP_DIR
+        from contexto_zai.config import ATTACHMENTS_TEMP_DIR
         temp_path = ATTACHMENTS_TEMP_DIR / f"ampliar_{filename.replace(' ', '_')}"
         temp_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.write_bytes(content_bytes)
@@ -470,7 +470,7 @@ if __name__ == "__main__":
 
     # Test 6: con orquestador, publica tareas
     with tempfile.TemporaryDirectory() as tmpdir:
-        from coordinador import Orquestador
+        from contexto_zai.coordinador import Orquestador
         orch = Orquestador(workspace_dir=tmpdir)
         proc = ProcesadorDocumento(workspace_dir=tmpdir, orquestador=orch)
         medium_file = Path(tmpdir) / "medium.txt"

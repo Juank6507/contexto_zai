@@ -30,8 +30,8 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from process.incremental_cycle import IncrementalCycle
-from process.orchestrator import Orchestrator
-from process.recovery_cycle import RecoveryCycle
+from contexto_zai.process.incremental_cycle import IncrementalCycle
+from contexto_zai.process.orchestrator import Orchestrator
+from contexto_zai.process.recovery_cycle import RecoveryCycle
 
 __all__ = ["Orchestrator", "RecoveryCycle", "IncrementalCycle"]

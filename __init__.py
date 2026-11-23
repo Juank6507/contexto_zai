@@ -30,6 +30,6 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from verification.verifier import Verifier
+from contexto_zai.verification.verifier import Verifier
 
 __all__ = ["Verifier"]

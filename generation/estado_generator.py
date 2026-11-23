@@ -57,15 +57,15 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from config import (
+from contexto_zai.config import (
     ESTADO_TRUNCADO_RESUMEN_TOKENS,
     ESTADO_TRUNCADO_TEXTUAL_TOKENS,
     TOKEN_LIMITS,
 )
-from subagents.launcher import SubagentLauncher
+from contexto_zai.subagents.launcher import SubagentLauncher
 
 if TYPE_CHECKING:
-    from models import Exchange
+    from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 # no cero, etc.
 _ERROR_PATTERNS = [
     # Stack traces: siempre son errores reales.
-    r"\bTraceback\b",
+    r"\bTraceback \(most recent call last\)",
     r"\bFile \"[^\"]+\", line \d+",
     # Errores con dos puntos seguidos de palabra (estructura de excepción).
     # v7.0 F5 iteración 3: excluir menciones tipo "ERROR: ver sección X" que
@@ -140,13 +140,16 @@ _ERROR_REGEX = re.compile("|".join(_ERROR_PATTERNS))
 _FILE_PATH_PATTERN = re.compile(
     r"`?"  # backtick inicial opcional (no se captura)
     r"("
-    r"/home/z/[^'\"`{}\[\]()]+"
-    r"|/tmp/[^'\"`{}\[\]()]+"
-    r"|contexto_zai/[^'\"`{}\[\]()]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
+    r"/home/z/[^'\"`{}\[\]()\\]+"
+    r"|/tmp/[^'\"`{}\[\]()\\]+"
+    r"|contexto_zai/[^'\"`{}\[\]()\\]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
+    # C4: paths de Windows con backslash simple (C:\Users\test.py)
+    # \\ en raw string = un backslash en regex. No excluir backslash de los
+    # caracteres del path porque Windows los usa como separador.
     r"|[A-Za-z]:\\[^'\"`{}\[\]()]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
-    r"|mini-services/[^'\"`{}\[\]()]+\.(?:py|sh|ts)"
-    r"|src/[^'\"`{}\[\]()]+\.(?:ts|tsx|js|jsx)"
-    r"|download/[^'\"`{}\[\]()]+\.(?:md|json|zip|bat|ps1)"
+    r"|mini-services/[^'\"`{}\[\]()\\]+\.(?:py|sh|ts)"
+    r"|src/[^'\"`{}\[\]()\\]+\.(?:ts|tsx|js|jsx)"
+    r"|download/[^'\"`{}\[\]()\\]+\.(?:md|json|zip|bat|ps1)"
     r")"
     r"`?"  # backtick final opcional (no se captura)
 )
@@ -400,7 +403,7 @@ class EstadoGenerator:
         # F4 v4.2: si hay launcher (que ahora es un ProcesadorIntercambios),
         # usarlo para preparar la tarea de D4 vía el Orquestador.
         # El archivo se escribe con regex (abajo), y se actualiza con la respuesta
-        # del subagente cuando el agente llama a collect_responses().
+        # del subagente cuando el agente llama a CicloW3.collect_responses().
         if self._launcher is not None:
             # Filtrar intercambios del tema activo (o usar recent si no hay match)
             intercambios_tema = [ex for ex in recent if ex.topic == tema_actual] if tema_actual else recent
@@ -477,7 +480,7 @@ class EstadoGenerator:
 
         # v6.3 F3: filtrar volcados externos (> A1_VOLCADO_UMBRAL_CHARS)
         try:
-            from config import A1_VOLCADO_UMBRAL_CHARS
+            from contexto_zai.config import A1_VOLCADO_UMBRAL_CHARS
         except ImportError:
             A1_VOLCADO_UMBRAL_CHARS = 10000
 
@@ -510,7 +513,7 @@ class EstadoGenerator:
 
         # Construir el texto cronológico del tema activo
         # v6.4 F2: aplicar ContentCleaner al contenido del agente para parsear tool_calls
-        from processing.content_cleaner import ContentCleaner as _ContentCleaner
+        from contexto_zai.processing.content_cleaner import ContentCleaner as _ContentCleaner
         _cleaner = _ContentCleaner()
         texto_tema_parts: list[str] = []
         for ex in intercambios_tema:
@@ -546,11 +549,11 @@ class EstadoGenerator:
 
         # 3. Si hay launcher (ProcesadorIntercambios), pedir resumen del contenido truncado
         # F4 v4.2: usar ProcesadorIntercambios para preparar la tarea.
-        # El resumen se aplica cuando el agente llama a collect_responses().
+        # El resumen se aplica cuando el agente llama a CicloW3.collect_responses().
         resumen_texto = ""
         if self._launcher is not None and contenido_truncado:
             # Crear un exchange sintético con el contenido truncado
-            from models import Exchange as _Exchange, Message as _Message, MessageRole as _MessageRole
+            from contexto_zai.models import Exchange as _Exchange, Message as _Message, MessageRole as _MessageRole
             exchange_sintetico = _Exchange(
                 id=0,
                 director_msg=_Message(
@@ -998,7 +1001,17 @@ no esperar a que el Director lo confirme.
         if not objetivo_path.exists():
             self._asegurar_objetivo_proyecto()
         try:
-            return objetivo_path.read_text(encoding="utf-8").strip()
+            contenido = objetivo_path.read_text(encoding="utf-8").strip()
+            # C3: quitar headers del objetivo para no duplicar G0.A en el ensamblado.
+            # El _assemble ya crea "## G0.A — Objetivo del proyecto", así que si el
+            # archivo 03 tiene su propio "## G0.A" se duplica. Quitamos todos los
+            # headers que empiecen con ## G0. o # Objetivo.
+            import re as _re_g0a
+            contenido = _re_g0a.sub(r"^## G0\.[A-Z].*$", "", contenido, flags=_re_g0a.MULTILINE)
+            contenido = _re_g0a.sub(r"^# Objetivo.*$", "", contenido, flags=_re_g0a.MULTILINE)
+            # Quitar líneas vacías sobrantes al inicio tras quitar headers.
+            contenido = contenido.lstrip("\n").strip()
+            return contenido
         except Exception as e:
             logger.warning("G0.A: no se pudo leer 03_objetivo_proyecto.md: %s", e)
             return f"_(error leyendo objetivo: {e})_"
@@ -1050,7 +1063,7 @@ no esperar a que el Director lo confirme.
             return  # No sobrescribir si ya existe (v6.19: una sola vez)
 
         # Localizar el workspace raíz del proyecto (donde está el worklog canónico)
-        from config import WORKSPACE_ROOT as _PROJECT_ROOT
+        from contexto_zai.config import WORKSPACE_ROOT as _PROJECT_ROOT
 
         contenido_objetivo = self._extraer_objetivo_de_worklog(_PROJECT_ROOT)
         if not contenido_objetivo:
@@ -1512,7 +1525,7 @@ no esperar a que el Director lo confirme.
         if not self._workspace_dir:
             return
         try:
-            from procesadores.procesador_intercambios import ProcesadorIntercambios
+            from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
             # Verificar que el launcher es un ProcesadorIntercambios
             if not isinstance(self._launcher, ProcesadorIntercambios):
                 logger.debug("F3 v4.3: launcher no es ProcesadorIntercambios, no se prepara SINTESIS_CONTEXTO")
@@ -1649,7 +1662,7 @@ if __name__ == "__main__":
     # -- Validación interna de estado_generator.py (v4.0) --
     print("=== Validacion de estado_generator.py (v4.0) ===\n")
 
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     # Test sin launcher (backward compatible)
     gen = EstadoGenerator()
@@ -1768,7 +1781,7 @@ if __name__ == "__main__":
     def mock_invoker_resumen(prompt: str) -> str:
         return "Resumen del contenido truncado: se detectaron 5 intercambios sobre OOP."
 
-    from subagents.launcher import SubagentLauncher
+    from contexto_zai.subagents.launcher import SubagentLauncher
     launcher_mock = SubagentLauncher(task_invoker=mock_invoker_resumen)
     gen_with_launcher = EstadoGenerator(launcher=launcher_mock)
 

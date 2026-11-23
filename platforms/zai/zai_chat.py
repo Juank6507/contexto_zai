@@ -12,9 +12,9 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from platforms.interfaces import PlatformChat
-from client.chat_client import ChatClient
-from models import Message
+from contexto_zai.platforms.interfaces import PlatformChat
+from contexto_zai.client.chat_client import ChatClient
+from contexto_zai.models import Message
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ class ZaiChat(PlatformChat):
         # delega internamente). En v7.0 F2, el MessageExtractor pasa
         # share_id explicito por eso esta funcion rara vez se llama
         # directamente.
-        from client.auth_client import AuthClient
+        from contexto_zai.client.auth_client import AuthClient
         with AuthClient(token=self._jwt) as auth:
             share_id = auth.create_share(chat_id)
         messages = self._client.extract_all(

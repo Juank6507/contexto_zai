@@ -33,11 +33,11 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from generation.bloque_generator import BloqueGenerator
-from generation.decisiones_generator import DecisionesGenerator
-from generation.estado_generator import EstadoGenerator
-from generation.indice_generator import IndiceGenerator
-from generation.recovery_generator import RecoveryGenerator
+from contexto_zai.generation.bloque_generator import BloqueGenerator
+from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+from contexto_zai.generation.estado_generator import EstadoGenerator
+from contexto_zai.generation.indice_generator import IndiceGenerator
+from contexto_zai.generation.recovery_generator import RecoveryGenerator
 
 __all__ = [
     "EstadoGenerator",

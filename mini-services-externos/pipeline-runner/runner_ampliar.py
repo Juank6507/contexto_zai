@@ -31,9 +31,9 @@ log = logging.getLogger("runner-ampliar")
 
 
 def main() -> int:
-    from client.credential_manager import CredentialManager
-    from config import WORKSPACE_OUTPUT_DIR
-    from pipeline import ampliar_contexto
+    from contexto_zai.client.credential_manager import CredentialManager
+    from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+    from contexto_zai.pipeline import ampliar_contexto
 
     cm = CredentialManager()
     jwt = cm.get_jwt()

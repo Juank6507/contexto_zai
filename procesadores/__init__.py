@@ -15,8 +15,8 @@ Exporta:
 
 from __future__ import annotations
 
-from procesadores.procesador_documento import ProcesadorDocumento
-from procesadores.procesador_intercambios import ProcesadorIntercambios
-from procesadores.procesador_consulta import ProcesadorConsulta
+from contexto_zai.procesadores.procesador_documento import ProcesadorDocumento
+from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+from contexto_zai.procesadores.procesador_consulta import ProcesadorConsulta
 
 __all__ = ["ProcesadorDocumento", "ProcesadorIntercambios", "ProcesadorConsulta"]

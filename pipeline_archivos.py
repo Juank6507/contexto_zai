@@ -22,6 +22,29 @@ No cambia el grafo de flujo interno: solo mueve código.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
+        break
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
+
 import logging
 import json
 import re as _re_module
@@ -29,9 +52,9 @@ from pathlib import Path
 from typing import Optional
 
 # v7.0 F2: import tipado de la ABC (no se instancia directamente).
-from platforms.interfaces import PlatformLLM  # noqa: F401
+from contexto_zai.platforms.interfaces import PlatformLLM  # noqa: F401
 
-from pipeline_auditoria import AuditorWorkspace
+from contexto_zai.pipeline_auditoria import AuditorWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +115,7 @@ class SubprocesoArchivos:
         # v7.0 F2: resolver el LLM a usar. Default ZaiLLM() si no se inyecta.
         if llm is None:
             try:
-                from platforms.zai.zai_llm import ZaiLLM
+                from contexto_zai.platforms.zai.zai_llm import ZaiLLM
                 llm = ZaiLLM()
             except Exception as e:
                 return {
@@ -103,13 +126,44 @@ class SubprocesoArchivos:
 
         archivos_generados: list[str] = []
 
+        # ============ PASO 4: 03_objetivo_proyecto.md ============
+        # Si no existe, crear con plantilla base. Si existe, solo reemplazar
+        # placeholders. NO se sobrescribe si ya existe (criterio spec v6.20).
+        try:
+            objetivo_path = ws / "03_objetivo_proyecto.md"
+            genero_03 = not objetivo_path.exists()
+            if genero_03:
+                # Crear con plantilla base con placeholders.
+                plantilla = (
+                    "# Objetivo del Proyecto — Contexto Zai\n\n"
+                    "## G0.A — Quién eres\n\n"
+                    "Sos un agente Z.ai (modelo __MODELO_AGENTE__) que el Director "
+                    "**__DIRECTOR__** (``__EMAIL__``) está construyendo como parte de una "
+                    "estrategia mayor de trabajo con proyectos informáticos. Tu nombre "
+                    "interno en esta fase es **CZAI** (Contexto Zai). Trabajás en un "
+                    "sandbox de Z.ai en la ruta ``/home/z/my-project/`` "
+                    "(Next.js + Bun + Python venv).\n\n"
+                    "## G0.B — Norte del proyecto\n\n"
+                    "(A definir por el Director en la primera sesión.)\n\n"
+                    "## G0.C — Acta de nacimiento\n\n"
+                    "__ACTA_NACIMIENTO__\n"
+                )
+                objetivo_path.write_text(plantilla, encoding="utf-8")
+                archivos_generados.append("03_objetivo_proyecto.md")
+                logger.info("v7.0 F5 (D1-A5) paso 4: 03_objetivo_proyecto.md creado con plantilla")
+            # Reemplazar placeholders (siempre, tanto si se creó como si ya existía).
+            SubprocesoArchivos._reemplazar_placeholders_objetivo(workspace_dir=ws)
+        except Exception as e:
+            logger.warning("v7.0 F5 (D1-A5) paso 4 falló: %s", e)
+
+
         # ============ PASO 1: 00_estado_actual.md ============
         # Genera el archivo usando EstadoGenerator con los intercambios
         # reconstruidos desde los bloques (vía el worklog y el metadata).
         try:
-            from generation.estado_generator import EstadoGenerator
-            from generation.recovery_generator import RecoveryGenerator
-            from models import RecoveryMetadata
+            from contexto_zai.generation.estado_generator import EstadoGenerator
+            from contexto_zai.generation.recovery_generator import RecoveryGenerator
+            from contexto_zai.models import RecoveryMetadata
             import json as _json
 
             # Leer metadata del workspace.
@@ -132,7 +186,7 @@ class SubprocesoArchivos:
             # Si no hay bloques, generamos una lista vacía y el EstadoGenerator
             # producirá el archivo con secciones vacías.
             try:
-                from processing.exchange_builder import ExchangeBuilder
+                from contexto_zai.processing.exchange_builder import ExchangeBuilder
                 exchanges = ExchangeBuilder.build_from_workspace(ws)
             except Exception:
                 # Si ExchangeBuilder no tiene método build_from_workspace,
@@ -140,6 +194,10 @@ class SubprocesoArchivos:
                 # directamente vía el workspace_dir.
                 exchanges = []
 
+            # C11: los generadores trabajan en modo offline (sin launcher) leyendo
+            # de los datos que la cascada ya produjo (RESUMENES en bloques, decisiones
+            # en caches, temas en _responses/). Si en el futuro un generador necesita
+            # LLM, debe delegar al W3 (que a su vez usa la cascada), no bypassar.
             estado_gen = EstadoGenerator(workspace_dir=ws, chat_id=chat_id)
             estado_content = estado_gen.generate(exchanges, chat_label=chat_id or "contexto_zai")
             estado_path = ws / "00_estado_actual.md"
@@ -176,36 +234,6 @@ class SubprocesoArchivos:
         except Exception as e:
             logger.warning("v7.0 F5 (D1-A5) paso 3 falló: %s", e)
 
-        # ============ PASO 4: 03_objetivo_proyecto.md ============
-        # Si no existe, crear con plantilla base. Si existe, solo reemplazar
-        # placeholders. NO se sobrescribe si ya existe (criterio spec v6.20).
-        try:
-            objetivo_path = ws / "03_objetivo_proyecto.md"
-            genero_03 = not objetivo_path.exists()
-            if genero_03:
-                # Crear con plantilla base con placeholders.
-                plantilla = (
-                    "# Objetivo del Proyecto — Contexto Zai\n\n"
-                    "## G0.A — Quién eres\n\n"
-                    "Sos un agente Z.ai (modelo __MODELO_AGENTE__) que el Director "
-                    "**__DIRECTOR__** (``__EMAIL__``) está construyendo como parte de una "
-                    "estrategia mayor de trabajo con proyectos informáticos. Tu nombre "
-                    "interno en esta fase es **CZAI** (Contexto Zai). Trabajás en un "
-                    "sandbox de Z.ai en la ruta ``/home/z/my-project/`` "
-                    "(Next.js + Bun + Python venv).\n\n"
-                    "## G0.B — Norte del proyecto\n\n"
-                    "(A definir por el Director en la primera sesión.)\n\n"
-                    "## G0.C — Acta de nacimiento\n\n"
-                    "__ACTA_NACIMIENTO__\n"
-                )
-                objetivo_path.write_text(plantilla, encoding="utf-8")
-                archivos_generados.append("03_objetivo_proyecto.md")
-                logger.info("v7.0 F5 (D1-A5) paso 4: 03_objetivo_proyecto.md creado con plantilla")
-            # Reemplazar placeholders (siempre, tanto si se creó como si ya existía).
-            SubprocesoArchivos._reemplazar_placeholders_objetivo(workspace_dir=ws)
-        except Exception as e:
-            logger.warning("v7.0 F5 (D1-A5) paso 4 falló: %s", e)
-
         return {
             "success": len(archivos_generados) > 0,
             "archivos_generados": archivos_generados,
@@ -224,7 +252,7 @@ class SubprocesoArchivos:
         (vía Task tool) y escrito las respuestas en ``_responses/``.
 
         Flujo:
-        1. ``collect_responses()`` — integra las respuestas de los subagentes
+        1. ``CicloW3.collect_responses()`` — integra las respuestas de los subagentes
            en los bloques físicos (escribe RESUMEN + nombre + decisiones + temas).
         2. Re-verificar bloques incompletos.
         3. Si aún hay incompletos → publicar nuevas pending_tasks y retornar
@@ -240,15 +268,13 @@ class SubprocesoArchivos:
             ``completados``, ``pendientes``, ``error``.
         """
         # Lazy imports para evitar dependencia circular.
-        from pipeline_w3 import (
+        from contexto_zai.pipeline_w3 import (
             CicloW3,
-            _descubrir_bloques_incompletos,
-            _enriquecer_bloques_con_fallback,
-        )
-        from pipeline_cascada import _actualizar_estado_daemon
+                                )
+        from contexto_zai.pipeline_cascada import _actualizar_estado_daemon
         # ``ContextoPipeline.collect_responses`` sigue en pipeline.py
         # (API pública). Lazy import para evitar dependencia circular.
-        from pipeline import ContextoPipeline
+        from contexto_zai.pipeline import ContextoPipeline
 
         ws = Path(workspace_dir)
         if not ws.exists():
@@ -260,13 +286,13 @@ class SubprocesoArchivos:
                 workspace_dir=ws,
                 is_chat_chronological=False,
             )
-            logger.info("v6.19 F6: collect_responses() completado tras /collect-responses")
+            logger.info("v6.19 F6: CicloW3.collect_responses() completado tras /collect-responses")
         except Exception as e:
             logger.warning("v6.19 F6: collect_responses falló: %s", e)
 
         # (2) Re-verificar bloques incompletos.
         try:
-            incompletos = _descubrir_bloques_incompletos(ws)
+            incompletos = CicloW3._descubrir_bloques_incompletos(ws)
         except Exception as e:
             logger.warning("v6.19 F6: _descubrir_bloques_incompletos falló: %s", e)
             incompletos = []
@@ -281,7 +307,7 @@ class SubprocesoArchivos:
             bloques_para_cascada = [inc["bloque"] for inc in incompletos]
             nuevas_pending = []
             try:
-                nuevas_pending = _enriquecer_bloques_con_fallback(
+                nuevas_pending = CicloW3._enriquecer_bloques_con_fallback(
                     blocks=bloques_para_cascada,
                     workspace_dir=ws,
                 )
@@ -630,7 +656,7 @@ class SubprocesoArchivos:
         # 4. Regenerar 01_indice_recuperacion.md.
         if bloques_con_temas > 0 or provisionales_eliminados > 0:
             try:
-                from coordinador.integrador_respuestas import IntegradorRespuestas
+                from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas
                 IntegradorRespuestas._regenerar_indice_recuperacion(ws, metadata)
                 logger.info(
                     "v6.10 F4: índice regenerado (%d bloque(s) con temas, %d provisional(es) eliminado(s)).",
@@ -809,7 +835,12 @@ class SubprocesoArchivos:
             rf"({ _re_module.escape(marker) }[^\n]*\n\n)(.*?)(?=\n## |\Z)",
             _re_module.DOTALL,
         )
-        new_content = pattern.sub(rf"\g<1>{ _re_module.escape(sintesis_text) }\n", content)
+        # v7.0 fix: reemplazo directo de string sin re.escape (evita \* \- \( etc.)
+        old_section = pattern.search(content)
+        if old_section:
+            new_content = content[:old_section.start()] + old_section.group(1) + sintesis_text + "\n" + content[old_section.end():]
+        else:
+            new_content = content
 
         if new_content != content:
             estado_path.write_text(new_content, encoding="utf-8")
@@ -859,7 +890,7 @@ class SubprocesoArchivos:
         # __MODELO_AGENTE__: leer del ZaiLLM. Sin fallback hardcoded: si
         # ZaiLLM no se puede construir, devolvemos error (no placeholder).
         try:
-            from platforms.zai.zai_llm import ZaiLLM
+            from contexto_zai.platforms.zai.zai_llm import ZaiLLM
             llm = ZaiLLM()
             modelo_agente = llm.get_default_model_heavy()
         except Exception as e:
@@ -875,7 +906,7 @@ class SubprocesoArchivos:
         # Antes de v7.0, importaba directo ``CredentialManager``. Ahora usa
         # la interfaz abstracta ``PlatformAuth`` implementada por ``ZaiAuth``.
         try:
-            from platforms.zai.zai_auth import ZaiAuth
+            from contexto_zai.platforms.zai.zai_auth import ZaiAuth
             auth = ZaiAuth()
             email = auth.get_email() or "Director (email no disponible)"
             # Nombre del Director derivado del email (parte antes del @).
@@ -933,6 +964,11 @@ class SubprocesoArchivos:
         except Exception:
             pass
         content = content.replace("__ACTA_NACIMIENTO__", acta_nacimiento)
+        # C6: eliminar la nota residual del placeholder (ya fue reemplazado)
+        content = content.replace(
+            "_(El agente que contesta debe rellenar este placeholder con el primer exchange del proyecto y/o la primera decisión explícita o implícita de convertirlo en proyecto, leído desde el contexto del chat actual.)_",
+            "",
+        )
 
         if content != original_content:
             objetivo_path.write_text(content, encoding="utf-8")

@@ -5,7 +5,7 @@ sys.path.insert(0, "/home/z/my-project")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", stream=sys.stdout)
 log = logging.getLogger("test_h4")
 
-from pipeline import query_context
+from contexto_zai.pipeline import query_context
 
 log.info("=== Test REAL H4: query_context con contexto recuperado ===")
 log.info("Pregunta: ¿Qué se decidió sobre OOP en los subagentes?")

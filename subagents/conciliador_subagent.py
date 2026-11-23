@@ -44,15 +44,15 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from config import DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS
-from models import Attachment, IndiceConsolidado, IndiceParcial
-from processing.conciliador import (
+from contexto_zai.config import DOCUMENTO_INDEXER_RESUMEN_MAX_CHARS
+from contexto_zai.models import Attachment, IndiceConsolidado, IndiceParcial
+from contexto_zai.processing.conciliador import (
     Conciliador,
     DocumentoConciliador,
     ThemeSection,
 )
-from subagents.documento_indexer_subagent import DocumentoIndexResult
-from subagents.launcher import SubagentLauncher, SubagentResponse
+from contexto_zai.subagents.documento_indexer_subagent import DocumentoIndexResult
+from contexto_zai.subagents.launcher import SubagentLauncher, SubagentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -318,9 +318,9 @@ if __name__ == "__main__":
 
     print("=== Validacion de conciliador_subagent.py ===\n")
 
-    from models import Attachment, IndiceParcial
-    from processing.conciliador import ThemeSection
-    from subagents.launcher import SubagentLauncher
+    from contexto_zai.models import Attachment, IndiceParcial
+    from contexto_zai.processing.conciliador import ThemeSection
+    from contexto_zai.subagents.launcher import SubagentLauncher
 
     # Mock invoker para N3
     def mock_n3_invoker(prompt: str) -> str:

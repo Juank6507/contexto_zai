@@ -48,8 +48,8 @@ else:
 import logging
 from typing import Optional
 
-from config import TOKEN_LIMITS
-from models import Exchange, ThematicBlock
+from contexto_zai.config import TOKEN_LIMITS
+from contexto_zai.models import Exchange, ThematicBlock
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +292,7 @@ if __name__ == "__main__":
     # -- Validación interna de block_packer.py (atómico standalone) --
     print("=== Validacion de block_packer.py ===\n")
 
-    from models import Message, MessageRole
+    from contexto_zai.models import Message, MessageRole
 
     packer = BlockPacker(max_tokens_per_block=1000)  # límite bajo para tests
 

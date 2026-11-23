@@ -20,13 +20,36 @@ No cambia el grafo de flujo interno: solo mueve código.
 
 from __future__ import annotations
 
+# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
+import os as _os, sys as _sys
+_here = _os.path.dirname(_os.path.abspath(__file__))
+_candidate = _here
+_package_root = None
+for _ in range(10):
+    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
+        break
+    _parent = _os.path.dirname(_candidate)
+    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
+        _package_root = _candidate
+        break
+    _candidate = _parent
+if _package_root:
+    _workspace = _os.path.dirname(_package_root)
+    if _workspace not in _sys.path:
+        _sys.path.insert(0, _workspace)
+else:
+    _parent = _os.path.dirname(_here)
+    if _parent not in _sys.path:
+        _sys.path.insert(0, _parent)
+
+
 import logging
 import json
 import time
 from pathlib import Path
 from typing import Optional
 
-from pipeline_auditoria import AuditorWorkspace
+from contexto_zai.pipeline_auditoria import AuditorWorkspace
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +91,7 @@ class CicloD7:
         El proceso no puede invocar el Task tool directamente — solo
         publica las pending_tasks corregidas en ``_pending_tasks.json``
         para que el agente CZAI las ejecute. El agente CZAI, tras
-        ejecutar los subagentes y llamar ``collect_responses()``, puede
+        ejecutar los subagentes y llamar ``CicloW3.collect_responses()``, puede
         volver a invocar el pipeline; P17 detecta si quedan incompletos
         y vuelve a iterar. Las iteraciones se cuentan en
         ``_d7_iter_count.json``.
@@ -92,14 +115,14 @@ class CicloD7:
         """
         import json as _json
         import time as _time
-        from config import MAX_ITER_D7 as _MAX_ITER_D7
-        from models import ThematicBlock as _TB
+        from contexto_zai.config import MAX_ITER_D7 as _MAX_ITER_D7
+        from contexto_zai.models import ThematicBlock as _TB
         # Lazy imports para evitar dependencia circular.
-        from pipeline_cascada import _persistir_pending_task_en_disco
-        from pipeline_w3 import CicloW3
+        from contexto_zai.pipeline_cascada import _persistir_pending_task_en_disco
+        from contexto_zai.pipeline_w3 import CicloW3
         # ``_construir_pending_task_para_bloque`` sigue en pipeline.py
         # como utility (no es parte de ningún subproceso). Lazy import.
-        from pipeline import _construir_pending_task_para_bloque
+        from contexto_zai.pipeline import _construir_pending_task_para_bloque
 
         ws_path = Path(workspace_dir)
         if not ws_path.exists():
@@ -391,7 +414,7 @@ class CicloD7:
             SubagentTask con prompt corregido lista para que el agente
             CZAI la ejecute con el Task tool.
         """
-        from models import SubagentTask
+        from contexto_zai.models import SubagentTask
         block_id = filename.replace(".md", "")
         prompt = f"""Eres un subagente Actuador del proceso contexto_zai. Estás en el bucle D7 (P17)
 de garantía de completitud: revisar la falla respecto al spec, corregirla,
@@ -440,8 +463,8 @@ Respuesta:"""
         """v6.3 F1 → v6.14 F3 (criterio 19): DEPRECATED wrapper.
 
         Antes: intentaba resolver pending_tasks llamando
-        ``collect_responses()`` como "arregla todo" (uso incorrecto del
-        integrador). Ahora: delega en ``_bucle_d7_completitud()`` que
+        ``CicloW3.collect_responses()`` como "arregla todo" (uso incorrecto del
+        integrador). Ahora: delega en ``CicloD7._bucle_d7_completitud()`` que
         implementa el bucle D7 real de P17 con feedback y MAX_ITER_D7=5.
 
         Se mantiene como wrapper de compatibilidad para código externo
@@ -465,7 +488,7 @@ Respuesta:"""
         Procedimiento (criterio 12):
         1. Recibe ``pending_tasks``.
         2. Para cada una: revisar qué falló (auditando el bloque físico
-           con ``_descubrir_bloques_incompletos()`` de F1), construir
+           con ``CicloW3._descubrir_bloques_incompletos()`` de F1), construir
            prompt corregido (con feedback explícito), reintentar y
            verificar (4 artefactos).
         3. Si cumple → fuera del saco (no se devuelve).
@@ -493,8 +516,8 @@ Respuesta:"""
         if not pending_tasks:
             return []
 
-        from config import MAX_ITER_D7 as _MAX_ITER_D7
-        from models import OrchestratorResult
+        from contexto_zai.config import MAX_ITER_D7 as _MAX_ITER_D7
+        from contexto_zai.models import OrchestratorResult
 
         ws_path = Path(workspace_dir)
         if not ws_path.exists():

@@ -41,8 +41,8 @@ from typing import Optional
 
 import httpx
 
-from client.zai_config import API_CONFIG
-from models import Message, MessageRole
+from contexto_zai.client.zai_config import API_CONFIG
+from contexto_zai.models import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class ChatClient:
             )
 
         # v6.11 F2: paginación
-        from config import BATCH_SIZE as _DEFAULT_BATCH_SIZE
+        from contexto_zai.config import BATCH_SIZE as _DEFAULT_BATCH_SIZE
         _batch_size = batch_size if batch_size is not None else _DEFAULT_BATCH_SIZE
 
         url = API_CONFIG.messages_batch_by_chat_url.format(chat_id=chat_id)
@@ -526,7 +526,7 @@ if __name__ == "__main__":
 
     import tempfile
     from pathlib import Path
-    from client.browser_session import BrowserSession
+    from contexto_zai.client.browser_session import BrowserSession
 
     # Test 1: modo legacy con token
     client_legacy = ChatClient(token="eyJhbG.test.payload")

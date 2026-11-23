@@ -36,7 +36,7 @@ else:
 
 import logging
 
-from models import Exchange, Message, MessageRole
+from contexto_zai.models import Exchange, Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -459,7 +459,7 @@ if __name__ == "__main__":
     # -- Validación interna de exchange_builder.py (atómico standalone) --
     print("=== Validacion de exchange_builder.py ===\n")
 
-    from models import Message, MessageRole
+    from contexto_zai.models import Message, MessageRole
 
     # Test 1: dos intercambios user -> assistant
     msgs = [
@@ -520,7 +520,7 @@ def build_from_workspace(workspace_dir: Path | str) -> list[Exchange]:
     """
     import re as _re
     from pathlib import Path as _Path
-    from models import Message, MessageRole
+    from contexto_zai.models import Message, MessageRole
 
     ws = _Path(workspace_dir)
     if not ws.exists():

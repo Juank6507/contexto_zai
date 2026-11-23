@@ -41,10 +41,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from config import SELF_QUESTIONS
+from contexto_zai.config import SELF_QUESTIONS
 
 if TYPE_CHECKING:
-    from models import Exchange
+    from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
 

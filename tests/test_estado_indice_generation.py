@@ -33,12 +33,12 @@ from pathlib import Path
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from generation.bloque_generator import BloqueGenerator
-from generation.decisiones_generator import DecisionesGenerator
-from generation.estado_generator import EstadoGenerator
-from generation.indice_generator import IndiceGenerator
-from generation.recovery_generator import RecoveryGenerator
-from models import (
+from contexto_zai.generation.bloque_generator import BloqueGenerator
+from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+from contexto_zai.generation.estado_generator import EstadoGenerator
+from contexto_zai.generation.indice_generator import IndiceGenerator
+from contexto_zai.generation.recovery_generator import RecoveryGenerator
+from contexto_zai.models import (
     Decision,
     Exchange,
     Message,
@@ -46,7 +46,7 @@ from models import (
     RecoveryMetadata,
     ThematicBlock,
 )
-from processing.content_cleaner import ContentCleaner
+from contexto_zai.processing.content_cleaner import ContentCleaner
 
 def make_test_exchanges() -> list[Exchange]:
     """Crea intercambios de prueba."""

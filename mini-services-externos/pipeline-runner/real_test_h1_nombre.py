@@ -17,12 +17,12 @@ log = logging.getLogger("real_test_h1_nombre")
 def main():
     log.info("=== Test REAL H1 TEST 3: modo NOMBRE_LEGIBLE (M7) ===")
 
-    from subagents.intercambios_clasificador_subagent import (
+    from contexto_zai.subagents.intercambios_clasificador_subagent import (
         IntercambiosClasificadorSubagent,
         ModoClasificador,
     )
-    from subagents.launcher import SubagentLauncher
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.subagents.launcher import SubagentLauncher
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     exchanges = [
         Exchange(

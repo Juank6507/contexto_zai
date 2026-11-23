@@ -13,7 +13,7 @@ import time
 
 sys.path.insert(0, "/home/z/my-project")
 
-from subagents.task_bridge_server import TaskBridgeServer
+from contexto_zai.subagents.task_bridge_server import TaskBridgeServer
 
 
 PORT = 8087

@@ -49,14 +49,14 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from config import (
+from contexto_zai.config import (
     CLASIFICADOR_MAX_CONTEXT_TOKENS,
     DECISIONES_LOTE_SIZE,
     ESTADO_TRUNCADO_RESUMEN_TOKENS,
     SUBDIVIDER_NAMER_MAX_CONTEXT_TOKENS,
     WORKSPACE_OUTPUT_DIR,
 )
-from models import SubagentTask
+from contexto_zai.models import SubagentTask
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ class ProcesadorIntercambios:
         orquestador: Orquestador para coordinar subagentes.
 
     Usage (proceso):
-        >>> from procesadores import ProcesadorIntercambios
+        >>> from contexto_zai.procesadores import ProcesadorIntercambios
         >>> proc = ProcesadorIntercambios(workspace_dir="/path/to/ws", orquestador=orch)
         >>> result = proc.procesar(modo="RESTRICCIONES_TEMA", intercambios=exchanges)
         >>> if result.get("pending_tasks"):
@@ -230,11 +230,11 @@ class ProcesadorIntercambios:
         para construir el prompt según el modo. No ejecuta sub.run() — solo construye el prompt.
         """
         try:
-            from subagents.intercambios_clasificador_subagent import (
+            from contexto_zai.subagents.intercambios_clasificador_subagent import (
                 IntercambiosClasificadorSubagent,
                 ModoClasificador,
             )
-            from subagents.launcher import SubagentLauncher
+            from contexto_zai.subagents.launcher import SubagentLauncher
 
             # Mapear string del modo a ModoClasificador enum
             modo_map = {
@@ -304,7 +304,7 @@ if __name__ == "__main__":
     print("=== Validacion de procesador_intercambios.py ===\n")
 
     import tempfile
-    from models import Message, MessageRole, Exchange
+    from contexto_zai.models import Message, MessageRole, Exchange
 
     # Crear intercambios de prueba
     def make_exchanges(n=3):
@@ -367,7 +367,7 @@ if __name__ == "__main__":
 
     # Test 6: con orquestador, publica tareas
     with tempfile.TemporaryDirectory() as tmpdir:
-        from coordinador import Orquestador
+        from contexto_zai.coordinador import Orquestador
         orch = Orquestador(workspace_dir=tmpdir)
         proc = ProcesadorIntercambios(workspace_dir=tmpdir, orquestador=orch)
         proc.procesar(modo="NOMBRE_LEGIBLE", intercambios=make_exchanges())

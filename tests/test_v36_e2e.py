@@ -39,10 +39,10 @@ from unittest.mock import MagicMock, patch
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(WORKSPACE_ROOT))
 
-from models import Attachment, IndiceParcial, Porcion
-from processing.conciliador import DocumentoConciliador, ThemeSection
-from processing.divisor import DocumentoDivisor
-from subagents.launcher import SubagentLauncher, SubagentRequest, SubagentResponse
+from contexto_zai.models import Attachment, IndiceParcial, Porcion
+from contexto_zai.processing.conciliador import DocumentoConciliador, ThemeSection
+from contexto_zai.processing.divisor import DocumentoDivisor
+from contexto_zai.subagents.launcher import SubagentLauncher, SubagentRequest, SubagentResponse
 
 
 def test_1_launch_parallel_real():
@@ -158,7 +158,7 @@ def test_4_divisor_subagent_n1():
     """Test 4: DivisorSubagent (N1) flujo completo."""
     print("\n=== Test 4: DivisorSubagent (N1) ===")
 
-    from subagents.divisor_subagent import DivisorSubagent
+    from contexto_zai.subagents.divisor_subagent import DivisorSubagent
 
     def mock_n2_invoker(prompt: str) -> str:
         if "Porción: 1" in prompt:
@@ -199,7 +199,7 @@ def test_5_conciliador_subagent_n3():
     """Test 5: ConciliadorSubagent (N3) consolida + resumen."""
     print("\n=== Test 5: ConciliadorSubagent (N3) ===")
 
-    from subagents.conciliador_subagent import ConciliadorSubagent
+    from contexto_zai.subagents.conciliador_subagent import ConciliadorSubagent
 
     def mock_n3_invoker(prompt: str) -> str:
         return """RESUMEN_FINAL: Documento consolidado con temas principales.
@@ -231,7 +231,7 @@ def test_6_run_3_levels():
     """Test 6: DocumentoIndexerSubagent.run_3_levels orquestación."""
     print("\n=== Test 6: run_3_levels ===")
 
-    from subagents.documento_indexer_subagent import DocumentoIndexerSubagent
+    from contexto_zai.subagents.documento_indexer_subagent import DocumentoIndexerSubagent
 
     class MockClient:
         def download(self, file_id): return b"%PDF test"
@@ -257,7 +257,7 @@ def test_7_credential_manager():
     """Test 7: CredentialManager persistir + leer JWT."""
     print("\n=== Test 7: CredentialManager ===")
 
-    from client.credential_manager import CredentialManager
+    from contexto_zai.client.credential_manager import CredentialManager
 
     with tempfile.TemporaryDirectory() as tmpdir:
         cm = CredentialManager(credentials_path=Path(tmpdir) / "creds.json")
@@ -285,8 +285,8 @@ def test_8_jwt_bridge_server():
     """Test 8: JwtBridgeServer 3 endpoints."""
     print("\n=== Test 8: JwtBridgeServer ===")
 
-    from client.credential_manager import CredentialManager
-    from client.jwt_bridge_server import JwtBridgeServer
+    from contexto_zai.client.credential_manager import CredentialManager
+    from contexto_zai.client.jwt_bridge_server import JwtBridgeServer
     import httpx, time
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -332,7 +332,7 @@ def test_9_pipeline_index_document_large():
     """Test 9: pipeline.index_document_large disponible."""
     print("\n=== Test 9: pipeline.index_document_large ===")
 
-    from pipeline import index_document_large
+    from contexto_zai.pipeline import index_document_large
     import inspect
 
     assert callable(index_document_large)
@@ -346,7 +346,7 @@ def test_10_recovery_cycle_ensure_jwt():
     """Test 10: recovery_cycle._ensure_jwt disponible."""
     print("\n=== Test 10: recovery_cycle._ensure_jwt ===")
 
-    from process.recovery_cycle import RecoveryCycle
+    from contexto_zai.process.recovery_cycle import RecoveryCycle
 
     cycle = RecoveryCycle(jwt="test-jwt", chat_id="test")
     assert hasattr(cycle, "_ensure_jwt")

@@ -50,12 +50,12 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from config import (
+from contexto_zai.config import (
     QUERY_DIRECT_MODE_THRESHOLD_TOKENS,
     QUERY_MAX_RESULTS,
     WORKSPACE_OUTPUT_DIR,
 )
-from models import SubagentTask
+from contexto_zai.models import SubagentTask
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ class ProcesadorConsulta:
         orquestador: Orquestador para coordinar subagentes.
 
     Usage (proceso):
-        >>> from procesadores import ProcesadorConsulta
+        >>> from contexto_zai.procesadores import ProcesadorConsulta
         >>> proc = ProcesadorConsulta(workspace_dir="/path/to/ws", orquestador=orch)
         >>> result = proc.procesar(pregunta="¿Qué se decidió sobre JWT?")
         >>> if result.get("pending_tasks"):
@@ -406,7 +406,7 @@ if __name__ == "__main__":
 
     # Test 5: con orquestador, publica tareas
     with tempfile.TemporaryDirectory() as tmpdir:
-        from coordinador import Orquestador
+        from contexto_zai.coordinador import Orquestador
         orch = Orquestador(workspace_dir=tmpdir)
         (Path(tmpdir) / "01_indice_recuperacion.md").write_text("# Índice\n\n## jwt\n", encoding="utf-8")
         (Path(tmpdir) / "_metadata.json").write_text(json.dumps({

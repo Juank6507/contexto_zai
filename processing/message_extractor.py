@@ -31,10 +31,10 @@ from typing import Optional
 # Los módulos generales (process/, generation/) ya no importan de
 # ``client/`` directamente: importan de ``processing/message_extractor``
 # que a su vez opera contra las interfaces.
-from platforms.interfaces import PlatformAuth, PlatformChat
-from platforms.zai.zai_auth import ZaiAuth
-from platforms.zai.zai_chat import ZaiChat
-from models import Message, MessageRole
+from contexto_zai.platforms.interfaces import PlatformAuth, PlatformChat
+from contexto_zai.platforms.zai.zai_auth import ZaiAuth
+from contexto_zai.platforms.zai.zai_chat import ZaiChat
+from contexto_zai.models import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 

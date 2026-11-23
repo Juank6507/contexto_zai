@@ -26,8 +26,8 @@ log = logging.getLogger("collect-responses")
 
 
 def main() -> int:
-    from config import WORKSPACE_OUTPUT_DIR
-    from pipeline import collect_responses
+    from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+    from contexto_zai.pipeline import collect_responses
 
     workspace_dir = str(WORKSPACE_OUTPUT_DIR)
 

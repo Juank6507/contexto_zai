@@ -57,8 +57,8 @@ def main() -> int:
 
     # Invocar pipeline.run() — flujo normal, sin share_id externo
     # El RecoveryCycle pide create_share(chat_id) internamente.
-    from models import DetectionTrigger
-    from pipeline import run
+    from contexto_zai.models import DetectionTrigger
+    from contexto_zai.pipeline import run
 
     t0 = time.time()
     try:

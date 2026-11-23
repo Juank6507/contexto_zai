@@ -51,12 +51,12 @@ else:
 import logging
 from typing import TYPE_CHECKING, Callable, Optional
 
-from config import DECISIONES_LOTE_SIZE, TOKEN_LIMITS
-from models import Decision
-from subagents.launcher import SubagentLauncher
+from contexto_zai.config import DECISIONES_LOTE_SIZE, TOKEN_LIMITS
+from contexto_zai.models import Decision
+from contexto_zai.subagents.launcher import SubagentLauncher
 
 if TYPE_CHECKING:
-    from models import Exchange
+    from contexto_zai.models import Exchange
 
 logger = logging.getLogger(__name__)
 
@@ -79,14 +79,14 @@ class DecisionesGenerator:
 
     Usage (modo v4.0 con launcher)::
 
-        >>> from subagents.launcher import SubagentLauncher
+        >>> from contexto_zai.subagents.launcher import SubagentLauncher
         >>> launcher = SubagentLauncher()
         >>> gen = DecisionesGenerator(launcher=launcher)
         >>> content, summary = gen.generate(exchanges)
 
     Usage (modo backward compatible con extractor)::
 
-        >>> from subagents.decisiones_subagent import DecisionesSubagent
+        >>> from contexto_zai.subagents.decisiones_subagent import DecisionesSubagent
         >>> extractor = DecisionesSubagent().extract
         >>> gen = DecisionesGenerator(extractor=extractor)
         >>> content, summary = gen.generate(exchanges)
@@ -225,7 +225,7 @@ class DecisionesGenerator:
         El generador con launcher (que es un ProcesadorIntercambios) prepara
         las tareas por lote y las publica vía el Orquestador. El archivo
         se escribe con placeholder (lista vacía), y se actualiza con las
-        decisiones reales cuando el agente llama a collect_responses().
+        decisiones reales cuando el agente llama a CicloW3.collect_responses().
 
         Args:
             exchanges: Lista de intercambios a procesar.
@@ -251,7 +251,7 @@ class DecisionesGenerator:
         except Exception as e:
             logger.warning("F4: no se pudo preparar tareas de decisiones: %s", e)
 
-        # Devolver lista vacía — las decisiones reales se aplican con collect_responses()
+        # Devolver lista vacía — las decisiones reales se aplican con CicloW3.collect_responses()
         return []
 
     # -- Métodos privados -------------------------------------------
@@ -366,7 +366,7 @@ if __name__ == "__main__":
     # -- Validación interna de decisiones_generator.py --
     print("=== Validacion de decisiones_generator.py ===\n")
 
-    from models import Decision, Exchange, Message, MessageRole
+    from contexto_zai.models import Decision, Exchange, Message, MessageRole
 
     # Test 1: modo offline (sin extractor)
     gen_off = DecisionesGenerator()
@@ -437,7 +437,7 @@ if __name__ == "__main__":
     def mock_invoker_decisiones(prompt: str) -> str:
         return "DECISION: Usar OOP\nALCANCE: ClasificadorSubagent\nRAZON: Directiva."
 
-    from subagents.launcher import SubagentLauncher
+    from contexto_zai.subagents.launcher import SubagentLauncher
     launcher_mock = SubagentLauncher(task_invoker=mock_invoker_decisiones)
     gen_v4 = DecisionesGenerator(launcher=launcher_mock)
 

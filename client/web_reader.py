@@ -43,7 +43,7 @@ from typing import Optional
 
 # v3.4: URL_PATTERN se centraliza en config.py para configuración sin tocar código.
 try:
-    from config import URL_PATTERN as _CONFIG_URL_PATTERN
+    from contexto_zai.config import URL_PATTERN as _CONFIG_URL_PATTERN
     _DEFAULT_URL_PATTERN = _CONFIG_URL_PATTERN
 except ImportError:
     _DEFAULT_URL_PATTERN = re.compile(r'https?://[^\s<>"\']+')

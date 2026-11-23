@@ -46,7 +46,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from config import (
+from contexto_zai.config import (
     DELEGATION_CONTEXT_LIMIT_PCT,
     DELEGATION_THRESHOLD_TOKENS,
     TRIVIAL_SIZE_TOKENS,

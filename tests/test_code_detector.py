@@ -28,7 +28,7 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-from processing.code_detector import CodeDetector, DetectedScript
+from contexto_zai.processing.code_detector import CodeDetector, DetectedScript
 
 
 def test_detect_block_with_dest_comment():

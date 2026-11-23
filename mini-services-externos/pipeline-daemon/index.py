@@ -41,7 +41,7 @@ from typing import Optional
 # Asegurar que el paquete contexto_zai sea importable.
 sys.path.insert(0, "/home/z/my-project")
 
-from config import WORKSPACE_OUTPUT_DIR
+from contexto_zai.config import WORKSPACE_OUTPUT_DIR
 
 
 PORT = 8088
@@ -197,7 +197,7 @@ class PipelineDaemonServer:
         workspace_dir = body.get("workspace_dir", "")
         force_rebuild = body.get("force_rebuild", False)
         try:
-            from pipeline import ampliar_contexto
+            from contexto_zai.pipeline import ampliar_contexto
             kwargs = {
                 "source_type": source_type,
                 "source_path": source_path,
@@ -234,7 +234,7 @@ class PipelineDaemonServer:
             # v7.0 modularización: ``_collect_responses_and_finalize`` ahora
             # vive en ``SubprocesoArchivos`` (pipeline_archivos.py). Se
             # re-exporta como función módulo-nivel en ``pipeline.py``.
-            from pipeline import _collect_responses_and_finalize
+            from contexto_zai.pipeline import _collect_responses_and_finalize
             result = _collect_responses_and_finalize(
                 workspace_dir=workspace_dir,
             )
@@ -259,7 +259,7 @@ class PipelineDaemonServer:
             # v7.0 modularización: ``_generar_archivos_recuperacion`` ahora
             # vive en ``SubprocesoArchivos`` (pipeline_archivos.py). Se
             # re-exporta como función módulo-nivel en ``pipeline.py``.
-            from pipeline import _generar_archivos_recuperacion
+            from contexto_zai.pipeline import _generar_archivos_recuperacion
             result = _generar_archivos_recuperacion(
                 workspace_dir=workspace_dir,
                 chat_id=chat_id,
@@ -280,7 +280,7 @@ class PipelineDaemonServer:
         reason = body.get("reason", "")
         chat_label = body.get("chat_label", "")
         try:
-            from pipeline import run
+            from contexto_zai.pipeline import run
             result = run(chat_id=chat_id, jwt=jwt, reason=reason, chat_label=chat_label)
             # OrchestratorResult → dict
             return {
@@ -307,20 +307,56 @@ class PipelineDaemonServer:
             return {"error": f"_pending_tasks.json corrupto: {e}", "tasks": [], "total": 0}
 
     def _read_status(self) -> dict:
-        """Lee _processed_blocks.json y devuelve conteos."""
+        """C9: Lee _processed_blocks.json y valida contra estado físico real.
+
+        Si el archivo no coincide con el estado físico del workspace
+        (bloques con RESUMEN + 3 archivos auxiliares), lo sincroniza
+        usando AuditorWorkspace.
+        """
+        # C9: validar contra estado físico real
+        try:
+            from contexto_zai.pipeline_auditoria import AuditorWorkspace
+            audit = AuditorWorkspace.auditar_completitud(self._workspace_dir)
+            fisicos_completos = len(audit.get("completos", []))
+            fisicos_incompletos = len(audit.get("incompletos", []))
+            fisicos_total = fisicos_completos + fisicos_incompletos
+        except Exception as e:
+            log.warning("AuditorWorkspace falló: %s", e)
+            fisicos_completos = fisicos_incompletos = fisicos_total = 0
+
         path = self._workspace_dir / "_processed_blocks.json"
         if not path.exists():
-            return {"completed": 0, "pending": 0, "total": 0, "exists": False}
+            return {
+                "completed": fisicos_completos,
+                "pending": fisicos_incompletos,
+                "total": fisicos_total,
+                "exists": False,
+                "source": "auditoria_fisica",
+            }
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             blocks = data.get("blocks", [])
-            completed = sum(1 for b in blocks if b.get("status") == "completed")
-            pending = sum(1 for b in blocks if b.get("status") == "pending")
+            archivo_completed = sum(1 for b in blocks if b.get("status") == "completed")
+            archivo_pending = sum(1 for b in blocks if b.get("status") == "pending")
+
+            # C9: si el archivo no coincide con el estado físico, sincronizar
+            if archivo_completed != fisicos_completos and fisicos_total > 0:
+                log.info(
+                    "C9: discrepancia detectada (archivo=%d completos, físico=%d completos). Sincronizando.",
+                    archivo_completed, fisicos_completos,
+                )
+                try:
+                    AuditorWorkspace.sincronizar_registro(self._workspace_dir)
+                except Exception:
+                    pass
+
+            # C9: devolver el estado físico (fuente de verdad, no el archivo)
             return {
-                "completed": completed,
-                "pending": pending,
-                "total": len(blocks),
+                "completed": fisicos_completos if fisicos_total > 0 else archivo_completed,
+                "pending": fisicos_incompletos if fisicos_total > 0 else archivo_pending,
+                "total": fisicos_total if fisicos_total > 0 else len(blocks),
                 "exists": True,
+                "source": "auditoria_fisica" if fisicos_total > 0 else "archivo",
             }
         except (json.JSONDecodeError, ValueError) as e:
             return {"error": f"_processed_blocks.json corrupto: {e}", "exists": True}

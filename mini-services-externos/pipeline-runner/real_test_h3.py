@@ -23,9 +23,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("real_test_h3")
 
-from generation.decisiones_generator import DecisionesGenerator
-from subagents.launcher import SubagentLauncher
-from models import Exchange, Message, MessageRole
+from contexto_zai.generation.decisiones_generator import DecisionesGenerator
+from contexto_zai.subagents.launcher import SubagentLauncher
+from contexto_zai.models import Exchange, Message, MessageRole
 
 
 def main():

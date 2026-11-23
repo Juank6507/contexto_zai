@@ -32,8 +32,8 @@ else:
 
 import logging
 
-from config import TOKEN_LIMITS
-from models import (
+from contexto_zai.config import TOKEN_LIMITS
+from contexto_zai.models import (
     FileCategory,
     FileVerification,
     RecoveryFile,
@@ -255,8 +255,8 @@ if __name__ == "__main__":
     # -- Validación interna de verifier.py (atómico standalone) --
     print("=== Validacion de verifier.py ===\n")
 
-    from config import TOKEN_LIMITS
-    from models import FileCategory, RecoveryFile, Verdict
+    from contexto_zai.config import TOKEN_LIMITS
+    from contexto_zai.models import FileCategory, RecoveryFile, Verdict
 
     v = Verifier()
 

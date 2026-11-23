@@ -39,11 +39,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
-from metadata.manager import MetadataManager
-from models import DetectionEvent, DetectionTrigger
-from process.incremental_cycle import IncrementalCycle
-from process.recovery_cycle import RecoveryCycle
+from contexto_zai.config import DOWNLOAD_OUTPUT_DIR, WORKSPACE_OUTPUT_DIR
+from contexto_zai.metadata.manager import MetadataManager
+from contexto_zai.models import DetectionEvent, DetectionTrigger
+from contexto_zai.process.incremental_cycle import IncrementalCycle
+from contexto_zai.process.recovery_cycle import RecoveryCycle
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +161,7 @@ class Orchestrator:
         # Buscar contexto_recuperacion, auditar bloques + enriquecimiento + metadata.
         # No confiar solo en metadata.
         try:
-            from pipeline import AuditorWorkspace
+            from contexto_zai.pipeline import AuditorWorkspace
             audit = AuditorWorkspace.auditar_completitud(self._workspace_dir)
             logger.info(
                 "v6.13 P4: Auditoría integral: %d completos, %d incompletos, metadata_valida=%s",
@@ -208,8 +208,8 @@ class Orchestrator:
 
     def _ejecutar_recovery(self, chat_label: str) -> OrchestratorResult:
         """Ejecuta el ciclo de recuperación completo (RecoveryCycle)."""
-        from coordinador.orquestador import Orquestador
-        from procesadores.procesador_intercambios import ProcesadorIntercambios
+        from contexto_zai.coordinador.orquestador import Orquestador
+        from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
 
         orquestador = Orquestador(workspace_dir=self._workspace_dir)
         procesador = ProcesadorIntercambios(
@@ -272,7 +272,7 @@ class Orchestrator:
         if not self._share_id or not self._jwt:
             return ""
         try:
-            from processing.message_extractor import MessageExtractor
+            from contexto_zai.processing.message_extractor import MessageExtractor
             # v6.11 F4: el share_id externo se inyecta en el extractor
             # para que NO cree un share propio (ya lo tenemos).
             extractor = MessageExtractor(jwt=self._jwt, chat_id="")
@@ -403,7 +403,7 @@ if __name__ == "__main__":
     # Test 7 (v4.4 F1): Caso 1 (primera vez) → RecoveryCycle
     # Sin metadata en el workspace → debe ir a recovery.
     with tempfile.TemporaryDirectory() as tmpdir:
-        from models import DetectionTrigger as _DT
+        from contexto_zai.models import DetectionTrigger as _DT
         orch_v44 = Orchestrator(
             chat_id="chat-nuevo-001",
             jwt="fake-jwt",

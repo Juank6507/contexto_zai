@@ -42,8 +42,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
 
-from client.credential_manager import CredentialManager
-from config import JWT_BRIDGE_SERVER_HOST, JWT_BRIDGE_SERVER_PORT
+from contexto_zai.client.credential_manager import CredentialManager
+from contexto_zai.config import JWT_BRIDGE_SERVER_HOST, JWT_BRIDGE_SERVER_PORT
 
 logger = logging.getLogger(__name__)
 

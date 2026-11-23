@@ -16,7 +16,7 @@ anadimos los valores del proxy LLM y los modelos.
 from __future__ import annotations
 
 # Re-export de APIConfig/API_CONFIG (no duplicar).
-from client.zai_config import APIConfig, API_CONFIG  # noqa: F401
+from contexto_zai.client.zai_config import APIConfig, API_CONFIG  # noqa: F401
 
 # -- Base URL de chat.z.ai -----------------------------------------
 # (Duplicado intencionalmente para que platforms.zai sea autocontenible.

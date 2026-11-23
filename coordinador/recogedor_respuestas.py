@@ -43,8 +43,8 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from config import WORKSPACE_OUTPUT_DIR
-from models import SubagentResponse
+from contexto_zai.config import WORKSPACE_OUTPUT_DIR
+from contexto_zai.models import SubagentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +64,12 @@ class RecogedorRespuestas:
         workspace_dir: Directorio del workspace donde vive _responses/.
 
     Usage (agente, tras lanzar subagentes):
-        >>> from pipeline import collect_responses
-        >>> result = collect_responses()  # llama al RecogedorRespuestas
+        >>> from contexto_zai.pipeline import collect_responses
+        >>> result = CicloW3.collect_responses()  # llama al RecogedorRespuestas
         >>> print(result["total_applied"])
 
     Usage (proceso, internamente):
-        >>> from coordinador import RecogedorRespuestas
+        >>> from contexto_zai.coordinador import RecogedorRespuestas
         >>> recogedor = RecogedorRespuestas(workspace_dir="/path/to/ws")
         >>> responses = recogedor.leer_todas()
     """

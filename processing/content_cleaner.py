@@ -37,7 +37,7 @@ import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from models import Exchange, MessageRole
+    from contexto_zai.models import Exchange, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -568,7 +568,7 @@ if __name__ == "__main__":
     # -- Validación interna de content_cleaner.py (atómico standalone) --
     print("=== Validacion de content_cleaner.py ===\n")
 
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     cc = ContentCleaner()
 

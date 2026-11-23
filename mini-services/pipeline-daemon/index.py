@@ -41,7 +41,7 @@ from typing import Optional
 # Asegurar que el paquete contexto_zai sea importable.
 sys.path.insert(0, "/home/z/my-project")
 
-from config import WORKSPACE_OUTPUT_DIR
+from contexto_zai.config import WORKSPACE_OUTPUT_DIR
 
 
 PORT = 8088
@@ -197,7 +197,7 @@ class PipelineDaemonServer:
         workspace_dir = body.get("workspace_dir", "")
         force_rebuild = body.get("force_rebuild", False)
         try:
-            from pipeline import ampliar_contexto
+            from contexto_zai.pipeline import ampliar_contexto
             kwargs = {
                 "source_type": source_type,
                 "source_path": source_path,
@@ -221,8 +221,8 @@ class PipelineDaemonServer:
 
         El agente CZAI llama este endpoint después de ejecutar las pending_tasks
         de Nivel 3 (vía Task tool). El daemon invoca
-        ``_collect_responses_and_finalize()`` que:
-        1. ``collect_responses()`` — integra respuestas en bloques.
+        ``SubprocesoArchivos._collect_responses_and_finalize()`` que:
+        1. ``CicloW3.collect_responses()`` — integra respuestas en bloques.
         2. Re-verifica bloques incompletos.
         3. Si aún hay → publica nuevas pending_tasks, retorna ``needs_agent_action=True``.
         4. Si todos completos → P16 + P18 + P19 + status=done.
@@ -234,8 +234,8 @@ class PipelineDaemonServer:
             # v7.0 modularización: ``_collect_responses_and_finalize`` ahora
             # vive en ``SubprocesoArchivos`` (pipeline_archivos.py). Se
             # re-exporta como función módulo-nivel en ``pipeline.py``.
-            from pipeline import _collect_responses_and_finalize
-            result = _collect_responses_and_finalize(
+            from contexto_zai.pipeline import _collect_responses_and_finalize
+            result = SubprocesoArchivos._collect_responses_and_finalize(
                 workspace_dir=workspace_dir,
             )
             if not isinstance(result, dict):
@@ -248,7 +248,7 @@ class PipelineDaemonServer:
     def _handle_generar_archivos(self, body: dict) -> dict:
         """POST /generar-archivos → v6.20 F5: genera los 4 archivos de recuperación.
 
-        Llama a ``_generar_archivos_recuperacion()`` que hace una sola llamada
+        Llama a ``SubprocesoArchivos._generar_archivos_recuperacion()`` que hace una sola llamada
         al LLM vía cascada con un prompt estructurado para los 4 archivos.
         """
         workspace_dir = body.get("workspace_dir", "")
@@ -259,8 +259,8 @@ class PipelineDaemonServer:
             # v7.0 modularización: ``_generar_archivos_recuperacion`` ahora
             # vive en ``SubprocesoArchivos`` (pipeline_archivos.py). Se
             # re-exporta como función módulo-nivel en ``pipeline.py``.
-            from pipeline import _generar_archivos_recuperacion
-            result = _generar_archivos_recuperacion(
+            from contexto_zai.pipeline import _generar_archivos_recuperacion
+            result = SubprocesoArchivos._generar_archivos_recuperacion(
                 workspace_dir=workspace_dir,
                 chat_id=chat_id,
             )
@@ -280,7 +280,7 @@ class PipelineDaemonServer:
         reason = body.get("reason", "")
         chat_label = body.get("chat_label", "")
         try:
-            from pipeline import run
+            from contexto_zai.pipeline import run
             result = run(chat_id=chat_id, jwt=jwt, reason=reason, chat_label=chat_label)
             # OrchestratorResult → dict
             return {

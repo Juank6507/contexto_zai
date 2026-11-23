@@ -5,7 +5,7 @@ Valida el flujo completo:
 1. pipeline.run() (con datos sintéticos) genera los archivos.
 2. El proceso publica tareas vía EntregadorTareas.
 3. (Simula que) el agente lanza subagentes que escriben respuestas.
-4. collect_responses() lee respuestas, las integra, y devuelve resultado estructurado.
+4. CicloW3.collect_responses() lee respuestas, las integra, y devuelve resultado estructurado.
 5. Los archivos se actualizan con las respuestas reales.
 
 Script de dependencia: importa atómicos de coordinador y procesadores.
@@ -26,14 +26,14 @@ _workspace = _here.parent.parent
 if str(_workspace) not in sys.path:
     sys.path.insert(0, str(_workspace))
 
-from coordinador import (
+from contexto_zai.coordinador import (
     EntregadorTareas,
     IntegradorRespuestas,
     Orquestador,
     RecogedorRespuestas,
 )
-from models import SubagentResponse, SubagentTask
-from pipeline import collect_responses
+from contexto_zai.models import SubagentResponse, SubagentTask
+from contexto_zai.pipeline import collect_responses
 
 
 def test_entregador_publicar_leer():
@@ -139,7 +139,7 @@ def test_integrador_subdivider_nombre():
 
 
 def test_flujo_completo_collect_responses():
-    """Flujo completo: publicar tareas → escribir respuestas → collect_responses()."""
+    """Flujo completo: publicar tareas → escribir respuestas → CicloW3.collect_responses()."""
     with tempfile.TemporaryDirectory() as tmpdir:
         # 1. Crear archivos de recuperación (regex fallback)
         Path(tmpdir, "00_estado_actual.md").write_text(
@@ -167,13 +167,13 @@ def test_flujo_completo_collect_responses():
         recogedor.escribir_respuesta("decisiones_lote_0", "DECISION: Usar OOP\nALCANCE: ClasificadorSubagent\nRAZON: Directiva.")
         recogedor.escribir_respuesta("subdivider_nombre_general_2026sep09", "autenticacion_jwt")
 
-        # 4. collect_responses() integra todo
+        # 4. CicloW3.collect_responses() integra todo
         # v6.16.1 fix: mockear proxy como no disponible para que la cascada
         # caiga a Nivel 3 sin intentar conexión real al proxy Z.ai.
         # En Windows del Director no hay proxy Z.ai disponible.
         from unittest.mock import patch as _patch_e2e
         with _patch_e2e("contexto_zai.pipeline._proxy_zai_disponible", return_value=False):
-            resultado = collect_responses(workspace_dir=tmpdir)
+            resultado = CicloW3.collect_responses(workspace_dir=tmpdir)
         assert resultado["total_leidas"] == 3
         assert resultado["total_aplicadas"] == 3
         assert len(resultado["errores"]) == 0
@@ -196,7 +196,7 @@ def test_flujo_completo_collect_responses():
 
 def test_procesadores_documentos():
     """ProcesadorDocumento decide según tamaño (trivial, mediano, grande)."""
-    from procesadores import ProcesadorDocumento
+    from contexto_zai.procesadores import ProcesadorDocumento
 
     with tempfile.TemporaryDirectory() as tmpdir:
         proc = ProcesadorDocumento(workspace_dir=tmpdir)
@@ -226,8 +226,8 @@ def test_procesadores_documentos():
 
 def test_procesador_intercambios():
     """ProcesadorIntercambios procesa intercambios en distintos modos."""
-    from procesadores import ProcesadorIntercambios
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.procesadores import ProcesadorIntercambios
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     with tempfile.TemporaryDirectory() as tmpdir:
         proc = ProcesadorIntercambios(workspace_dir=tmpdir)
@@ -257,7 +257,7 @@ def test_procesador_intercambios():
 
 def test_procesador_consulta():
     """ProcesadorConsulta identifica bloques candidatos y decide modo."""
-    from procesadores import ProcesadorConsulta
+    from contexto_zai.procesadores import ProcesadorConsulta
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Crear contexto simulado
@@ -281,7 +281,7 @@ def test_clasificacion_temas_e2e():
 
     Verifica que el modo CLASIFICACION_TEMAS ya no se puede usar.
     """
-    from procesadores import ProcesadorIntercambios
+    from contexto_zai.procesadores import ProcesadorIntercambios
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -290,7 +290,7 @@ def test_clasificacion_temas_e2e():
         # v6.0: CLASIFICACION_TEMAS ya no es un modo válido.
         assert "CLASIFICACION_TEMAS" not in ProcesadorIntercambios.MODOS_VALIDOS if hasattr(ProcesadorIntercambios, "MODOS_VALIDOS") else True
         # Verificar que el enum ya no tiene CLASIFICACION_TEMAS
-        from subagents.intercambios_clasificador_subagent import ModoClasificador
+        from contexto_zai.subagents.intercambios_clasificador_subagent import ModoClasificador
         assert not hasattr(ModoClasificador, "CLASIFICACION_TEMAS")
         print("  [OK] CLASIFICACION_TEMAS eliminado del enum (v6.0)")
         print("  [PASS] PASO")
@@ -302,14 +302,14 @@ def test_query_context_encuentra_bloque_externo():
     Flujo completo:
     1. ampliar_contexto() publica tarea (simulado vía ProcesadorDocumento).
     2. Subagente indexador responde con temas reales (TEMA/DESCRIPCION/SECCIONES).
-    3. collect_responses() integra la respuesta: crea bloque_externo_*.md y
+    3. CicloW3.collect_responses() integra la respuesta: crea bloque_externo_*.md y
        registra los temas reales en _metadata.json (no nombre genérico).
     4. query_context() encuentra el bloque externo por el tema real, sin
        necesitar 01_indice_recuperacion.md.
     """
-    from coordinador import Orquestador, RecogedorRespuestas
-    from procesadores import ProcesadorDocumento
-    from pipeline import collect_responses, query_context
+    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
+    from contexto_zai.procesadores import ProcesadorDocumento
+    from contexto_zai.pipeline import collect_responses, query_context
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -347,7 +347,7 @@ El sistema de autenticación basado en JWT usa header, payload y signature para 
 El control de acceso por roles gestiona permisos según el rol del usuario."""
         RecogedorRespuestas(workspace_dir=ws).escribir_respuesta(task.task_id, mock_response)
 
-        # 3. collect_responses() integra la respuesta
+        # 3. CicloW3.collect_responses() integra la respuesta
         # v6.7: collect_responses invoca enriquecimiento (Bug 7 fix). Si el
         # Worker Bun falla o el proxy no está disponible, el fallback genera
         # pending_tasks para que el agente las ejecute con subagentes.
@@ -355,7 +355,7 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
         # caiga directo al fallback sin intentar Worker Bun (que tardaría >90s).
         from unittest.mock import patch as _patch
         with _patch("contexto_zai.pipeline._proxy_zai_disponible", return_value=False):
-            resultado = collect_responses(workspace_dir=str(ws))
+            resultado = CicloW3.collect_responses(workspace_dir=str(ws))
         assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
 
         # Verificar que el bloque externo físico existe
@@ -378,7 +378,7 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
             f"v6.10 F4: archivo_a_source debe tener el bloque: {metadata.get('archivo_a_source')}"
 
         # v6.10 F4: simular que el enriquecimiento ya corrió: escribir _responses/<bloque>_temas.txt
-        from pipeline import _regenerar_indice_tras_enriquecimiento
+        from contexto_zai.pipeline import _regenerar_indice_tras_enriquecimiento
         responses_dir = ws / "_responses"
         responses_dir.mkdir(exist_ok=True)
         bloque_filename = bloques_externos[0].name
@@ -386,7 +386,7 @@ El control de acceso por roles gestiona permisos según el rol del usuario."""
         (responses_dir / f"{block_id}_temas.txt").write_text(
             "autenticacion_jwt\ncontrol_acceso_roles\n", encoding="utf-8",
         )
-        bloques_con_temas = _regenerar_indice_tras_enriquecimiento(workspace_dir=str(ws))
+        bloques_con_temas = SubprocesoArchivos._regenerar_indice_tras_enriquecimiento(workspace_dir=str(ws))
         assert bloques_con_temas >= 1, \
             f"v6.10 F4: esperaba ≥1 bloque con temas, obtuvo {bloques_con_temas}"
 
@@ -415,13 +415,13 @@ def test_sintesis_contexto_e2e():
        (objetivo) + G0.B (placeholder) + G1 (guía) + secciones operativas.
     2. ProcesadorIntercambios publica la tarea SINTESIS_CONTEXTO.
     3. (Simula) el agente lanza el subagente que responde con la síntesis.
-    4. collect_responses() aplica la respuesta vía _integrar_sintesis_contexto.
+    4. CicloW3.collect_responses() aplica la respuesta vía _integrar_sintesis_contexto.
     5. 00_estado_actual.md actualizado: G0.B pasa del placeholder al contenido.
     """
-    from coordinador import Orquestador, RecogedorRespuestas
-    from procesadores import ProcesadorIntercambios
-    from generation.estado_generator import EstadoGenerator
-    from pipeline import collect_responses
+    from contexto_zai.coordinador import Orquestador, RecogedorRespuestas
+    from contexto_zai.procesadores import ProcesadorIntercambios
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.pipeline import collect_responses
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -441,7 +441,7 @@ def test_sintesis_contexto_e2e():
         # 3. EstadoGenerator con workspace genera el archivo con G0.A+G0.B+G1
         gen = EstadoGenerator(workspace_dir=ws, launcher=proc_intercambios)
         # Crear intercambios sinteticos para que generate() no falle
-        from models import Exchange, Message, MessageRole
+        from contexto_zai.models import Exchange, Message, MessageRole
         exchanges = [
             Exchange(
                 id=1,
@@ -480,8 +480,8 @@ def test_sintesis_contexto_e2e():
             sintesis_tasks[0].task_id, mock_sintesis
         )
 
-        # 6. collect_responses() integra la respuesta
-        resultado = collect_responses(workspace_dir=str(ws))
+        # 6. CicloW3.collect_responses() integra la respuesta
+        resultado = CicloW3.collect_responses(workspace_dir=str(ws))
         assert resultado.get("total_aplicadas", 0) >= 1, f"Esperaba ≥1 aplicada: {resultado}"
 
         # 7. Verificar que G0.B se actualizó con la síntesis del subagente
@@ -506,8 +506,8 @@ def test_orchestrator_4_casos_decision():
     3. Otro chat distinto (metadata con distinto chat_id) → recovery.
     """
     from unittest.mock import patch
-    from process.orchestrator import Orchestrator, OrchestratorResult
-    from models import DetectionTrigger
+    from contexto_zai.process.orchestrator import Orchestrator, OrchestratorResult
+    from contexto_zai.models import DetectionTrigger
 
     # Caso 1: primera vez (sin metadata)
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -568,7 +568,7 @@ def test_query_context_atajo_resumenes():
     palabras de la pregunta, query_context devuelve el resumen directamente
     (modo ``resumen_atajo``) sin preparar prompts para subagentes.
     """
-    from pipeline import query_context
+    from contexto_zai.pipeline import query_context
 
     with tempfile.TemporaryDirectory() as tmpdir:
         ws = Path(tmpdir)
@@ -618,8 +618,8 @@ def test_v62_proxy_disponible_worker_completa():
     """v6.2 E2E 1: proxy Z.ai disponible + worker completa todo → pending_tasks vacío."""
     import tempfile
     from unittest.mock import patch
-    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from models import ThematicBlock
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=0)
@@ -661,7 +661,7 @@ def test_v62_proxy_disponible_worker_completa():
              patch.object(CascadaAccesoLLM, "_nivel1_worker_bun", side_effect=mock_arrancar_nivel1), \
              patch.object(CascadaAccesoLLM, "_nivel2_proxy_zai", return_value=True), \
              patch.object(CascadaAccesoLLM, "_nivel3_subagentes", return_value=True),              patch.object(EnriquecimientoOrquestador, "_validar_resumen_critico_subagente", return_value=(True, "Mock OK")):
-            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+            pending = CicloW3._enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)} tarea(s)"
         # Verificar que todos los bloques quedaron con RESUMEN:
@@ -674,8 +674,8 @@ def test_v62_proxy_caido_fallback_agente():
     """v6.2 E2E 2: proxy Z.ai caído → pending_tasks con N tareas para todos los bloques."""
     import tempfile
     from unittest.mock import patch
-    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from models import ThematicBlock
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = _crear_workspace_con_bloques(tmp, num_bloques=4, con_resumen_hasta=0)
@@ -683,7 +683,7 @@ def test_v62_proxy_caido_fallback_agente():
 
         # Mock: proxy caído (False), worker NO se llama
         with patch("contexto_zai.pipeline._proxy_zai_disponible", return_value=False):
-            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+            pending = CicloW3._enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert len(pending) == 4, f"Esperaba 4 pending_tasks, obtuvo {len(pending)}"
         # Verificar que cada tarea tiene task_id correcto
@@ -701,8 +701,8 @@ def test_v62_worker_falla_parcialmente():
     """v6.2 E2E 3: proxy OK + worker procesa algunos, falla otros → fallback solo para los faltantes."""
     import tempfile
     from unittest.mock import patch
-    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from models import ThematicBlock
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         # 5 bloques, worker escribirá RESUMEN: solo en los primeros 3
@@ -764,7 +764,7 @@ def test_v62_worker_falla_parcialmente():
              patch.object(CascadaAccesoLLM, "_nivel1_worker_bun", side_effect=mock_n1_parcial), \
              patch.object(CascadaAccesoLLM, "_nivel2_proxy_zai", return_value=False), \
              patch.object(EnriquecimientoOrquestador, "_enriquecer_con_proxy_zai", return_value=False),              patch.object(EnriquecimientoOrquestador, "_validar_resumen_critico_subagente", return_value=(True, "Mock OK")):
-            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+            pending = CicloW3._enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         # 3 bloques completados por Nivel 1. Los 2 restantes caen a Nivel 2 (False)
         # y luego a Nivel 3 que también falla → pending_tasks.
@@ -776,8 +776,8 @@ def test_v62_worker_timeout():
     """v6.2 E2E 4: worker timeout → fallback para todos los bloques."""
     import tempfile
     from unittest.mock import patch
-    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
-    from models import ThematicBlock
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador
+    from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = _crear_workspace_con_bloques(tmp, num_bloques=3, con_resumen_hasta=0)
@@ -788,7 +788,7 @@ def test_v62_worker_timeout():
         with patch("contexto_zai.pipeline._proxy_zai_disponible", return_value=True), \
              patch("contexto_zai.pipeline.EnriquecimientoOrquestador._arrancar_worker_y_esperar", return_value=False), \
              patch("contexto_zai.pipeline.EnriquecimientoOrquestador._enriquecer_con_proxy_zai", return_value=False):
-            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+            pending = CicloW3._enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert len(pending) == 3, f"Esperaba 3 pending_tasks (timeout), obtuvo {len(pending)}"
         # Los bloques siguen sin RESUMEN:
@@ -801,8 +801,8 @@ def test_v62_recorrer_con_todos_resumidos():
     """v6.2 E2E 5: re-correr cuando todos los bloques ya tienen RESUMEN: → no hace nada."""
     import tempfile
     from unittest.mock import patch
-    from pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador, _proxy_zai_disponible
-    from models import ThematicBlock
+    from contexto_zai.pipeline import _enriquecer_bloques_con_fallback, CascadaAccesoLLM, EnriquecimientoOrquestador, _proxy_zai_disponible
+    from contexto_zai.models import ThematicBlock
 
     with tempfile.TemporaryDirectory() as tmp:
         # 3 bloques, todos con RESUMEN:
@@ -816,7 +816,7 @@ def test_v62_recorrer_con_todos_resumidos():
             return True
 
         with patch("contexto_zai.pipeline._proxy_zai_disponible", side_effect=mock_proxy):
-            pending = _enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
+            pending = CicloW3._enriquecer_bloques_con_fallback(blocks, workspace_dir=str(ws))
 
         assert pending == [], f"Esperaba pending_tasks vacío, obtuvo {len(pending)}"
         assert call_count[0] == 0, f"_proxy_zai_disponible NO debe llamarse si todos tienen RESUMEN: (llamadas: {call_count[0]})"
@@ -830,8 +830,8 @@ def test_v62_recorrer_con_todos_resumidos():
 def test_v63_sort_cronologico():
     """v6.3 F4: ExchangeBuilder ordena intercambios por timestamp."""
     import tempfile
-    from processing.exchange_builder import ExchangeBuilder
-    from models import Message, MessageRole
+    from contexto_zai.processing.exchange_builder import ExchangeBuilder
+    from contexto_zai.models import Message, MessageRole
 
     builder = ExchangeBuilder()
     # Mensajes desordenados (timestamps 5, 1, 3, 2, 4)
@@ -860,8 +860,8 @@ def test_v63_sort_cronologico():
 def test_v63_a1_sin_volcados():
     """v6.3 F3: _build_a1 filtra volcados externos (> 10K chars)."""
     import tempfile
-    from generation.estado_generator import EstadoGenerator
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     gen = EstadoGenerator()
 
@@ -899,8 +899,8 @@ def test_v63_a1_sin_volcados():
 def test_v63_indice_preserva_anteriores():
     """v6.3 F2: IndiceGenerator incluye bloques preexistentes del workspace."""
     import tempfile
-    from generation.indice_generator import IndiceGenerator
-    from models import ThematicBlock
+    from contexto_zai.generation.indice_generator import IndiceGenerator
+    from contexto_zai.models import ThematicBlock
 
     gen = IndiceGenerator()
 
@@ -956,7 +956,7 @@ def test_v63_resumen_riguroso():
 
 def test_v63_config_constantes():
     """v6.3: config.py tiene las constantes nuevas de calidad de contexto."""
-    from config import (
+    from contexto_zai.config import (
         A1_VOLCADO_UMBRAL_CHARS,
         RESUMEN_MIN_CHARS,
         RESUMEN_MAX_CHARS,
@@ -974,10 +974,10 @@ def test_v63_config_constantes():
 
 
 def test_v64_decisiones_consolidadas():
-    """v6.4 F1: _consolidar_decisiones_llm() lee _responses/ y escribe 02_decisiones_clave.md."""
+    """v6.4 F1: SubprocesoArchivos._consolidar_decisiones_llm() lee _responses/ y escribe 02_decisiones_clave.md."""
     import tempfile
     from pathlib import Path
-    from pipeline import _consolidar_decisiones_llm
+    from contexto_zai.pipeline import _consolidar_decisiones_llm
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
@@ -995,7 +995,7 @@ def test_v64_decisiones_consolidadas():
             encoding="utf-8",
         )
 
-        count = _consolidar_decisiones_llm(workspace_dir=str(ws))
+        count = SubprocesoArchivos._consolidar_decisiones_llm(workspace_dir=str(ws))
 
         assert count == 3, f"Esperaba 3 decisiones, obtuvo {count}"
         decisiones_file = ws / "02_decisiones_clave.md"
@@ -1005,14 +1005,14 @@ def test_v64_decisiones_consolidadas():
         assert "Eliminar el regex" in content
         assert "Filtrar tool_calls" in content
         assert "**Alcance:**" in content or "ALCANCE:" in content
-        print(f"[OK] v6.4 F1: _consolidar_decisiones_llm() consolidó {count} decisiones del LLM")
+        print(f"[OK] v6.4 F1: SubprocesoArchivos._consolidar_decisiones_llm() consolidó {count} decisiones del LLM")
 
 
 def test_v64_a1_sin_tool_calls():
     """v6.4 F2: _build_a1 limpia tool_calls del contenido del agente."""
     import tempfile
-    from generation.estado_generator import EstadoGenerator
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.generation.estado_generator import EstadoGenerator
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     gen = EstadoGenerator()
     # Crear intercambio con tool_calls en agent_msgs
@@ -1039,7 +1039,7 @@ def test_v64_g0b_con_resumen():
     """v6.4 F3: G0.B contiene el RESUMEN del bloque del tema activo."""
     import tempfile
     from pathlib import Path
-    from generation.estado_generator import EstadoGenerator
+    from contexto_zai.generation.estado_generator import EstadoGenerator
 
     with tempfile.TemporaryDirectory() as tmp:
         ws = Path(tmp)
@@ -1072,9 +1072,9 @@ def test_v64_g0b_con_resumen():
 
 def test_v64_fallback_mismo_prompt():
     """v6.4 F4: el prompt del fallback contiene las restricciones rigurosas."""
-    from config import PROMPT_RESUMEN_RIGIDO
-    from models import ThematicBlock
-    from pipeline import _construir_pending_task_para_bloque
+    from contexto_zai.config import PROMPT_RESUMEN_RIGIDO
+    from contexto_zai.models import ThematicBlock
+    from contexto_zai.pipeline import _construir_pending_task_para_bloque
 
     bloque = ThematicBlock(filename="bloque_01.md")
     task = _construir_pending_task_para_bloque(bloque, chat_label="test")
@@ -1090,8 +1090,8 @@ def test_v64_fallback_mismo_prompt():
 def test_v64_sort_global():
     """v6.4 F5: BlockPacker ordena intercambios globalmente dentro de cada bloque."""
     import tempfile
-    from processing.block_packer import BlockPacker
-    from models import Exchange, Message, MessageRole
+    from contexto_zai.processing.block_packer import BlockPacker
+    from contexto_zai.models import Exchange, Message, MessageRole
 
     packer = BlockPacker()
     # Crear intercambios de 2 temas con timestamps cruzados
