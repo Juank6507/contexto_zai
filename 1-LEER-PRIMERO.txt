@@ -2,14 +2,12 @@
   CZAI v7.0 — Modularización + abstracción + fixes v6.20
 ============================================================
 
-Entrega COMPLETA de CZAI v7.0. Estructura plana (sin carpeta intermedia).
+Entrega COMPLETA. Estructura plana.
 
-Sentencia de lanzamiento en PowerShell:
+Sentencia de lanzamiento:
 
   $z = Join-Path $env:USERPROFILE "Downloads\contexto_zai_v7.0.zip"
   $t = Join-Path $env:TEMP "czai_v7_release"
   if (Test-Path $t) { Remove-Item $t -Recurse -Force }
   Expand-Archive -Path $z -DestinationPath $t -Force
   & (Join-Path $t "update_czai.ps1") -ZipPath $z -RepoDir "C:\Python\Proyectos\contexto_zai"
-
-Gauntlet: verificado contra conciliación. 17/17 criterios OK.
