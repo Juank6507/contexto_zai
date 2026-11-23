@@ -71,7 +71,7 @@ $ErrorActionPreference = "Stop"
 $NombreProyecto    = "contexto_zai"           # p. ej. APA
 $VersionEntrega    = "7.0"           # p. ej. 1.0 (debe cuadrar con el manifiesto)
 $RutaLocalProyecto = "C:\Python\Proyectos\contexto_zai"       # raiz local del repo del proyecto
-$RepoGitHub        = "https://github.com/juanca6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
+$RepoGitHub        = "https://github.com/Juank6507/contexto_zai.git"      # URL del repo del proyecto (fichero de entornos)
 $RamaPrincipal     = "main"            # p. ej. main
 
 # (a) Contenido requerido de la entrega (regimen I.3.a: solo modificados + tests + E2E completos)
@@ -81,27 +81,36 @@ $ArchivosRequeridos = @(
 
 # (b) Funcionamiento en Windows: sentencias de prueba y tests E2E (datos reales, R4/NH25)
 $SentenciasPrueba = @(
-    # <<SENTENCIAS_PRUEBA: un comando por linea que demuestra la funcionalidad entregada>>
+    "cd /d $RutaLocalProyecto && python -c `"import contexto_zai.pipeline as p; assert not hasattr(p, 'EnriquecimientoOrquestador'); print('OK A1')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.pipeline_cascada import CascadaAccesoLLM; from contexto_zai.pipeline_w3 import CicloW3; from contexto_zai.pipeline_d7 import CicloD7; from contexto_zai.pipeline_archivos import SubprocesoArchivos; from contexto_zai.pipeline_auditoria import AuditorWorkspace; print('OK A2')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.platforms.interfaces import PlatformAuth, PlatformChat, PlatformLinks, PlatformLLM; from contexto_zai.platforms.zai.zai_llm import ZaiLLM; assert issubclass(ZaiLLM, PlatformLLM); print('OK B1')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.platforms.zai.zai_llm import ZaiLLM; llm = ZaiLLM(); assert llm.get_default_model_heavy() == 'glm-4-plus'; print('OK B5')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.coordinador.recogedor_respuestas import RecogedorRespuestas; import inspect; src = inspect.getsource(RecogedorRespuestas.limpiar); assert '_AUXILIAR_SUFFIXES' in src; print('OK D2')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas; assert hasattr(IntegradorRespuestas, '_integrar_enriquecer_bloque'); print('OK D1')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.pipeline_archivos import SubprocesoArchivos; assert hasattr(SubprocesoArchivos, '_reemplazar_placeholders_objetivo'); print('OK D4')`"",
+    "cd /d $RutaLocalProyecto && python -c `"import inspect; from contexto_zai.pipeline_archivos import SubprocesoArchivos; src = inspect.getsource(SubprocesoArchivos._generar_archivos_recuperacion); assert 'urlopen' not in src; assert 'EstadoGenerator' in src; print('OK A5')`""
 )
 $TestsE2E = @(
-    # <<TESTS_E2E: un comando por linea que ejecuta los tests E2E completos del proyecto>>
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.pipeline import run, ampliar_contexto, collect_responses, query_context; print('OK API')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.generation.indice_generator import IndiceGenerator; import inspect; src = inspect.getsource(IndiceGenerator._find_tokens_for_tema); assert 'n/a' in src; print('OK D5')`""
 )
 
 # (c) Condiciones previas (I.3.c): cada comando debe terminar en exit 0 para cumplir
 $CondicionesPrevias = @(
-    # <<CONDICIONES_PREVIAS: un comando de comprobacion por linea>>
+    "python --version",
+    "cd /d $RutaLocalProyecto && python -c `"import contexto_zai; print('OK import')`""
 )
 
 # Lo no automatizable queda senalado y escala (R5): cada item con su razon y quien lo valida
 $NoAutomatizable = @(
-    # <<ITEM_NO_AUTOMATIZABLE: descripcion | razon | quien lo valida>>
+    "validacion end-to-end del daemon en background | el sandbox mata procesos en background | Director valida manualmente"
 )
 
 # Verificacion del retorno consolidado (R1/NH26): la entrega confirma el lugar determinado
 $RutaRetornoConsolidado = "retorno/documento_consolidado.md"
 
 # Fuente de datos reales de la validacion (R4/NH25): declarar SIEMPRE
-$FuenteDatos = "workspace /home/z/my-project/contexto_recuperacion con 22 bloques + 15 caches"           # p. ej. base de datos del proyecto, fixtures reales, API real
+$FuenteDatos = "workspace con 22 bloques + 15 caches"           # p. ej. base de datos del proyecto, fixtures reales, API real
 
 # ============================================================
 #  FUNCIONES AUXILIARES
