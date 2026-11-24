@@ -1,5 +1,5 @@
 ============================================================
-  CZAI v7.0 — Modularización + abstracción + fixes v6.20
+  CZAI v7.0 — Modularización + abstracción + fixes + auditoría de calidad
 ============================================================
 
 Entrega COMPLETA. Estructura plana.
@@ -11,3 +11,5 @@ Sentencia de lanzamiento:
   if (Test-Path $t) { Remove-Item $t -Recurse -Force }
   Expand-Archive -Path $z -DestinationPath $t -Force
   & (Join-Path $t "update_czai.ps1") -ZipPath $z -RepoDir "C:\Python\Proyectos\contexto_zai"
+
+Incluye: 12 correcciones D1-D10 + auditoría de calidad F1-F7.

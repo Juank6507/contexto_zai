@@ -260,16 +260,6 @@ class ContextoPipeline:
             # se invoca como placeholder inicial (sin temas) — P19 lo sobrescribe
             # con contenido real.
             SubprocesoArchivos._regenerar_indice_tras_enriquecimiento(workspace_dir=workspace_dir)
-            # C7: invocar subproceso de archivos (paso 5 del pipeline conciliado)
-            # para reemplazar placeholders del objetivo y regenerar síntesis G0.B.
-            try:
-                SubprocesoArchivos._reemplazar_placeholders_objetivo(workspace_dir=workspace_dir)
-            except Exception as e:
-                logger.warning("C7: _reemplazar_placeholders_objetivo falló: %s", e)
-            try:
-                SubprocesoArchivos._regenerar_sintesis_contexto(workspace_dir=workspace_dir)
-            except Exception as e:
-                logger.warning("C7: _regenerar_sintesis_contexto falló: %s", e)
             return result
 
     @staticmethod

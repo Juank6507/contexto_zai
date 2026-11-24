@@ -89,6 +89,20 @@ Cierre formal de v6.20 con dos fixes de bugs detectados, sobre una base arquitec
 - D3. El consolidador de decisiones tiene fallback a caches cuando los auxiliares no existen.
 - D4. El archivo `03_objetivo_proyecto.md` no tiene placeholders sin reemplazar tras la primera generación (grep de `MODELO_AGENTE`, `DIRECTOR`, `EMAIL`, `ACTA_NACIMIENTO` devuelve 0).
 - D5. El índice muestra tokens calculados del tamaño real de los bloques, no hardcoded.
+- D6. El `_FILE_PATH_PATTERN` no captura caracteres especiales (`--`, `>`, `+`, `=`, `!`, `?`, `;`, `:`) pegados a los paths. Solo captura el path limpio.
+- D7. El subproceso de decisiones revisa las decisiones anteriores para no duplicarlas entre bloques (deduplicación al consolidar).
+- D8. El subproceso de decisiones filtra para que solo queden decisiones importantes del Director, no descripciones de actividades técnicas del agente.
+- D9. El `EstadoGenerator._build_g0_a` no crea el `03_objetivo_proyecto.md` automático si no existe. El paso 4 del subproceso de archivos lo crea con la plantilla primero, y el EstadoGenerator lo lee después.
+- D10. El método `_find_tokens_for_tema` suma los tamaños de todos los bloques donde aparece el tema, no solo del primero.
+
+### Auditoría de calidad
+- F1. El `AuditorWorkspace` no solo audita completitud (existencia de artefactos) sino también calidad (contenido de los archivos de recuperación).
+- F2. La auditoría de calidad verifica: `00_estado_actual.md` sin placeholders embebidos, sin G0.A duplicada, sin paths corruptos en A2, sin errores falsos en A3, síntesis G0.B sin caracteres escapados.
+- F3. La auditoría de calidad verifica: `03_objetivo_proyecto.md` con contenido real (no placeholder automático), sin `__PLACEHOLDER__` sin reemplazar.
+- F4. La auditoría de calidad verifica: `01_indice_recuperacion.md` con tokens calculados del tamaño real (no `~68.2K` hardcodeado para todos).
+- F5. La auditoría de calidad verifica: `02_decisiones_clave.md` con decisiones deduplicadas y sin descripciones de actividades técnicas.
+- F6. La auditoría de calidad se ejecuta en el paso 6 del pipeline (auditar final), después de que los 4 archivos de recuperación están generados.
+- F7. Si la auditoría de calidad detecta deficiencias, las reporta en el resultado del pipeline para que el D7 las reintente.
 
 ### Cierre
 - E1. Existe entrada en el worklog para la sesión 15 con el cierre formal v7.0.

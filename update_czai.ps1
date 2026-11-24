@@ -89,7 +89,8 @@ $SentenciasPrueba = @(
     "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas; assert hasattr(IntegradorRespuestas, '_integrar_enriquecer_bloque'); print('OK D1')`"",
     "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); from contexto_zai.pipeline_archivos import SubprocesoArchivos; assert hasattr(SubprocesoArchivos, '_reemplazar_placeholders_objetivo'); assert hasattr(SubprocesoArchivos, '_regenerar_sintesis_contexto'); print('OK D4-D11')`"",
     "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); import inspect; from contexto_zai.pipeline_archivos import SubprocesoArchivos; src = inspect.getsource(SubprocesoArchivos._generar_archivos_recuperacion); assert 'urlopen' not in src; assert 'EstadoGenerator' in src; print('OK A5')`"",
-    "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); from contexto_zai.generation.placeholder_replacer import PlaceholderReplacer; assert hasattr(PlaceholderReplacer, 'reemplazar'); print('OK C10')`""
+    "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); from contexto_zai.generation.placeholder_replacer import PlaceholderReplacer; assert hasattr(PlaceholderReplacer, 'reemplazar'); print('OK C10')`"",
+    "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); from contexto_zai.pipeline_auditoria import AuditorWorkspace; assert hasattr(AuditorWorkspace, 'auditar_calidad'); print('OK F1')`""
 )
 $TestsE2E = @(
     "cd /d $RutaLocalProyecto && python -c `"import sys; sys.path.insert(0, '..'); from contexto_zai.pipeline import run, ampliar_contexto, collect_responses, query_context; print('OK API')`"",

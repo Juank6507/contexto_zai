@@ -111,8 +111,29 @@ F1 → F2 → F3 → F4 → F5 → F6.
 5. Arreglar `indice_generator.py`: `_find_tokens_for_tema` calcula del tamaño real del bloque físico (`len(content) / 3500`), no devuelve `~67.0K` hardcoded.
 6. Crear `generation/placeholder_replacer.py`: clase `PlaceholderReplacer` con método `reemplazar(workspace_dir)`. Lee `03_objetivo_proyecto.md`, lee el primer exchange del chat (del metadata o del primer bloque), decodifica el JWT del Director para obtener email, y reemplaza los cuatro placeholders.
 7. Añadir handler en `coordinador/integrador_respuestas.py` para el patrón `enriquecer_bloque_NN`: cuando el task_id empiece con `enriquecer_`, despachar a `_integrar_enriquecer_bloque` que aplica el JSON de respuesta al bloque (resumen + nombre + decisiones + temas).
+8. Ampliar `_FILE_PATH_PATTERN` en `estado_generator.py`: excluir caracteres especiales (`--`, `>`, `+`, `=`, `!`, `?`, `;`, `:`) de los paths capturados. (D6)
+9. Modificar `PROMPT_FUSIONADO_W1W2W3` en `pipeline_w3.py`: añadir instrucción al LLM de que solo extraiga decisiones importantes del Director, no descripciones de actividades técnicas del agente. (D8)
+10. Modificar `_consolidar_decisiones_llm` en `pipeline_archivos.py`: añadir paso de deduplicación que revise las decisiones anteriores para no duplicarlas entre bloques. (D7)
+11. Modificar `EstadoGenerator._build_g0_a` en `estado_generator.py`: NO llamar a `_asegurar_objetivo_proyecto()` si el `03_objetivo_proyecto.md` no existe. Devolver string vacío o placeholder. El paso 4 del subproceso de archivos lo crea. (D9)
+12. Modificar `_find_tokens_for_tema` en `indice_generator.py`: cuando un tema aparece en varios bloques, sumar los tamaños de todos los bloques donde aparece, no solo del primero. (D10)
 
-**Verificación.** D1, D2, D3, D4, D5.
+**Verificación.** D1, D2, D3, D4, D5, D6, D7, D8, D9, D10.
+
+### F5b — Auditoría de calidad de los archivos de recuperación
+
+**Objetivo.** El `AuditorWorkspace` audita no solo completitud sino también calidad del contenido de los 4 archivos de recuperación.
+
+**Tareas.**
+1. Añadir método `auditar_calidad` a `AuditorWorkspace` en `pipeline_auditoria.py`. Este método lee los 4 archivos de recuperación y verifica:
+   - `00_estado_actual.md`: sin placeholders `__*__` embebidos, sin G0.A duplicada, sin paths con caracteres especiales en A2, sin "Traceback" sin stack trace en A3, sin `\*` (caracteres escapados) en G0.B. (F2)
+   - `03_objetivo_proyecto.md`: sin `__PLACEHOLDER__`, sin "Proyecto sobre:" (objetivo automático), contenido real presente. (F3)
+   - `01_indice_recuperacion.md`: tokens no hardcodeados (no todos los temas transversales con el mismo valor). (F4)
+   - `02_decisiones_clave.md`: decisiones deduplicadas (no hay duplicadas por texto), no excede un rango razonable (no 175 decisiones para 649 intercambios). (F5)
+2. Modificar `auditar_completitud` para que también llame a `auditar_calidad` y devuelva las deficiencias en el resultado. (F1)
+3. El paso 6 del pipeline (auditar final) ya llama a `auditar_completitud`. Como ahora incluye calidad, las deficiencias se reportan automáticamente. (F6)
+4. Si `auditar_calidad` detecta deficiencias, las devuelve en `resultado["deficiencias_calidad"]` para que el D7 las reintente. (F7)
+
+**Verificación.** F1, F2, F3, F4, F5, F6, F7.
 
 ### F6 — Cierre formal
 

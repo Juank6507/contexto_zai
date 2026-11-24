@@ -346,35 +346,35 @@ class IndiceGenerator:
         """Encuentra los tokens aproximados del archivo que contiene el tema.
 
         v6.6 F6 (Bug 2 fix): si no encuentra el bloque en la lista de blocks,
-        busca en el workspace con glob bloque_*.md (no bloque_externo_* que
-        ya no se usa tras la normalización).
+        busca en el workspace con glob bloque_*.md.
 
         v7.0 F5 (D5): si el tema no está en ningún bloque físico, devuelve
-        ``"n/a"`` (not available) en vez de ``"?"`` que era confuso. Además,
-        si el bloque está en la lista pero su ``estimated_tokens`` es 0 o
-        None, calcula el tamaño real del archivo físico en vez de devolver
-        ``"0.0K"``.
+        ``"n/a"``. Si estimated_tokens es 0 o None, calcula del tamaño real.
+
+        v7.0 D10: cuando un tema aparece en varios bloques (tema transversal),
+        SUMA los tamaños de todos los bloques donde aparece, no solo del primero.
         """
+        total_chars = 0
+        found_in_blocks = False
+
+        # Buscar en la lista de blocks
         for b in blocks:
             if tema in b.temas:
-                # v7.0 F5: si estimated_tokens es válido, usarlo.
+                found_in_blocks = True
                 if hasattr(b, "estimated_tokens") and b.estimated_tokens and b.estimated_tokens > 0:
-                    return f"{b.estimated_tokens / 1000:.1f}K"
-                # v7.0 F5: si no, calcular del tamaño del archivo físico.
-                if hasattr(self, "_workspace_dir_cache") and self._workspace_dir_cache:
+                    total_chars += int(b.estimated_tokens * 3.5)  # tokens a chars aprox
+                elif hasattr(self, "_workspace_dir_cache") and self._workspace_dir_cache:
                     from pathlib import Path as _Path
                     ws = _Path(self._workspace_dir_cache)
                     bloque_path = ws / b.filename
                     if bloque_path.exists():
                         try:
-                            content = bloque_path.read_text(encoding="utf-8")
-                            return f"{len(content) / 3500:.1f}K"
+                            total_chars += len(bloque_path.read_text(encoding="utf-8"))
                         except Exception:
                             pass
-                # Fallback final.
-                return "n/a"
-        # v6.6 F6: buscar en workspace si el bloque no está en la lista
-        if hasattr(self, "_workspace_dir_cache") and self._workspace_dir_cache:
+
+        # Si no lo encontró en la lista, buscar en workspace físico
+        if not found_in_blocks and hasattr(self, "_workspace_dir_cache") and self._workspace_dir_cache:
             from pathlib import Path as _Path
             ws = _Path(self._workspace_dir_cache)
             if ws.exists():
@@ -384,11 +384,13 @@ class IndiceGenerator:
                         if len(content) < 100:
                             continue
                         if tema in content:
-                            return f"{len(content) / 3500:.1f}K"
+                            total_chars += len(content)
+                            found_in_blocks = True
                     except Exception:
                         continue
-        # v7.0 F5: en vez de "?", devolver "n/a" (not available) que es
-        # más claro para el lector del índice.
+
+        if found_in_blocks and total_chars > 0:
+            return f"{total_chars / 3500:.1f}K"
         return "n/a"
 
     def _incluir_bloques_anteriores(

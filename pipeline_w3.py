@@ -34,29 +34,6 @@ No cambia el grafo de flujo interno: solo mueve código.
 
 from __future__ import annotations
 
-# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
-import os as _os, sys as _sys
-_here = _os.path.dirname(_os.path.abspath(__file__))
-_candidate = _here
-_package_root = None
-for _ in range(10):
-    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
-        break
-    _parent = _os.path.dirname(_candidate)
-    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
-        _package_root = _candidate
-        break
-    _candidate = _parent
-if _package_root:
-    _workspace = _os.path.dirname(_package_root)
-    if _workspace not in _sys.path:
-        _sys.path.insert(0, _workspace)
-else:
-    _parent = _os.path.dirname(_here)
-    if _parent not in _sys.path:
-        _sys.path.insert(0, _parent)
-
-
 import logging
 from pathlib import Path
 from typing import Optional
@@ -83,6 +60,12 @@ Genera una respuesta JSON con las siguientes claves:
 2. "nombre": Un identificador en snake_case que resuma de qué trata el bloque (ej: "worker_bun_proxy_zai").
 
 3. "decisiones": Una lista (array) de strings, cada uno con el formato "DECISION: descripción | ALCANCE: contexto". Si no hay decisiones reales, devuelve una lista vacía [].
+
+CRITERIO DE DECISIONES (D8): Solo incluye decisiones IMPORTANTES del Director. Una decisión importante es aquella que:
+- Define la arquitectura o el enfoque del proyecto (ej: "usar OOP", "separar en 3 capas").
+- Cambia el rumbo del proyecto (ej: "eliminar el regex", "pasar a v6.12").
+- Establece una regla o restricción permanente (ej: "prohibido indigo", "no mocks con datos reales").
+NO incluyas descripciones de actividades técnicas del agente (ej: "crear la clase ProgressMonitor", "paginar get_messages_batch", "separar config.py"). Esas son implementaciones, no decisiones del Director.
 
 4. "temas": Una lista (array) de strings con los temas abordados (2-5 keywords).
 

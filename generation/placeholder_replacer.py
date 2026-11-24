@@ -10,8 +10,6 @@ Reemplaza los cuatro placeholders del ``03_objetivo_proyecto.md``:
 
 También elimina la nota residual ``_(El agente que contesta debe rellenar
 este placeholder...)_`` después del reemplazo.
-
-Atómico standalone: importa config, models, pathlib y logging.
 """
 from __future__ import annotations
 
@@ -37,7 +35,6 @@ else:
     if _parent not in _sys.path:
         _sys.path.insert(0, _parent)
 
-
 import logging
 import re
 from pathlib import Path
@@ -46,16 +43,8 @@ logger = logging.getLogger(__name__)
 
 
 class PlaceholderReplacer:
-    """Reemplaza los placeholders del ``03_objetivo_proyecto.md``.
+    """Reemplaza los placeholders del ``03_objetivo_proyecto.md``."""
 
-    Usage:
-        >>> from contexto_zai.generation.placeholder_replacer import PlaceholderReplacer
-        >>> replacer = PlaceholderReplacer()
-        >>> replacer.reemplazar("/path/to/workspace")
-        True
-    """
-
-    # Nota residual que acompaña al placeholder __ACTA_NACIMIENTO__.
     _NOTA_RESIDUAL = (
         "_(El agente que contesta debe rellenar este placeholder con el primer "
         "exchange del proyecto y/o la primera decisión explícita o implícita de "
@@ -63,14 +52,7 @@ class PlaceholderReplacer:
     )
 
     def reemplazar(self, workspace_dir: Path | str) -> bool:
-        """Reemplaza los cuatro placeholders del 03_objetivo_proyecto.md.
-
-        Args:
-            workspace_dir: Directorio del workspace.
-
-        Returns:
-            True si se reemplazó algún placeholder, False si no.
-        """
+        """Reemplaza los cuatro placeholders del 03_objetivo_proyecto.md."""
         ws = Path(workspace_dir)
         objetivo_path = ws / "03_objetivo_proyecto.md"
         if not objetivo_path.exists():
@@ -79,7 +61,7 @@ class PlaceholderReplacer:
         content = objetivo_path.read_text(encoding="utf-8")
         original_content = content
 
-        # __MODELO_AGENTE__: leer del ZaiLLM. Sin fallback hardcoded.
+        # __MODELO_AGENTE__
         try:
             from contexto_zai.platforms.zai.zai_llm import ZaiLLM
             llm = ZaiLLM()
@@ -90,7 +72,7 @@ class PlaceholderReplacer:
         if modelo_agente:
             content = content.replace("__MODELO_AGENTE__", modelo_agente)
 
-        # __EMAIL__ y __DIRECTOR__: leer via PlatformAuth.
+        # __EMAIL__ y __DIRECTOR__
         try:
             from contexto_zai.platforms.zai.zai_auth import ZaiAuth
             auth = ZaiAuth()
@@ -106,7 +88,7 @@ class PlaceholderReplacer:
         content = content.replace("__DIRECTOR__", director)
         content = content.replace("__EMAIL__", email)
 
-        # __ACTA_NACIMIENTO__: primer exchange cronológico del proyecto.
+        # __ACTA_NACIMIENTO__
         acta_nacimiento = "(Acta de nacimiento no disponible — ver worklog.md)"
         try:
             bloques = sorted(ws.glob("bloque_*.md"))
@@ -135,7 +117,7 @@ class PlaceholderReplacer:
             pass
         content = content.replace("__ACTA_NACIMIENTO__", acta_nacimiento)
 
-        # Eliminar la nota residual del placeholder (C6).
+        # Eliminar nota residual (C6).
         content = content.replace(self._NOTA_RESIDUAL, "")
 
         if content != original_content:

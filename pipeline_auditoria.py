@@ -252,22 +252,125 @@ class AuditorWorkspace:
             return False
     
     @staticmethod
+    def auditar_calidad(workspace_dir: Path | str) -> dict:
+        """F1-F7: Audita la calidad del contenido de los 4 archivos de recuperación.
+
+        Verifica no solo que los archivos existen (eso lo hace auditar_bloques)
+        sino que el CONTENIDO cumple los criterios de calidad conciliados.
+
+        Returns:
+            dict con:
+            - 'deficiencias': lista de strings describiendo cada deficiencia.
+            - 'calidad_ok': True si no hay deficiencias.
+        """
+        import re as _re
+        ws = Path(workspace_dir)
+        deficiencias: list[str] = []
+
+        # F2: 00_estado_actual.md
+        estado_path = ws / "00_estado_actual.md"
+        if estado_path.exists():
+            estado = estado_path.read_text(encoding="utf-8")
+            # Placeholders embebidos
+            if "__" in estado and _re.search(r"__[A-Z_]+__", estado):
+                deficiencias.append("00_estado: placeholders __*__ sin reemplazar embebidos")
+            # G0.A duplicada
+            if estado.count("## G0.A") > 1:
+                deficiencias.append("00_estado: sección G0.A duplicada")
+            # Paths con caracteres especiales en A2
+            if "## Sección A2" in estado:
+                a2_section = estado[estado.find("## Sección A2"):]
+                a2_section = a2_section[:a2_section.find("## Sección A3")] if "## Sección A3" in a2_section else a2_section[:2000]
+                # Buscar paths con -- o > pegados
+                if _re.search(r"(/[^\s]+)(\s*--\s)", a2_section) or _re.search(r"(/[^\s]+)(\s*>)", a2_section):
+                    deficiencias.append("00_estado: paths con caracteres especiales en A2")
+            # Traceback sin stack trace en A3
+            if "## Sección A3" in estado:
+                a3_section = estado[estado.find("## Sección A3"):]
+                a3_section = a3_section[:a3_section.find("## Sección A4")] if "## Sección A4" in a3_section else a3_section[:2000]
+                if "Traceback" in a3_section and "most recent call last" not in a3_section:
+                    deficiencias.append("00_estado: Traceback sin stack trace en A3 (mención, no error real)")
+            # Caracteres escapados en G0.B
+            if "## G0.B" in estado:
+                g0b_section = estado[estado.find("## G0.B"):]
+                g0b_section = g0b_section[:g0b_section.find("## G1")] if "## G1" in g0b_section else g0b_section[:3000]
+                if "\\*" in g0b_section or "\\-" in g0b_section or "\\(" in g0b_section:
+                    deficiencias.append("00_estado: caracteres escapados en G0.B (re.escape mal aplicado)")
+
+        # F3: 03_objetivo_proyecto.md
+        objetivo_path = ws / "03_objetivo_proyecto.md"
+        if objetivo_path.exists():
+            objetivo = objetivo_path.read_text(encoding="utf-8")
+            if "__" in objetivo and _re.search(r"__[A-Z_]+__", objetivo):
+                deficiencias.append("03_objetivo: placeholders __*__ sin reemplazar")
+            if "Proyecto sobre:" in objetivo and len(objetivo) < 500:
+                deficiencias.append("03_objetivo: contenido automático (Proyecto sobre:) en vez de plantilla real")
+
+        # F4: 01_indice_recuperacion.md
+        indice_path = ws / "01_indice_recuperacion.md"
+        if indice_path.exists():
+            indice = indice_path.read_text(encoding="utf-8")
+            # Buscar si todos los valores de tokens son iguales (hardcodeados)
+            tokens_matches = _re.findall(r"~(\d+\.\d+)K", indice)
+            if len(tokens_matches) > 5:
+                unique_tokens = set(tokens_matches)
+                if len(unique_tokens) == 1:
+                    deficiencias.append(f"01_indice: todos los tokens hardcodeados a ~{tokens_matches[0]}K")
+
+        # F5: 02_decisiones_clave.md
+        decisiones_path = ws / "02_decisiones_clave.md"
+        if decisiones_path.exists():
+            decisiones = decisiones_path.read_text(encoding="utf-8")
+            # Contar decisiones
+            num_decisiones = decisiones.count("## D")
+            # Verificar duplicadas por texto
+            dec_texts = _re.findall(r"\*\*Decisión:\*\*\s*(.+?)(?:\n|$)", decisiones)
+            if dec_texts:
+                normalized = [" ".join(t.lower().split()) for t in dec_texts]
+                duplicates = len(normalized) - len(set(normalized))
+                if duplicates > 0:
+                    deficiencias.append(f"02_decisiones: {duplicates} decisión(es) duplicada(s)")
+            # Verificar cantidad excesiva (más de 1 decisión por cada 3 intercambios es sospechoso)
+            try:
+                import json as _json_f5
+                meta_path = ws / "_metadata.json"
+                if meta_path.exists():
+                    meta = _json_f5.loads(meta_path.read_text(encoding="utf-8"))
+                    total_exchanges = meta.get("total_exchanges", 0)
+                    if total_exchanges > 0 and num_decisiones > total_exchanges / 3:
+                        deficiencias.append(f"02_decisiones: {num_decisiones} decisiones para {total_exchanges} intercambios (excesivo, ratio > 1/3)")
+            except Exception:
+                pass
+
+        return {
+            "deficiencias": deficiencias,
+            "calidad_ok": len(deficiencias) == 0,
+        }
+
+    @staticmethod
     def auditar_completitud(workspace_dir: Path | str) -> dict:
-        """Auditoría integral: bloques + enriquecimiento + metadata.
-        
+        """Auditoría integral: bloques + enriquecimiento + metadata + calidad.
+
+        F1: ahora incluye auditar_calidad además de auditar_bloques.
+
         Returns:
             dict con:
             - 'completos': lista de block_id completos.
             - 'incompletos': lista de {block_id, faltantes}.
             - 'metadata_valida': bool.
+            - 'deficiencias_calidad': lista de deficiencias de calidad (F7).
+            - 'calidad_ok': bool.
         """
         bloques = AuditorWorkspace.auditar_bloques(workspace_dir)
         metadata_valida = AuditorWorkspace.auditar_metadata(workspace_dir)
-        
+        calidad = AuditorWorkspace.auditar_calidad(workspace_dir)
+
         return {
             "completos": bloques["completos"],
             "incompletos": bloques["incompletos"],
             "metadata_valida": metadata_valida,
+            "deficiencias_calidad": calidad["deficiencias"],
+            "calidad_ok": calidad["calidad_ok"],
         }
     
     @staticmethod

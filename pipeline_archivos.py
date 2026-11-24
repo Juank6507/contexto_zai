@@ -22,29 +22,6 @@ No cambia el grafo de flujo interno: solo mueve código.
 
 from __future__ import annotations
 
-# Auto-configuracion de sys.path para ejecucion directa (Windows/Linux)
-import os as _os, sys as _sys
-_here = _os.path.dirname(_os.path.abspath(__file__))
-_candidate = _here
-_package_root = None
-for _ in range(10):
-    if not _os.path.isfile(_os.path.join(_candidate, '__init__.py')):
-        break
-    _parent = _os.path.dirname(_candidate)
-    if not _os.path.isfile(_os.path.join(_parent, '__init__.py')):
-        _package_root = _candidate
-        break
-    _candidate = _parent
-if _package_root:
-    _workspace = _os.path.dirname(_package_root)
-    if _workspace not in _sys.path:
-        _sys.path.insert(0, _workspace)
-else:
-    _parent = _os.path.dirname(_here)
-    if _parent not in _sys.path:
-        _sys.path.insert(0, _parent)
-
-
 import logging
 import json
 import re as _re_module
@@ -126,37 +103,6 @@ class SubprocesoArchivos:
 
         archivos_generados: list[str] = []
 
-        # ============ PASO 4: 03_objetivo_proyecto.md ============
-        # Si no existe, crear con plantilla base. Si existe, solo reemplazar
-        # placeholders. NO se sobrescribe si ya existe (criterio spec v6.20).
-        try:
-            objetivo_path = ws / "03_objetivo_proyecto.md"
-            genero_03 = not objetivo_path.exists()
-            if genero_03:
-                # Crear con plantilla base con placeholders.
-                plantilla = (
-                    "# Objetivo del Proyecto — Contexto Zai\n\n"
-                    "## G0.A — Quién eres\n\n"
-                    "Sos un agente Z.ai (modelo __MODELO_AGENTE__) que el Director "
-                    "**__DIRECTOR__** (``__EMAIL__``) está construyendo como parte de una "
-                    "estrategia mayor de trabajo con proyectos informáticos. Tu nombre "
-                    "interno en esta fase es **CZAI** (Contexto Zai). Trabajás en un "
-                    "sandbox de Z.ai en la ruta ``/home/z/my-project/`` "
-                    "(Next.js + Bun + Python venv).\n\n"
-                    "## G0.B — Norte del proyecto\n\n"
-                    "(A definir por el Director en la primera sesión.)\n\n"
-                    "## G0.C — Acta de nacimiento\n\n"
-                    "__ACTA_NACIMIENTO__\n"
-                )
-                objetivo_path.write_text(plantilla, encoding="utf-8")
-                archivos_generados.append("03_objetivo_proyecto.md")
-                logger.info("v7.0 F5 (D1-A5) paso 4: 03_objetivo_proyecto.md creado con plantilla")
-            # Reemplazar placeholders (siempre, tanto si se creó como si ya existía).
-            SubprocesoArchivos._reemplazar_placeholders_objetivo(workspace_dir=ws)
-        except Exception as e:
-            logger.warning("v7.0 F5 (D1-A5) paso 4 falló: %s", e)
-
-
         # ============ PASO 1: 00_estado_actual.md ============
         # Genera el archivo usando EstadoGenerator con los intercambios
         # reconstruidos desde los bloques (vía el worklog y el metadata).
@@ -194,10 +140,6 @@ class SubprocesoArchivos:
                 # directamente vía el workspace_dir.
                 exchanges = []
 
-            # C11: los generadores trabajan en modo offline (sin launcher) leyendo
-            # de los datos que la cascada ya produjo (RESUMENES en bloques, decisiones
-            # en caches, temas en _responses/). Si en el futuro un generador necesita
-            # LLM, debe delegar al W3 (que a su vez usa la cascada), no bypassar.
             estado_gen = EstadoGenerator(workspace_dir=ws, chat_id=chat_id)
             estado_content = estado_gen.generate(exchanges, chat_label=chat_id or "contexto_zai")
             estado_path = ws / "00_estado_actual.md"
@@ -233,6 +175,36 @@ class SubprocesoArchivos:
                 logger.info("v7.0 F5 (D1-A5) paso 3: 01_indice_recuperacion.md regenerado")
         except Exception as e:
             logger.warning("v7.0 F5 (D1-A5) paso 3 falló: %s", e)
+
+        # ============ PASO 4: 03_objetivo_proyecto.md ============
+        # Si no existe, crear con plantilla base. Si existe, solo reemplazar
+        # placeholders. NO se sobrescribe si ya existe (criterio spec v6.20).
+        try:
+            objetivo_path = ws / "03_objetivo_proyecto.md"
+            genero_03 = not objetivo_path.exists()
+            if genero_03:
+                # Crear con plantilla base con placeholders.
+                plantilla = (
+                    "# Objetivo del Proyecto — Contexto Zai\n\n"
+                    "## G0.A — Quién eres\n\n"
+                    "Sos un agente Z.ai (modelo __MODELO_AGENTE__) que el Director "
+                    "**__DIRECTOR__** (``__EMAIL__``) está construyendo como parte de una "
+                    "estrategia mayor de trabajo con proyectos informáticos. Tu nombre "
+                    "interno en esta fase es **CZAI** (Contexto Zai). Trabajás en un "
+                    "sandbox de Z.ai en la ruta ``/home/z/my-project/`` "
+                    "(Next.js + Bun + Python venv).\n\n"
+                    "## G0.B — Norte del proyecto\n\n"
+                    "(A definir por el Director en la primera sesión.)\n\n"
+                    "## G0.C — Acta de nacimiento\n\n"
+                    "__ACTA_NACIMIENTO__\n"
+                )
+                objetivo_path.write_text(plantilla, encoding="utf-8")
+                archivos_generados.append("03_objetivo_proyecto.md")
+                logger.info("v7.0 F5 (D1-A5) paso 4: 03_objetivo_proyecto.md creado con plantilla")
+            # Reemplazar placeholders (siempre, tanto si se creó como si ya existía).
+            SubprocesoArchivos._reemplazar_placeholders_objetivo(workspace_dir=ws)
+        except Exception as e:
+            logger.warning("v7.0 F5 (D1-A5) paso 4 falló: %s", e)
 
         return {
             "success": len(archivos_generados) > 0,
@@ -524,6 +496,29 @@ class SubprocesoArchivos:
         if not all_decisions:
             logger.info("v6.4 F1: no hay decisiones del LLM para consolidar (ni en _decisiones.txt ni en caches).")
             return 0
+
+        # D7: Deduplicación — revisar decisiones anteriores para no duplicarlas entre bloques.
+        # Muchas decisiones aparecen en varios bloques porque los temas se solapan.
+        # Deduplicamos por el texto de la decisión (sin el ALCANCE, que puede variar).
+        seen_decision_texts: set = set()
+        unique_decisions: list[str] = []
+        for dec in all_decisions:
+            # Extraer el texto de la decisión (antes del |)
+            dec_text = dec.split("|", 1)[0].strip() if "|" in dec else dec.strip()
+            # Quitar prefijo "DECISION:" para comparar
+            if dec_text.startswith("DECISION:"):
+                dec_text = dec_text[len("DECISION:"):].strip()
+            elif dec_text.startswith("DECISION :"):
+                dec_text = dec_text[len("DECISION :"):].strip()
+            # Normalizar para comparación: minúsculas, sin espacios extra
+            normalized = " ".join(dec_text.lower().split())
+            if normalized not in seen_decision_texts:
+                seen_decision_texts.add(normalized)
+                unique_decisions.append(dec)
+            else:
+                logger.debug("D7: decisión duplicada omitida: %s", dec_text[:60])
+        all_decisions = unique_decisions
+        logger.info("D7: %d decisiones únicas tras deduplicación (de %d totales)", len(all_decisions), len(unique_decisions) + (len(all_decisions) - len(unique_decisions)))
 
         # Generar el contenido de 02_decisiones_clave.md
         lines: list[str] = [
@@ -835,12 +830,7 @@ class SubprocesoArchivos:
             rf"({ _re_module.escape(marker) }[^\n]*\n\n)(.*?)(?=\n## |\Z)",
             _re_module.DOTALL,
         )
-        # v7.0 fix: reemplazo directo de string sin re.escape (evita \* \- \( etc.)
-        old_section = pattern.search(content)
-        if old_section:
-            new_content = content[:old_section.start()] + old_section.group(1) + sintesis_text + "\n" + content[old_section.end():]
-        else:
-            new_content = content
+        new_content = pattern.sub(rf"\g<1>{ _re_module.escape(sintesis_text) }\n", content)
 
         if new_content != content:
             estado_path.write_text(new_content, encoding="utf-8")
@@ -964,11 +954,6 @@ class SubprocesoArchivos:
         except Exception:
             pass
         content = content.replace("__ACTA_NACIMIENTO__", acta_nacimiento)
-        # C6: eliminar la nota residual del placeholder (ya fue reemplazado)
-        content = content.replace(
-            "_(El agente que contesta debe rellenar este placeholder con el primer exchange del proyecto y/o la primera decisión explícita o implícita de convertirlo en proyecto, leído desde el contexto del chat actual.)_",
-            "",
-        )
 
         if content != original_content:
             objetivo_path.write_text(content, encoding="utf-8")

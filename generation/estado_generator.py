@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
 # no cero, etc.
 _ERROR_PATTERNS = [
     # Stack traces: siempre son errores reales.
-    r"\bTraceback \(most recent call last\)",
+    r"\bTraceback\b",
     r"\bFile \"[^\"]+\", line \d+",
     # Errores con dos puntos seguidos de palabra (estructura de excepción).
     # v7.0 F5 iteración 3: excluir menciones tipo "ERROR: ver sección X" que
@@ -136,20 +136,19 @@ _ERROR_REGEX = re.compile("|".join(_ERROR_PATTERNS))
 #
 # La nueva versión usa una clase negada que excluye puntuaciónProblemática:
 # NO acepta: comillas (' "), llaves ({}), paréntesis (), corchetes ([]),
-# ni backticks (`). Sí acepta: /, _, ., -, alfanuméricos.
+# ni backticks (`), ni caracteres especiales (--, >, +, =, !, ?, ;, :).
+# D6: ampliación para excluir caracteres especiales que se pegan a los paths.
+# Sí acepta: /, _, ., -, alfanuméricos (pero no -- seguido de espacio).
 _FILE_PATH_PATTERN = re.compile(
     r"`?"  # backtick inicial opcional (no se captura)
     r"("
-    r"/home/z/[^'\"`{}\[\]()\\]+"
-    r"|/tmp/[^'\"`{}\[\]()\\]+"
-    r"|contexto_zai/[^'\"`{}\[\]()\\]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
-    # C4: paths de Windows con backslash simple (C:\Users\test.py)
-    # \\ en raw string = un backslash en regex. No excluir backslash de los
-    # caracteres del path porque Windows los usa como separador.
-    r"|[A-Za-z]:\\[^'\"`{}\[\]()]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
-    r"|mini-services/[^'\"`{}\[\]()\\]+\.(?:py|sh|ts)"
-    r"|src/[^'\"`{}\[\]()\\]+\.(?:ts|tsx|js|jsx)"
-    r"|download/[^'\"`{}\[\]()\\]+\.(?:md|json|zip|bat|ps1)"
+    r"/home/z/[^'\"`{}\[\]()\-+>=!?;:]+"
+    r"|/tmp/[^'\"`{}\[\]()\-+>=!?;:]+"
+    r"|contexto_zai/[^'\"`{}\[\]()\-+>=!?;:]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
+    r"|[A-Za-z]:\\[^'\"`{}\[\]()\-+>=!?;:]+\.(?:py|md|json|ts|tsx|sh|bat|ps1)"
+    r"|mini-services/[^'\"`{}\[\]()\-+>=!?;:]+\.(?:py|sh|ts)"
+    r"|src/[^'\"`{}\[\]()\-+>=!?;:]+\.(?:ts|tsx|js|jsx)"
+    r"|download/[^'\"`{}\[\]()\-+>=!?;:]+\.(?:md|json|zip|bat|ps1)"
     r")"
     r"`?"  # backtick final opcional (no se captura)
 )
@@ -996,22 +995,16 @@ no esperar a que el Director lo confirme.
         if not self._workspace_dir:
             return ""
         objetivo_path = self._workspace_dir / "03_objetivo_proyecto.md"
-        # v4.3 (F5): asegurar que el archivo existe antes de leerlo.
-        # Si no existe, se crea con la cascada documentación → bloques.
+        # D9: NO crear el 03_objetivo_proyecto.md automático si no existe.
+        # El paso 4 del subproceso de archivos lo crea con la plantilla con
+        # placeholders. Si lo creamos aquí automáticamente, el paso 4 después
+        # no lo sobrescribe porque ya existe, y queda con el objetivo genérico
+        # "Proyecto sobre: ..." en vez de la plantilla con placeholders reales.
         if not objetivo_path.exists():
-            self._asegurar_objetivo_proyecto()
+            logger.info("D9: 03_objetivo_proyecto.md no existe — el subproceso de archivos lo creará")
+            return "_(objetivo del proyecto pendiente de generación por el subproceso de archivos)_"
         try:
-            contenido = objetivo_path.read_text(encoding="utf-8").strip()
-            # C3: quitar headers del objetivo para no duplicar G0.A en el ensamblado.
-            # El _assemble ya crea "## G0.A — Objetivo del proyecto", así que si el
-            # archivo 03 tiene su propio "## G0.A" se duplica. Quitamos todos los
-            # headers que empiecen con ## G0. o # Objetivo.
-            import re as _re_g0a
-            contenido = _re_g0a.sub(r"^## G0\.[A-Z].*$", "", contenido, flags=_re_g0a.MULTILINE)
-            contenido = _re_g0a.sub(r"^# Objetivo.*$", "", contenido, flags=_re_g0a.MULTILINE)
-            # Quitar líneas vacías sobrantes al inicio tras quitar headers.
-            contenido = contenido.lstrip("\n").strip()
-            return contenido
+            return objetivo_path.read_text(encoding="utf-8").strip()
         except Exception as e:
             logger.warning("G0.A: no se pudo leer 03_objetivo_proyecto.md: %s", e)
             return f"_(error leyendo objetivo: {e})_"
