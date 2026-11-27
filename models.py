@@ -193,14 +193,21 @@ class ThematicBlock(BaseModel):
 
     @property
     def period_str(self) -> str:
+        # v7.1 F2: calcular el período con min()/max() sobre TODOS los exchanges
+        # del bloque (sin asumir orden ascendente) y formatear con fecha+hora.
+        # Antes (v6.x): tomaba exchanges[0] y exchanges[-1] y descartaba la hora,
+        # lo que producía headers como ``2026-11-03 -> 2026-11-03`` aún cuando
+        # el bloque abarcaba varias horas (o días). Ahora el período cubre
+        # desde el primer ``start_datetime`` hasta el último ``end_datetime``
+        # sin depender del orden de inserción.
         if not self.exchanges:
             return "sin datos"
-        first = self.exchanges[0].start_datetime
-        last = self.exchanges[-1].end_datetime
-        # v6.4 F5: si last < first (por timestamps inválidos), usar first como fallback
-        if last < first:
-            last = first
-        return f"{first.strftime('%Y-%m-%d')} -> {last.strftime('%Y-%m-%d')}"
+        first = min(ex.start_datetime for ex in self.exchanges)
+        last = max(ex.end_datetime for ex in self.exchanges)
+        # Cobertura por construcción: si ends contiene algún 0/inválido que
+        # cayera antes de starts, max(ends) >= min(starts) en la práctica
+        # porque Exchange.end_datetime ya hace fallback a start_datetime.
+        return f"{first.strftime('%Y-%m-%d %H:%M')} -> {last.strftime('%Y-%m-%d %H:%M')}"
 
     @property
     def full_filename(self) -> str:
@@ -781,12 +788,27 @@ class SubagentTask(BaseModel):
             "decisiones", "subdivider.nombre").
         prompt: Prompt completo para enviar al subagente.
         context: Metadatos para aplicar la respuesta (ej: section, tema_actual).
+        tipo: v7.1 F2/AUD.3 — categoría de la tarea que enruta al módulo
+            responsable cuando la tarea se publica desde la auditoría
+            (``auditar_workspace_completo``) o desde el bucle D7
+            (``despachar_por_tipo``). Categorías conciliadas (lista no
+            exhaustiva, ver ``TIPO_A_MODULO`` en ``pipeline_d7.py``):
+            ``"auxiliar_bloque"``, ``"resumen_bloque"``,
+            ``"header_bloque"``, ``"contenido_bloque"``, ``"metadata"``,
+            ``"processed_blocks"``, ``"archivo_recuperacion_00"``…
+            ``"_03"``, ``"objetivo_proyecto"``, ``"seccion_estado"``.
+            Default ``""`` para no romper compatibilidad con tareas
+            existentes (v6.x no usaban este campo).
     """
 
     task_id: str
     purpose: str = ""
     prompt: str = ""
     context: dict = Field(default_factory=dict)
+    # v7.1 F2/AUD.3: campo opcional que enruta la tarea al módulo
+    # responsable cuando se publica desde la auditoría. Default "" para
+    # preservar compatibilidad con tareas v6.x (que no tenían tipo).
+    tipo: str = ""
 
 
 class SubagentResponse(BaseModel):

@@ -266,6 +266,293 @@ Responde SOLO con JSON:
             logger.warning("v6.20 F3 Crítico: %s error (%s) — aceptando", block_id, e)
             return True, "Formato OK (Crítico omitido)"
 
+    # ============================================================
+    # v7.1 F2: validadores + ejecutar_subagente_generacion
+    # ------------------------------------------------------------
+    # Cuatro validadores para las tareas de generación genérica que
+    # el W3 expone desde v7.1 (objetivo del proyecto, D4, A3, A4).
+    # Son ``@staticmethod`` (paridad con ``_validar_resumen_w3`` y
+    # ``_validar_resumen_critico_subagente``). ``ejecutar_subagente_generacion``
+    # es la entrada genérica que el ``EstadoGenerator`` usa para F5/F6.
+    # ============================================================
+
+    @staticmethod
+    def _validar_objetivo_critico(texto: str) -> tuple[bool, str]:
+        """v7.1 F2/F5: Crítico para el objetivo del proyecto generado vía W3.
+
+        Valida:
+        1. Rechazo explícito del placeholder legacy ``"Proyecto sobre:"``.
+        2. Presencia de las 4 secciones esperadas: ``G0.A``, ``G0.B``,
+           ``G0.C`` y un procedimiento de recuperación (cualquiera de
+           las palabras ``recuperarte``/``recuperación``/``procedimiento``).
+        3. Longitud mínima razonable: ``OBJETIVO_MIN_CHARS`` de
+           ``config.py`` si existe; si no, 300 chars.
+
+        Devuelve ``(ok, motivo)``.
+        """
+        if not texto or not texto.strip():
+            return False, "objetivo vacío"
+        r = texto.strip()
+        # 1. Rechazo explícito del placeholder legacy.
+        if "Proyecto sobre:" in r:
+            return False, "contiene placeholder legacy 'Proyecto sobre:'"
+        # 2. Presencia de las 4 secciones.
+        marcadores = ["G0.A", "G0.B", "G0.C"]
+        faltan = [m for m in marcadores if m not in r]
+        if faltan:
+            return False, f"faltan secciones: {faltan}"
+        # Procedimiento de recuperación.
+        tiene_proc = any(p in r.lower() for p in (
+            "recuperarte", "recuperación", "recuperacion", "procedimiento",
+        ))
+        if not tiene_proc:
+            return False, "falta procedimiento de recuperación"
+        # 3. Longitud mínima (sin hardcoding: de config.py si existe).
+        try:
+            from contexto_zai.config import OBJETIVO_MIN_CHARS as _MIN
+        except ImportError:
+            _MIN = 300
+        if len(r) < _MIN:
+            return False, f"longitud {len(r)} < {_MIN} (muy corto)"
+        return True, "objetivo cumple G0.A/G0.B/G0.C/procedimiento"
+
+    @staticmethod
+    def _validar_d4_critico(texto: str) -> tuple[bool, str]:
+        """v7.1 F2/F6: Crítico para la sección D4 (restricciones) vía W3.
+
+        Valida:
+        1. Rechazo explícito del mensaje ``"No se identifican restricciones explícitas"``
+           (placeholder del regex histórico).
+        2. Al menos una línea que empiece con ``-`` (lista de restricciones)
+           o un párrafo descriptivo de >= 80 chars.
+        """
+        if not texto or not texto.strip():
+            return False, "D4 vacío"
+        r = texto.strip()
+        # 1. Rechazo del placeholder del regex histórico.
+        if "No se identifican restricciones explícitas" in r:
+            return False, "contiene placeholder 'No se identifican restricciones explícitas'"
+        # 2. Lista con guiones o párrafo >= 80 chars.
+        tiene_lista = any(line.lstrip().startswith("-") for line in r.splitlines())
+        parrafo_largo = any(len(p.strip()) >= 80 for p in r.split("\n\n"))
+        if not (tiene_lista or parrafo_largo):
+            return False, "sin lista (líneas con '-') ni párrafo >= 80 chars"
+        return True, "D4 tiene restricciones reales"
+
+    @staticmethod
+    def _validar_a3_critico(texto: str) -> tuple[bool, str]:
+        """v7.1 F2/F6: Crítico para la sección A3 (errores abiertos) vía W3.
+
+        Valida:
+        1. Rechazo explícito del mensaje ``"No se identifican errores abiertos"``
+           (placeholder del regex histórico).
+        2. Al menos una línea que empiece con ``-`` (lista de errores)
+           o un párrafo descriptivo de >= 80 chars.
+        """
+        if not texto or not texto.strip():
+            return False, "A3 vacío"
+        r = texto.strip()
+        # 1. Rechazo del placeholder del regex histórico.
+        if "No se identifican errores abiertos" in r:
+            return False, "contiene placeholder 'No se identifican errores abiertos'"
+        # 2. Lista con guiones o párrafo >= 80 chars.
+        tiene_lista = any(line.lstrip().startswith("-") for line in r.splitlines())
+        parrafo_largo = any(len(p.strip()) >= 80 for p in r.split("\n\n"))
+        if not (tiene_lista or parrafo_largo):
+            return False, "sin lista (líneas con '-') ni párrafo >= 80 chars"
+        return True, "A3 tiene errores reales"
+
+    @staticmethod
+    def _validar_a4_critico(texto: str) -> tuple[bool, str]:
+        """v7.1 F2/F6: Crítico para la sección A4 (siguiente paso) vía W3.
+
+        Valida:
+        1. Rechazo explícito del mensaje ``"El agente respondió al último intercambio"``
+           (placeholder del fallback heurístico histórico).
+        2. Al menos un párrafo de >= 80 chars describiendo el siguiente paso.
+        """
+        if not texto or not texto.strip():
+            return False, "A4 vacío"
+        r = texto.strip()
+        # 1. Rechazo del placeholder del fallback heurístico.
+        if "El agente respondió al último intercambio" in r:
+            return False, "contiene placeholder 'El agente respondió al último intercambio'"
+        # 2. Al menos un párrafo >= 80 chars describiendo el siguiente paso.
+        parrafo_largo = any(len(p.strip()) >= 80 for p in r.split("\n\n"))
+        if not parrafo_largo:
+            # También aceptar un único bloque largo si no hay doble newline.
+            if len(r) >= 80:
+                return True, "A4 tiene párrafo >= 80 chars"
+            return False, "sin párrafo >= 80 chars describiendo el siguiente paso"
+        return True, "A4 tiene párrafo >= 80 chars"
+
+    @staticmethod
+    def ejecutar_subagente_generacion(
+        prompt: str,
+        contexto: dict,
+        tipo_validador: str,
+        llm: Optional[PlatformLLM] = None,
+    ) -> str:
+        """v7.1 F2: entrada genérica del W3 para tareas de generación.
+
+        Es el método público que el ``EstadoGenerator`` (F5/F6) invoca
+        cuando necesita generar texto con LLM y validarlo con el Crítico.
+        Reutiliza la infraestructura existente de la cascada (resolución
+        del LLM, ``llm.call()`` vía el proxy, ``PROXY_LLM_TIMEOUT``) sin
+        tocar ``_ciclo_w3`` ni ``PROMPT_FUSIONADO_W1W2W3`` (factor 6).
+
+        Flujo:
+        1. Selecciona el validador por ``tipo_validador`` (uno de:
+           ``"objetivo"``, ``"d4"``, ``"a3"``, ``"a4"``). Si no existe,
+           lanza ``ValueError``.
+        2. Resuelve el LLM: si ``llm`` es ``None``, construye ``ZaiLLM()``
+           (default Zai).
+        3. Bucle interno idéntico al de ``_ciclo_w3`` (hasta
+           ``MAX_ITER_W3`` intentos):
+           a. Llama a ``llm.call(prompt)`` (vía el proxy, como hace
+              ``_llamar_cascada_llm``).
+           b. El Crítico valida la respuesta con ``_validar_<tipo>_critico``.
+           c. Si el Crítico aprueba, devuelve el texto validado.
+           d. Si el Crítico rechaza, reinterpola el feedback en el prompt
+              para el próximo intento (igual que ``_ciclo_w3`` hace con
+              el RESUMEN).
+        4. Si agota ``MAX_ITER_W3``, devuelve la última respuesta aunque no
+           haya validado (con warning en log). El llamador decide qué hacer
+           con el texto.
+
+        Args:
+            prompt: Prompt completo ya interpolado (la plantilla
+                ``PROMPT_*`` con los marcadores reemplazados por el
+                llamador). El W3 NO reinterpola ``contexto`` en el prompt
+                — el llamador lo hace antes de invocar este método.
+            contexto: Metadatos para logging y trazabilidad (workspace_dir,
+                tema, resumenes, etc.). No se interpola en el prompt.
+            tipo_validador: Clave del validador a usar (``"objetivo"``,
+                ``"d4"``, ``"a3"``, ``"a4"``).
+            llm: Implementación ``PlatformLLM`` opcional. Si es ``None``,
+                se construye ``ZaiLLM()`` (default Zai).
+
+        Returns:
+            Texto generado por el LLM y validado por el Crítico. Si
+            ``MAX_ITER_W3`` se agota, devuelve la última respuesta sin
+            validar (con warning en log).
+
+        Raises:
+            ValueError: si ``tipo_validador`` no es uno de los válidos.
+            Exception: si no se puede construir el LLM default y ``llm``
+                es ``None``.
+        """
+        from contexto_zai.config import MAX_ITER_W3 as _MAX_ITER_W3
+
+        # 1. Selector de validador.
+        validadores = {
+            "objetivo": CicloW3._validar_objetivo_critico,
+            "d4": CicloW3._validar_d4_critico,
+            "a3": CicloW3._validar_a3_critico,
+            "a4": CicloW3._validar_a4_critico,
+        }
+        if tipo_validador not in validadores:
+            raise ValueError(
+                f"tipo_validador desconocido: {tipo_validador!r}. "
+                f"Válidos: {sorted(validadores)}"
+            )
+        validar = validadores[tipo_validador]
+
+        # 2. Resolver el LLM. Default ZaiLLM() si no se inyecta.
+        if llm is None:
+            try:
+                from contexto_zai.platforms.zai.zai_llm import ZaiLLM
+                llm = ZaiLLM()
+            except Exception as e:
+                logger.warning(
+                    "v7.1 W3gen: no se pudo construir ZaiLLM default: %s", e,
+                )
+                raise
+
+        # Timeout (mismo patrón que _llamar_cascada_llm).
+        try:
+            from contexto_zai.config import PROXY_LLM_TIMEOUT
+        except ImportError:
+            try:
+                from contexto_zai.config import PROXY_ZAI_TIMEOUT as PROXY_LLM_TIMEOUT
+            except ImportError:
+                PROXY_LLM_TIMEOUT = 10
+
+        # 3. Bucle interno (idéntico en estructura al de _ciclo_w3).
+        prompt_actual = prompt
+        ultima_respuesta = ""
+        for intento in range(1, _MAX_ITER_W3 + 1):
+            try:
+                proxy_resp = llm.call(
+                    messages=[{"role": "user", "content": prompt_actual}],
+                    model=llm.get_default_model_heavy(),
+                    max_tokens=3000,
+                    temperature=0.3,
+                    timeout=PROXY_LLM_TIMEOUT * 6,
+                )
+                content_text = (
+                    proxy_resp.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+                content_text = (content_text or "").strip()
+                # Limpiar fences markdown.
+                if content_text.startswith("```markdown"):
+                    content_text = content_text[len("```markdown"):]
+                elif content_text.startswith("```json"):
+                    content_text = content_text[len("```json"):]
+                elif content_text.startswith("```"):
+                    content_text = content_text[3:]
+                if content_text.endswith("```"):
+                    content_text = content_text[:-3]
+                content_text = content_text.strip()
+            except Exception as e:
+                logger.warning(
+                    "v7.1 W3gen: %s intento %d falló (llamada LLM): %s",
+                    tipo_validador, intento, e,
+                )
+                continue
+
+            ultima_respuesta = content_text
+            ok, motivo = validar(content_text)
+            if ok:
+                logger.info(
+                    "v7.1 W3gen: %s OK en intento %d (%s)",
+                    tipo_validador, intento, motivo[:80],
+                )
+                return content_text
+
+            # El Crítico rechazó — reinterpolar feedback en el prompt.
+            logger.info(
+                "v7.1 W3gen: %s intento %d rechazado (%s) — reintentando con feedback",
+                tipo_validador, intento, motivo[:80],
+            )
+            feedback = (
+                f"\n\n## FEEDBACK DEL CRÍTICO (intento {intento} falló)\n\n"
+                f"La respuesta anterior no cumplió: {motivo}\n"
+                f"Genera de nuevo cumpliendo los criterios del prompt.\n"
+            )
+            if "FEEDBACK DEL CRÍTICO" not in prompt_actual:
+                prompt_actual = prompt_actual + feedback
+            else:
+                # Reemplazar el feedback anterior (igual que _ciclo_w3).
+                import re as _re_fb
+                cleaned = _re_fb.sub(
+                    r"\n\n## FEEDBACK DEL CRÍTICO.*$",
+                    "",
+                    prompt_actual,
+                    flags=_re_fb.DOTALL,
+                ).strip()
+                prompt_actual = cleaned + feedback
+
+        # 4. Agotado MAX_ITER_W3 → devolver última respuesta con warning.
+        logger.warning(
+            "v7.1 W3gen: %s agotado tras %d intentos. Devolviendo última "
+            "respuesta (sin validar). El llamador decide qué hacer.",
+            tipo_validador, _MAX_ITER_W3,
+        )
+        return ultima_respuesta
+
     @staticmethod
     def _descubrir_bloques_incompletos(workspace_dir: Path | str) -> list:
         """v6.17 F1 (criterio 7): función única que detecta bloques incompletos.
@@ -1057,3 +1344,142 @@ Responde SOLO con JSON:
             )
 
         return resultado
+
+
+# ============================================================
+# v7.1 F2: prompts para ejecutar_subagente_generacion
+# ------------------------------------------------------------
+# Cuatro constantes de módulo (NO strings inline) que usa el
+# ``EstadoGenerator`` (F5/F6) para invocar al W3 con tareas de
+# generación genérica. El llamador interpola los marcadores
+# (``{resumenes}``, ``{tema}``, ``{intercambios}``) antes de
+# pasar el prompt a ``CicloW3.ejecutar_subagente_generacion``.
+# ============================================================
+
+PROMPT_OBJETIVO_DESDE_RESUMENES = """Eres un subagente del proceso contexto_zai. Tu tarea es redactar el archivo ``03_objetivo_proyecto.md`` del workspace a partir de los RESUMENES de los bloques temáticos existentes.
+
+## Estructura obligatoria (4 secciones)
+
+El archivo debe tener EXACTAMENTE estas 4 secciones en este orden:
+
+1. ``## G0.A — Quién eres``: identidad del agente (nombre, modelo, sandbox, Director). Si los datos no aparecen en los RESUMENES, deja placeholders ``__MODELO_AGENTE__``, ``__DIRECTOR__``, ``__EMAIL__``.
+2. ``## G0.B — Norte del proyecto``: el norte/objetivo del proyecto, derivado de los temas y decisiones mencionados en los RESUMENES.
+3. ``## G0.C — Qué te pasó y cómo recuperarte``: acta de nacimiento del proyecto (cómo empezó, según los RESUMENES) + evolución cronológica + procedimiento de recuperación.
+4. **Procedimiento de recuperación** (dentro de G0.C o como sub-sección): pasos numerados que el agente debe seguir si pierde contexto (leer 03, leer 00, leer 01, lanzar subagente, leer 02).
+
+## Restricciones
+
+- NO uses el placeholder legacy ``Proyecto sobre:`` — ese formato está prohibido en v7.1.
+- NO inventes información que no esté en los RESUMENES. Si un dato falta, deja un placeholder explícito.
+- El archivo debe tener al menos 300 caracteres.
+- Escribe en segunda persona ("sos", "trabajás", "tu tarea") como estilo del agente.
+
+## RESUMENES de los bloques
+
+{resumenes}
+
+## Tu respuesta
+
+Redacta el contenido completo de ``03_objetivo_proyecto.md`` (sin fences markdown, sin prefijos). Empieza con ``# Objetivo del Proyecto — Contexto Zai``.
+"""
+
+
+PROMPT_D4_RESTRICCIONES = """Eres un subagente del proceso contexto_zai. Tu tarea es identificar las restricciones activas del Director sobre el tema activo, leyendo los intercambios recientes.
+
+## Tema activo
+
+{tema}
+
+## Intercambios recientes (Director + Agente)
+
+{intercambios}
+
+## Tu tarea
+
+Identifica las restricciones EXPLÍCITAS que el Director ha declarado en estos intercambios. Una restricción es una afirmación del Director que:
+
+- **Prohíbe** algo (``no uses``, ``prohibido``, ``nunca``).
+- **Exige** algo (``obligatorio``, ``siempre``, ``usá solo``).
+- **Prefiere** algo (``preferí``, ``mejor``, ``en lo posible``).
+
+NO incluyas:
+
+- Descripciones de actividades técnicas del agente (esas son implementaciones, no restricciones del Director).
+- El mensaje placeholder ``No se identifican restricciones explícitas en el tema activo.`` (ese es el fallback del regex histórico — si NO hay restricciones, generá una lista vacía explicando que el tema activo no tiene restricciones explícitas pero sí implícitas derivadas del contexto).
+
+## Formato de salida
+
+Una lista con guiones (``-``), una restricción por línea, con el formato:
+
+- **[Prohíbe/Exige/Prefiere]** descripción de la restricción (mencionando el intercambio donde se declaró).
+
+Si hay 5+ restricciones, listá las 5 más importantes. Si no hay ninguna explícita, escribí un párrafo (>= 80 chars) explicando qué restricciones implícitas se derivan del contexto.
+
+NO uses fences markdown. NO uses el placeholder ``No se identifican restricciones explícitas``.
+"""
+
+
+PROMPT_A3_ERRORES = """Eres un subagente del proceso contexto_zai. Tu tarea es identificar los errores técnicos reales discutidos en los intercambios recientes.
+
+## Intercambios recientes (Director + Agente)
+
+{intercambios}
+
+## Tu tarea
+
+Identifica los errores TÉCNICOS REALES discutidos. Un error técnico real es:
+
+- Un **stack trace** (``Traceback``, ``File "...", line N``, ``most recent call last``).
+- Una **excepción** lanzada (``Error:``, ``Exception:``, ``KeyError:``, etc.) seguida de un mensaje técnico.
+- Un **fallo de infraestructura** (timeout del worker, caída del proxy, 429, etc.).
+- Un **bloqueo** (deadlock, proceso colgado, etc.).
+
+NO incluyas:
+
+- Menciones de errores en conversación (``hablamos del error del timeout``) — solo errores que realmente ocurrieron.
+- Errores ya resueltos sin impacto actual (marcarlos como ``[histórico YYYY-MM-DD]`` si aparecen pero ya están resueltos).
+- El mensaje placeholder ``No se identifican errores abiertos en intercambios recientes.`` (ese es el fallback del regex histórico).
+
+## Formato de salida
+
+Una lista con guiones (``-``), un error por línea, con el formato:
+
+- **{{tipo_de_error}}** [histórico YYYY-MM-DD si aplica]
+  Contexto: las 200 chars posteriores al error (truncadas si exceden).
+
+Si no hay errores reales, escribí un párrafo (>= 80 chars) explicando que el tema activo no tiene errores técnicos abiertos, mencionando qué tipo de errores se descartaron y por qué.
+
+NO uses fences markdown. NO uses el placeholder ``No se identifican errores abiertos``.
+"""
+
+
+PROMPT_A4_INSTRUCCIONES = """Eres un subagente del proceso contexto_zai. Tu tarea es identificar las instrucciones emitidas por el Director en los intercambios recientes y derivar cuál sería el siguiente paso lógico.
+
+## Tema activo
+
+{tema}
+
+## Intercambios recientes (Director + Agente)
+
+{intercambios}
+
+## Tu tarea
+
+1. Identificá las **instrucciones emitidas por el Director** en estos intercambios (directivas, pedidos, tareas asignadas).
+2. Para cada instrucción, verificá si el agente ya respondió o si quedó pendiente.
+3. Derivá cuál sería el **siguiente paso lógico** que el agente debería ejecutar al retomar el contexto.
+
+NO uses el placeholder ``El agente respondió al último intercambio...`` (ese es el fallback heurístico histórico). Si el agente efectivamente respondió al último intercambio, explicá qué debería hacer ahora (verificar, esperar siguiente instrucción, continuar con la próxima tarea del tema, etc.).
+
+## Formato de salida
+
+Un párrafo (o varios) describiendo:
+
+1. Las instrucciones del Director detectadas (con el Exchange donde aparecen).
+2. El estado de cada una (respondida/pendiente).
+3. El siguiente paso lógico recomendado, con justificación.
+
+El párrafo principal debe tener al menos 80 caracteres. Escribe en segunda persona (``deberías``, ``te conviene``).
+
+NO uses fences markdown. NO uses el placeholder ``El agente respondió al último intercambio``.
+"""

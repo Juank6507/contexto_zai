@@ -31,6 +31,126 @@ from contexto_zai.pipeline_auditoria import AuditorWorkspace
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# v7.1 F6/AUD.4: tabla de enrutamiento tipo → módulo
+# ------------------------------------------------------------
+# Mappea cada ``tipo`` de pending_task (generada por
+# ``AuditorWorkspace.auditar_workspace_completo``) al módulo
+# responsable de corregirla. El bucle D7 usa esta tabla vía
+# ``despachar_por_tipo`` para enrutar las pending_tasks antes
+# de caer al comportamiento default de "construir prompt
+# corregido de enriquecimiento".
+# ============================================================
+
+TIPO_A_MODULO = {
+    "auxiliar_bloque": "CicloW3",                 # re-enriquecer el bloque
+    "resumen_bloque": "CicloW3",                  # re-enriquecer el bloque
+    "header_bloque": "SubprocesoArchivos",        # regenerar bloque físico
+    "contenido_bloque": "SubprocesoArchivos",     # regenerar bloque físico
+    "metadata": "SubprocesoArchivos",             # regenerar metadata + índice
+    "processed_blocks": "AuditorWorkspace.sincronizar_registro",
+    "archivo_recuperacion_00": "SubprocesoArchivos",  # regenerar 00
+    "archivo_recuperacion_01": "SubprocesoArchivos",  # regenerar 01
+    "archivo_recuperacion_02": "SubprocesoArchivos",  # regenerar 02
+    "archivo_recuperacion_03": "SubprocesoArchivos",  # regenerar 03 (F5)
+    "objetivo_proyecto": "SubprocesoArchivos",    # → W3 (F5)
+    "seccion_estado": "SubprocesoArchivos",       # → W3 (F6)
+}
+
+
+def despachar_por_tipo(pending_task, workspace_dir: Path | str) -> bool:
+    """v7.1 F6/AUD.4: despacha una pending_task al módulo responsable por ``tipo``.
+
+    Lee ``pending_task.tipo``, mira ``TIPO_A_MODULO[tipo]``, e invoca al
+    módulo responsable. Sin ``tipo``, no se despacha (invariante f).
+
+    El D7 llama a esta función ANTES de caer al comportamiento default
+    de "construir prompt corregido de enriquecimiento". Las pending_tasks
+    sin ``tipo`` (las existentes de v7.0) siguen el comportamiento
+    actual (backward compat).
+
+    P1 conciliado: la auditoría detecta, no ejecuta. El D7 SÍ ejecuta
+    (es el bucle de reintento). ``despachar_por_tipo`` es el punto
+    donde el D7 invoca al módulo responsable de cada tipo.
+
+    Args:
+        pending_task: ``SubagentTask`` con campo ``tipo`` (y ``context``
+            con ``bloque_id`` si aplica).
+        workspace_dir: Directorio del workspace.
+
+    Returns:
+        True si despachó al módulo responsable. False si la tarea no
+        tiene ``tipo`` o el tipo no está en ``TIPO_A_MODULO`` (cae al
+        comportamiento default del D7).
+    """
+    tipo = getattr(pending_task, "tipo", "") or ""
+    if not tipo:
+        return False
+    modulo = TIPO_A_MODULO.get(tipo)
+    if not modulo:
+        logger.warning("v7.1 F6 D7: tipo %r no está en TIPO_A_MODULO — no se despacha.", tipo)
+        return False
+
+    ws = Path(workspace_dir)
+    ctx = getattr(pending_task, "context", {}) or {}
+    bloque_id = ctx.get("bloque_id", "")
+
+    logger.info(
+        "v7.1 F6 D7: despachando pending_task %s a módulo %s (tipo=%s, bloque=%s)",
+        getattr(pending_task, "task_id", "?"), modulo, tipo, bloque_id or "(n/a)",
+    )
+
+    # Despachar al módulo responsable.
+    if modulo == "AuditorWorkspace.sincronizar_registro":
+        # processed_blocks: sincronizar el registro localmente (sin LLM).
+        AuditorWorkspace.sincronizar_registro(ws)
+        return True
+
+    if modulo == "CicloW3":
+        # resumen_bloque / auxiliar_bloque: re-enriquecer el bloque vía W3.
+        # El bloque_id viene en el context de la pending_task.
+        if not bloque_id:
+            logger.warning(
+                "v7.1 F6 D7: pending_task %s tipo=%s sin bloque_id — no se despacha.",
+                getattr(pending_task, "task_id", "?"), tipo,
+            )
+            return False
+        from contexto_zai.pipeline_w3 import CicloW3
+        from contexto_zai.models import ThematicBlock
+        bloque = ThematicBlock(filename=f"{bloque_id}.md")
+        try:
+            completado, _ = CicloW3._ciclo_w3(bloque, ws)
+            return bool(completado)
+        except Exception as e:
+            logger.warning(
+                "v7.1 F6 D7: CicloW3._ciclo_w3 falló para %s: %s — cayendo a default.",
+                bloque_id, e,
+            )
+            return False
+
+    if modulo == "SubprocesoArchivos":
+        # header_bloque / contenido_bloque / metadata / archivo_recuperacion_*
+        # / objetivo_proyecto / seccion_estado: regenerar vía SubprocesoArchivos.
+        # ``_generar_archivos_recuperacion`` regenera los 4 archivos (00-03) y
+        # invoca al W3 vía EstadoGenerator para D4/A3/A4 y objetivo (F5/F6).
+        from contexto_zai.pipeline_archivos import SubprocesoArchivos
+        try:
+            SubprocesoArchivos._generar_archivos_recuperacion(workspace_dir=ws)
+            return True
+        except Exception as e:
+            logger.warning(
+                "v7.1 F6 D7: SubprocesoArchivos._generar_archivos_recuperacion falló: %s — cayendo a default.",
+                e,
+            )
+            return False
+
+    logger.warning(
+        "v7.1 F6 D7: módulo %r no implementado en despachar_por_tipo — no se despacha.",
+        modulo,
+    )
+    return False
+
+
 class CicloD7:
     """v6.17 F12: Bucle D7 de completitud (refactor OOP v6.11 F5).
 
@@ -104,6 +224,32 @@ class CicloD7:
         ws_path = Path(workspace_dir)
         if not ws_path.exists():
             return result
+
+        # v7.1 F6/AUD.4: despachar pending_tasks con `tipo` al módulo
+        # responsable ANTES de la auditoría de bloques. Las pending_tasks
+        # con `tipo` vienen de ``AuditorWorkspace.auditar_workspace_completo``
+        # (no de ``auditar_bloques``). Sin `tipo`, caen al comportamiento
+        # default (construir prompt corregido de enriquecimiento).
+        if result.pending_tasks:
+            remaining_tasks: list = []
+            for task in result.pending_tasks:
+                tipo = getattr(task, "tipo", "") or ""
+                if tipo:
+                    try:
+                        despachado = despachar_por_tipo(task, workspace_dir)
+                        if despachado:
+                            logger.info(
+                                "v7.1 F6 D7: pending_task %s despachada por tipo=%s",
+                                getattr(task, "task_id", "?"), tipo,
+                            )
+                            continue
+                    except Exception as e:
+                        logger.warning(
+                            "v7.1 F6 D7: despachar_por_tipo falló para %s (tipo=%s): %s — cae a default.",
+                            getattr(task, "task_id", "?"), tipo, e,
+                        )
+                remaining_tasks.append(task)
+            result.pending_tasks = remaining_tasks
 
         # 1. Detectar bloques incompletos físicamente (post P14-P16).
         audit = AuditorWorkspace.auditar_bloques(workspace_dir)

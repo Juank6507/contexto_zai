@@ -399,25 +399,36 @@ class EstadoGenerator:
             recent: Lista de intercambios recientes.
             tema_actual: Tema activo (para filtrar intercambios del tema).
         """
-        # F4 v4.2: si hay launcher (que ahora es un ProcesadorIntercambios),
-        # usarlo para preparar la tarea de D4 vía el Orquestador.
-        # El archivo se escribe con regex (abajo), y se actualiza con la respuesta
-        # del subagente cuando el agente llama a CicloW3.collect_responses().
-        if self._launcher is not None:
-            # Filtrar intercambios del tema activo (o usar recent si no hay match)
-            intercambios_tema = [ex for ex in recent if ex.topic == tema_actual] if tema_actual else recent
-            if not intercambios_tema:
-                intercambios_tema = recent
-            # F4: llamar a ProcesadorIntercambios.procesar(RESTRICCIONES_TEMA, ...)
+        # F4 v4.2 → v7.1 F6: si hay launcher, invocar al W3 (cascada +
+        # Crítico) para generar D4 con restricciones reales extraídas por
+        # LLM. Si falla, caer al regex histórico (backward compatible).
+        # El launcher es el signal de que el subproceso de archivos está
+        # coordinado y el W3 está disponible (P2/F5).
+        if self._launcher is not None and recent:
             try:
-                self._launcher.procesar(
-                    modo="RESTRICCIONES_TEMA",
-                    intercambios=intercambios_tema,
-                    context={"section": "D4", "tema_actual": tema_actual},
-                    task_id_suffix="d4",
+                from contexto_zai.pipeline_w3 import CicloW3, PROMPT_D4_RESTRICCIONES
+                recent_d4 = recent[-15:] if len(recent) > 15 else recent
+                intercambios_str = "\n\n".join(
+                    f"[Director]: {ex.director_msg.content[:2000]}\n"
+                    f"[Agente]: {ex.agent_msgs[-1].content[:2000] if ex.agent_msgs else ''}"
+                    for ex in recent_d4
+                )
+                prompt_final = PROMPT_D4_RESTRICCIONES.format(
+                    tema=tema_actual or "(sin tema activo)",
+                    intercambios=intercambios_str,
+                )
+                return CicloW3.ejecutar_subagente_generacion(
+                    prompt=prompt_final,
+                    contexto={
+                        "tema": tema_actual,
+                        "workspace_dir": str(self._workspace_dir) if self._workspace_dir else "",
+                    },
+                    tipo_validador="d4",
+                    llm=getattr(self, "_llm", None),
                 )
             except Exception as e:
-                logger.warning("F4: no se pudo preparar tarea D4: %s", e)
+                logger.warning("v7.1 F6 D4: invocación W3 falló, cayendo a regex: %s", e)
+                # Caer al regex histórico (código existente abajo)
 
         # Regex histórico (backward compatible, sin launcher o subagente no coordinado aún)
         restrictions: list[str] = []
@@ -647,7 +658,35 @@ class EstadoGenerator:
         el exchange donde aparecen tiene > 7 días de antigüedad respecto al
         último timestamp del workspace. Los RESUMENES de los bloques NO se
         censuran (preservan contenido histórico tal cual).
+
+        v7.1 F6: si hay launcher, invocar al W3 (cascada + Crítico) para
+        extraer errores reales con LLM en vez del regex. Si falla, caer
+        al regex histórico (backward compatible). ``_ERROR_PATTERNS`` y
+        ``_ERROR_REGEX`` se preservan como fallback.
         """
+        # v7.1 F6: rama W3 si hay launcher coordinado.
+        if self._launcher is not None and recent:
+            try:
+                from contexto_zai.pipeline_w3 import CicloW3, PROMPT_A3_ERRORES
+                recent_a3 = recent[-15:] if len(recent) > 15 else recent
+                intercambios_str = "\n\n".join(
+                    f"[Exchange {ex.id}] [Director]: {ex.director_msg.content[:1500]}\n"
+                    f"[Agente]: {ex.agent_msgs[-1].content[:1500] if ex.agent_msgs else ''}"
+                    for ex in recent_a3
+                )
+                prompt_final = PROMPT_A3_ERRORES.format(intercambios=intercambios_str)
+                return CicloW3.ejecutar_subagente_generacion(
+                    prompt=prompt_final,
+                    contexto={
+                        "workspace_dir": str(self._workspace_dir) if self._workspace_dir else "",
+                    },
+                    tipo_validador="a3",
+                    llm=getattr(self, "_llm", None),
+                )
+            except Exception as e:
+                logger.warning("v7.1 F6 A3: invocación W3 falló, cayendo a regex: %s", e)
+                # Caer al regex histórico (código existente abajo)
+
         # v6.19 F3: calcular timestamp del workspace para detectar históricos.
         workspace_ts = self._obtener_timestamp_workspace()
         historico_umbral_seg = 7 * 24 * 3600  # 7 días en segundos
@@ -819,10 +858,42 @@ class EstadoGenerator:
         Analiza los últimos intercambios para detectar qué quedó pendiente,
         en vez de repetir "continuar con la instrucción del Director".
 
+        v7.1 F6: si hay launcher, invocar al W3 (cascada + Crítico) para
+        derivar el siguiente paso con LLM en vez de las heurísticas. Si
+        falla, caer a las heurísticas existentes (backward compatible).
+        ``_PALABRAS_PENDIENTE`` se preserva como fallback.
+
         Args:
             recent: Lista de intercambios recientes.
             tema_actual: Tema activo.
         """
+        # v7.1 F6: rama W3 si hay launcher coordinado y hay intercambios.
+        if self._launcher is not None and recent:
+            try:
+                from contexto_zai.pipeline_w3 import CicloW3, PROMPT_A4_INSTRUCCIONES
+                recent_a4 = recent[-10:] if len(recent) > 10 else recent
+                intercambios_str = "\n\n".join(
+                    f"[Exchange {ex.id}] [Director]: {ex.director_msg.content[:2000]}\n"
+                    f"[Agente]: {ex.agent_msgs[-1].content[:1500] if ex.agent_msgs else ''}"
+                    for ex in recent_a4
+                )
+                prompt_final = PROMPT_A4_INSTRUCCIONES.format(
+                    tema=tema_actual or "(sin tema activo)",
+                    intercambios=intercambios_str,
+                )
+                return CicloW3.ejecutar_subagente_generacion(
+                    prompt=prompt_final,
+                    contexto={
+                        "tema": tema_actual,
+                        "workspace_dir": str(self._workspace_dir) if self._workspace_dir else "",
+                    },
+                    tipo_validador="a4",
+                    llm=getattr(self, "_llm", None),
+                )
+            except Exception as e:
+                logger.warning("v7.1 F6 A4: invocación W3 falló, cayendo a heurísticas: %s", e)
+                # Caer a las heurísticas existentes (código abajo)
+
         if not recent:
             return "Sin intercambios recientes para analizar."
 
@@ -1352,35 +1423,103 @@ no esperar a que el Director lo confirme.
         return None
 
     def _extraer_objetivo_de_bloques(self) -> Optional[str]:
-        """v4.3 (F5): Caso B — deriva el objetivo de los bloques existentes.
+        """v4.3 (F5) → v7.1 F5 (F5.1/F5.2): Caso B — deriva el objetivo vía W3.
 
-        Lee ``_metadata.json["tema_a_archivo"]`` y construye un objetivo
-        tentativo con los 3-5 temas más representativos. No lanza
-        subagentes — usa lectura directa para mantenerlo simple.
+        v6.x: leía ``_metadata.json["tema_a_archivo"]`` y formateaba un
+        placeholder ``Proyecto sobre: {temas_str}.``. Eso producía un
+        objetivo hueco que el Crítico rechazaba y el Director corregía
+        manualmente.
 
-        ``None`` si no hay bloques ni metadata.
+        v7.1 F5: ahora lee los RESUMENES de los bloques físicos del
+        workspace e invoca a ``CicloW3.ejecutar_subagente_generacion``
+        con ``PROMPT_OBJETIVO_DESDE_RESUMENES`` y validador ``"objetivo"``.
+        El W3 llama a la cascada (LLM) y el Crítico valida que la
+        respuesta tenga las 4 secciones (G0.A/G0.B/G0.C/procedimiento)
+        y que NO contenga el placeholder ``Proyecto sobre:``.
+
+        Flujo:
+        1. Verifica ``self._workspace_dir``. Si no, devuelve ``None``.
+        2. Lista los ``bloque_*.md`` del workspace con ``sorted(ws.glob(...))``.
+        3. Para cada bloque, lee la primera sección (antes de
+           ``\\n\\n---\\n\\n``) y extrae el RESUMEN si el archivo
+           empieza con ``RESUMEN:``.
+        4. Si no hay RESUMENES, devuelve ``None`` (cae al Caso C en
+           ``_asegurar_objetivo_proyecto``).
+        5. Concatena los RESUMENES con ``\\n\\n---\\n\\n``.
+        6. Lazy import: ``CicloW3``, ``PROMPT_OBJETIVO_DESDE_RESUMENES``.
+        7. Interpola ``resumenes_str`` en el prompt.
+        8. Invoca ``CicloW3.ejecutar_subagente_generacion(prompt=...,
+           contexto={...}, tipo_validador="objetivo",
+           llm=getattr(self, "_llm", None))``.
+        9. Devuelve el texto validado.
+
+        Si la invocación al W3 falla (LLM no disponible, timeout, etc.),
+        devuelve ``None`` para que el llamador caiga al Caso C. Esto
+        preserva el comportamiento de v6.x en escenarios sin LLM.
+
+        ``None`` si no hay bloques con RESUMEN o la invocación al W3
+        falla.
         """
         if not self._workspace_dir:
             return None
-        metadata_path = self._workspace_dir / "_metadata.json"
-        if not metadata_path.exists():
+        ws = self._workspace_dir
+        # 1. Listar bloques físicos y extraer RESUMENES.
+        resumenes: list[str] = []
+        for bloque_path in sorted(ws.glob("bloque_*.md")):
+            try:
+                content = bloque_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                logger.warning(
+                    "v7.1 F5: no se pudo leer bloque %s: %s", bloque_path.name, e,
+                )
+                continue
+            if not content.startswith("RESUMEN:"):
+                continue
+            # El RESUMEN es la primera sección, antes del separador ``\n\n---\n\n``.
+            parts = content.split("\n\n---\n\n", 1)
+            resumen_text = parts[0][len("RESUMEN:"):].strip()
+            if resumen_text:
+                # Encabezado para que el W3 sepa a qué bloque pertenece cada RESUMEN.
+                resumenes.append(f"### {bloque_path.stem}\n\n{resumen_text}")
+
+        if not resumenes:
+            logger.info(
+                "v7.1 F5: ningún bloque tiene RESUMEN — objetivo via W3 no se puede generar."
+            )
             return None
-        try:
-            import json as _json
-            metadata = _json.loads(metadata_path.read_text(encoding="utf-8"))
-            tema_a_archivo = metadata.get("tema_a_archivo", {})
-        except Exception:
-            return None
-        if not tema_a_archivo:
-            return None
-        # Tomar los primeros 3-5 temas (ya están en orden de registro)
-        temas = list(tema_a_archivo.keys())[:5]
-        temas_str = ", ".join(temas)
-        return (
-            "<!-- Objetivo derivado automáticamente de los bloques existentes. "
-            "El Director puede confirmarlo o corregirlo. -->\n"
-            f"Proyecto sobre: {temas_str}."
+
+        # 2. Concatenar RESUMENES.
+        resumenes_str = "\n\n---\n\n".join(resumenes)
+        logger.info(
+            "v7.1 F5: %d RESUMEN(es) leídos — invocando W3 para generar objetivo.",
+            len(resumenes),
         )
+
+        # 3. Lazy import + invocación al W3.
+        try:
+            from contexto_zai.pipeline_w3 import CicloW3, PROMPT_OBJETIVO_DESDE_RESUMENES
+            prompt_final = PROMPT_OBJETIVO_DESDE_RESUMENES.format(resumenes=resumenes_str)
+            texto = CicloW3.ejecutar_subagente_generacion(
+                prompt=prompt_final,
+                contexto={
+                    "resumenes": resumenes_str,
+                    "workspace_dir": str(self._workspace_dir),
+                    "num_bloques": len(resumenes),
+                },
+                tipo_validador="objetivo",
+                llm=getattr(self, "_llm", None),
+            )
+            if not texto or not texto.strip():
+                logger.warning(
+                    "v7.1 F5: W3 devolvió texto vacío para objetivo — cayendo a Caso C."
+                )
+                return None
+            return texto
+        except Exception as e:
+            logger.warning(
+                "v7.1 F5: invocación al W3 falló (%s) — cayendo a Caso C.", e,
+            )
+            return None
 
     def _build_g0_b(self, tema_actual: str = "") -> str:
         """v6.4 F3 (fix): Sección G0.B — Síntesis = RESUMEN del bloque del tema activo.

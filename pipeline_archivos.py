@@ -140,7 +140,19 @@ class SubprocesoArchivos:
                 # directamente vía el workspace_dir.
                 exchanges = []
 
-            estado_gen = EstadoGenerator(workspace_dir=ws, chat_id=chat_id)
+            # v7.1 P2: el EstadoGenerator necesita un launcher para que
+            # _build_d4/_build_a3/_build_a4 (F6) y _extraer_objetivo_de_bloques
+            # (F5) invoquen al W3 (cascada + Crítico) en vez de caer al regex
+            # heurístico. Usamos ProcesadorIntercambios como launcher (igual
+            # que el chat cronológico en pipeline.run) para que el W3 sepa que
+            # el subproceso está coordinado. El LLM se resuelve dentro del W3
+            # (ZaiLLM default si no se inyecta) — el subproceso NO accede al
+            # LLM directamente (P2.1/P2.2).
+            from contexto_zai.procesadores.procesador_intercambios import ProcesadorIntercambios
+            launcher = ProcesadorIntercambios(workspace_dir=ws)
+            estado_gen = EstadoGenerator(
+                workspace_dir=ws, chat_id=chat_id, launcher=launcher,
+            )
             estado_content = estado_gen.generate(exchanges, chat_label=chat_id or "contexto_zai")
             estado_path = ws / "00_estado_actual.md"
             estado_path.write_text(estado_content, encoding="utf-8")

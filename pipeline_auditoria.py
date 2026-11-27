@@ -27,6 +27,28 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# v7.1 F6/AUD: constantes de tipo para pending_tasks
+# ------------------------------------------------------------
+# Cada carencia detectada por ``auditar_workspace_completo`` se encola
+# como ``SubagentTask`` con un campo ``tipo`` que enruta al módulo
+# responsable. Las constantes evitan strings mágicos (NH21/R4).
+# ============================================================
+
+TIPO_AUXILIAR_BLOQUE = "auxiliar_bloque"
+TIPO_RESUMEN_BLOQUE = "resumen_bloque"
+TIPO_HEADER_BLOQUE = "header_bloque"
+TIPO_CONTENIDO_BLOQUE = "contenido_bloque"
+TIPO_METADATA = "metadata"
+TIPO_PROCESSED_BLOCKS = "processed_blocks"
+TIPO_ARCHIVO_RECUPERACION_00 = "archivo_recuperacion_00"
+TIPO_ARCHIVO_RECUPERACION_01 = "archivo_recuperacion_01"
+TIPO_ARCHIVO_RECUPERACION_02 = "archivo_recuperacion_02"
+TIPO_ARCHIVO_RECUPERACION_03 = "archivo_recuperacion_03"
+TIPO_OBJETIVO_PROYECTO = "objetivo_proyecto"
+TIPO_SECCION_ESTADO = "seccion_estado"
+
+
 class ProgressMonitor:
     """v6.12 F1: Monitorea el progreso del Worker Bun contando bloques completos.
 
@@ -353,6 +375,10 @@ class AuditorWorkspace:
 
         F1: ahora incluye auditar_calidad además de auditar_bloques.
 
+        v7.1 F6/AUD.1: también llama a ``auditar_workspace_completo`` y
+        devuelve las ``pending_tasks`` nuevas (con campo ``tipo`` que
+        enruta al módulo responsable) en ``resultado["pending_tasks"]``.
+
         Returns:
             dict con:
             - 'completos': lista de block_id completos.
@@ -360,10 +386,14 @@ class AuditorWorkspace:
             - 'metadata_valida': bool.
             - 'deficiencias_calidad': lista de deficiencias de calidad (F7).
             - 'calidad_ok': bool.
+            - 'pending_tasks' (v7.1): lista de SubagentTask con campo
+              ``tipo`` que enruta al módulo responsable (D7 despacha).
         """
         bloques = AuditorWorkspace.auditar_bloques(workspace_dir)
         metadata_valida = AuditorWorkspace.auditar_metadata(workspace_dir)
         calidad = AuditorWorkspace.auditar_calidad(workspace_dir)
+        # v7.1 F6/AUD.1: auditoría completa del workspace → pending_tasks con tipo.
+        workspace_audit = AuditorWorkspace.auditar_workspace_completo(workspace_dir)
 
         return {
             "completos": bloques["completos"],
@@ -371,8 +401,289 @@ class AuditorWorkspace:
             "metadata_valida": metadata_valida,
             "deficiencias_calidad": calidad["deficiencias"],
             "calidad_ok": calidad["calidad_ok"],
+            # v7.1 F6/AUD.2: pending_tasks con campo `tipo` para enrutar.
+            "pending_tasks": workspace_audit["pending_tasks"],
+            "total_carencias": workspace_audit["total_carencias"],
         }
-    
+
+    @staticmethod
+    def auditar_workspace_completo(workspace_dir: Path | str) -> dict:
+        """v7.1 F6/AUD.1: auditoría completa del workspace con pending_tasks tipadas.
+
+        Verifica existencia y calidad de TODOS los archivos del workspace:
+
+        1. **Bloques** (``bloque_*.md``): header (``# Bloque temático:`` o
+           ``# Bloque cronológico``), primera línea ``RESUMEN:`` con
+           longitud en rango ``RESUMEN_MIN_CHARS..RESUMEN_MAX_CHARS``,
+           separador ``\\n\\n---\\n\\n`` entre RESUMEN y contenido,
+           contenido no vacío. Las carencias generan pending_tasks con
+           ``tipo`` en ``{resumen_bloque, header_bloque, contenido_bloque}``.
+        2. **Auxiliares** (``_responses/bloque_NN_{nombre,decisiones,temas}.txt``):
+           existence + no vacío + formato esperado. Las carencias generan
+           pending_tasks con ``tipo="auxiliar_bloque"``.
+        3. **Metadata** (``_metadata.json``): existence + campos obligatorios
+           (``tema_a_archivo``, ``ultimo_timestamp``, ``total_exchanges``) +
+           consistencia con bloques físicos. Las carencias generan
+           pending_tasks con ``tipo="metadata"``.
+        4. **Processed blocks** (``_processed_blocks.json``): existence +
+           todos los bloques físicos representados + sin entradas huérfanas.
+           Las carencias generan pending_tasks con ``tipo="processed_blocks"``.
+        5. **Los 4 archivos de recuperación**: delega al ``auditar_calidad``
+           existente, pero mapea las deficiencias a pending_tasks con
+           ``tipo`` en ``{archivo_recuperacion_00, _01, _02, _03,
+           objetivo_proyecto, seccion_estado}`` según la deficiencia.
+
+        Cada pending_task generada es un ``SubagentTask`` con campos
+        ``task_id``, ``purpose``, ``prompt``, ``context`` (con
+        ``workspace_dir``, ``bloque_id`` si aplica, ``tipo``), ``tipo``
+        (la clave de enrutamiento).
+
+        P1 conciliado: la auditoría NO llama a ``CicloW3``,
+        ``SubprocesoArchivos``, ni ``EstadoGenerator``. Solo detecta y
+        encola. El bucle D7 consume las pending_tasks y despacha por
+        ``tipo`` (ver ``pipeline_d7.despachar_por_tipo``).
+
+        Args:
+            workspace_dir: Directorio del workspace.
+
+        Returns:
+            dict con:
+            - 'pending_tasks': lista de ``SubagentTask`` con campo ``tipo``.
+            - 'deficiencias': lista de strings describiendo cada deficiencia.
+            - 'total_carencias': int (len(pending_tasks)).
+        """
+        from contexto_zai.models import SubagentTask
+        try:
+            from contexto_zai.config import (
+                RESUMEN_MIN_CHARS as _R_MIN,
+                RESUMEN_MAX_CHARS as _R_MAX,
+            )
+        except ImportError:
+            _R_MIN, _R_MAX = 600, 900
+
+        ws = Path(workspace_dir)
+        pending_tasks: list = []
+        deficiencias: list[str] = []
+
+        def _emit(tipo: str, bloque_id: str, purpose: str, prompt: str, extra_ctx: dict | None = None) -> None:
+            """Helper: construye y encola una SubagentTask con tipo."""
+            ctx = {"workspace_dir": str(ws), "tipo": tipo}
+            if bloque_id:
+                ctx["bloque_id"] = bloque_id
+            if extra_ctx:
+                ctx.update(extra_ctx)
+            task_id = f"auditar_{tipo}" + (f"_{bloque_id}" if bloque_id else "")
+            pending_tasks.append(SubagentTask(
+                task_id=task_id,
+                purpose=purpose,
+                prompt=prompt,
+                context=ctx,
+                tipo=tipo,
+            ))
+
+        if not ws.exists():
+            return {"pending_tasks": [], "deficiencias": ["workspace no existe"], "total_carencias": 0}
+
+        # 1. Bloques (bloque_*.md): header, RESUMEN, separador, contenido.
+        for p in sorted(ws.glob("bloque_*.md")):
+            block_id = p.stem
+            try:
+                content = p.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                deficiencias.append(f"{block_id}: no se pudo leer ({e})")
+                _emit(TIPO_CONTENIDO_BLOQUE, block_id,
+                      purpose=f"auditar.contenido_bloque.{p.name}",
+                      prompt=f"El bloque {p.name} no se pudo leer. Regenerarlo desde los intercambios originales.")
+                continue
+
+            # 1a. Header.
+            first_line = content.split("\n", 1)[0].strip() if content else ""
+            has_header = (
+                first_line.startswith("# Bloque tematico:")
+                or first_line.startswith("# Bloque temático:")
+                or first_line.startswith("# Bloque cronológico")
+                or first_line.startswith("# Bloque cronologico")
+                or first_line.startswith("# Bloque externo")
+            )
+            # Si el bloque empieza con RESUMEN:, el header puede faltar pero
+            # el RESUMEN es lo crítico (backward compat con bloques v6.x).
+            if not has_header and not content.startswith("RESUMEN:"):
+                deficiencias.append(f"{block_id}: sin header '# Bloque ...'")
+                _emit(TIPO_HEADER_BLOQUE, block_id,
+                      purpose=f"auditar.header_bloque.{p.name}",
+                      prompt=f"El bloque {p.name} no tiene header '# Bloque temático: ...' o '# Bloque cronológico ...'. Regenerar el bloque con el header correcto.")
+
+            # 1b. RESUMEN.
+            if not content.startswith("RESUMEN:"):
+                deficiencias.append(f"{block_id}: sin RESUMEN al inicio")
+                _emit(TIPO_RESUMEN_BLOQUE, block_id,
+                      purpose=f"auditar.resumen_bloque.{p.name}",
+                      prompt=f"El bloque {p.name} no tiene RESUMEN al inicio. Enriquecerlo vía W3 (cascada + Crítico) para generar el RESUMEN + 3 archivos auxiliares.")
+            else:
+                parts = content.split("\n\n---\n\n", 1)
+                resumen_text = parts[0][len("RESUMEN:"):].strip()
+                if len(resumen_text) < _R_MIN or len(resumen_text) > _R_MAX:
+                    deficiencias.append(
+                        f"{block_id}: RESUMEN con longitud {len(resumen_text)} fuera de rango [{_R_MIN},{_R_MAX}]"
+                    )
+                    _emit(TIPO_RESUMEN_BLOQUE, block_id,
+                          purpose=f"auditar.resumen_bloque.{p.name}",
+                          prompt=f"El bloque {p.name} tiene un RESUMEN con longitud {len(resumen_text)} fuera del rango [{_R_MIN},{_R_MAX}]. Regenerar el RESUMEN vía W3.")
+
+            # 1c. Separador + contenido.
+            if "\n\n---\n\n" not in content:
+                deficiencias.append(f"{block_id}: sin separador '\\n\\n---\\n\\n' entre RESUMEN y contenido")
+                _emit(TIPO_CONTENIDO_BLOQUE, block_id,
+                      purpose=f"auditar.contenido_bloque.{p.name}",
+                      prompt=f"El bloque {p.name} no tiene separador '\\n\\n---\\n\\n' entre RESUMEN y contenido. Regenerar el bloque con el formato correcto.")
+            else:
+                contenido = content.split("\n\n---\n\n", 1)[1].strip()
+                if len(contenido) < 100:
+                    deficiencias.append(f"{block_id}: contenido vacío o casi vacío ({len(contenido)} chars)")
+                    _emit(TIPO_CONTENIDO_BLOQUE, block_id,
+                          purpose=f"auditar.contenido_bloque.{p.name}",
+                          prompt=f"El bloque {p.name} tiene contenido vacío o casi vacío ({len(contenido)} chars). Regenerar el contenido desde los intercambios originales.")
+
+            # 2. Auxiliares (_responses/bloque_NN_*.txt).
+            responses_dir = ws / "_responses"
+            for aux_suffix in ("nombre", "decisiones", "temas"):
+                aux_path = responses_dir / f"{block_id}_{aux_suffix}.txt"
+                if not aux_path.exists():
+                    deficiencias.append(f"{block_id}: falta _responses/{block_id}_{aux_suffix}.txt")
+                    _emit(TIPO_AUXILIAR_BLOQUE, block_id,
+                          purpose=f"auditar.auxiliar_bloque.{block_id}_{aux_suffix}",
+                          prompt=f"Falta _responses/{block_id}_{aux_suffix}.txt. Generarlo desde el contenido del bloque.",
+                          extra_ctx={"auxiliar": aux_suffix})
+                else:
+                    try:
+                        aux_content = aux_path.read_text(encoding="utf-8", errors="ignore").strip()
+                        if not aux_content:
+                            deficiencias.append(f"{block_id}: _responses/{block_id}_{aux_suffix}.txt vacío")
+                            _emit(TIPO_AUXILIAR_BLOQUE, block_id,
+                                  purpose=f"auditar.auxiliar_bloque.{block_id}_{aux_suffix}",
+                                  prompt=f"_responses/{block_id}_{aux_suffix}.txt está vacío. Regenerarlo desde el contenido del bloque.",
+                                  extra_ctx={"auxiliar": aux_suffix})
+                    except Exception:
+                        deficiencias.append(f"{block_id}: no se pudo leer _responses/{block_id}_{aux_suffix}.txt")
+                        _emit(TIPO_AUXILIAR_BLOQUE, block_id,
+                              purpose=f"auditar.auxiliar_bloque.{block_id}_{aux_suffix}",
+                              prompt=f"No se pudo leer _responses/{block_id}_{aux_suffix}.txt. Regenerarlo.",
+                              extra_ctx={"auxiliar": aux_suffix})
+
+        # 3. Metadata (_metadata.json).
+        meta_path = ws / "_metadata.json"
+        metadata_ok = True
+        if not meta_path.exists():
+            deficiencias.append("_metadata.json no existe")
+            _emit(TIPO_METADATA, "",
+                  purpose="auditar.metadata.inexistente",
+                  prompt="_metadata.json no existe. Regenerarlo desde los bloques físicos (tema_a_archivo, ultimo_timestamp, total_exchanges).")
+            metadata_ok = False
+        else:
+            try:
+                meta = _json_module.loads(meta_path.read_text(encoding="utf-8"))
+                campos_obligatorios = ["tema_a_archivo", "ultimo_timestamp", "total_exchanges"]
+                faltan_meta = [c for c in campos_obligatorios if c not in meta or meta[c] in (None, "", {})]
+                if faltan_meta:
+                    deficiencias.append(f"_metadata.json: faltan campos obligatorios {faltan_meta}")
+                    _emit(TIPO_METADATA, "",
+                          purpose="auditar.metadata.campos_faltantes",
+                          prompt=f"_metadata.json falta campos obligatorios: {faltan_meta}. Regenerar metadata + índice.",
+                          extra_ctx={"campos_faltantes": faltan_meta})
+                    metadata_ok = False
+                else:
+                    # Consistencia: tema_a_archivo referencia bloques físicos.
+                    bloques_fisicos = {p.name for p in ws.glob("bloque_*.md")}
+                    tema_a_archivo = meta.get("tema_a_archivo", {})
+                    for tema, archivo in tema_a_archivo.items():
+                        archivos = archivo if isinstance(archivo, list) else [archivo]
+                        for a in archivos:
+                            if a not in bloques_fisicos:
+                                deficiencias.append(f"_metadata.json: tema '{tema}' referencia '{a}' que no existe como bloque físico")
+                                _emit(TIPO_METADATA, "",
+                                      purpose="auditar.metadata.inconsistencia",
+                                      prompt=f"_metadata.json: tema '{tema}' referencia '{a}' que no existe. Regenerar metadata + índice.",
+                                      extra_ctx={"tema": tema, "archivo_inexistente": a})
+                                metadata_ok = False
+            except Exception as e:
+                deficiencias.append(f"_metadata.json: no se pudo parsear ({e})")
+                _emit(TIPO_METADATA, "",
+                      purpose="auditar.metadata.parse_error",
+                      prompt=f"_metadata.json no se pudo parsear ({e}). Regenerar metadata + índice.")
+                metadata_ok = False
+
+        # 4. Processed blocks (_processed_blocks.json).
+        pb_path = ws / "_processed_blocks.json"
+        if not pb_path.exists():
+            deficiencias.append("_processed_blocks.json no existe")
+            _emit(TIPO_PROCESSED_BLOCKS, "",
+                  purpose="auditar.processed_blocks.inexistente",
+                  prompt="_processed_blocks.json no existe. Sincronizar el registro con el estado físico real (AuditorWorkspace.sincronizar_registro).")
+        else:
+            try:
+                pb = _json_module.loads(pb_path.read_text(encoding="utf-8"))
+                bloques_fisicos_set = {p.stem for p in ws.glob("bloque_*.md")}
+                pb_blocks = {b.get("block_id", "") for b in pb.get("blocks", []) if isinstance(b, dict)}
+                # Bloques físicos no representados.
+                sin_representar = bloques_fisicos_set - pb_blocks
+                if sin_representar:
+                    deficiencias.append(f"_processed_blocks.json: {len(sin_representar)} bloque(s) físico(s) sin representar: {sorted(sin_representar)[:5]}")
+                    _emit(TIPO_PROCESSED_BLOCKS, "",
+                          purpose="auditar.processed_blocks.sin_representar",
+                          prompt=f"_processed_blocks.json no representa {len(sin_representar)} bloque(s) físico(s). Sincronizar el registro.",
+                          extra_ctx={"bloques_sin_representar": sorted(sin_representar)[:10]})
+                # Entradas huérfanas.
+                huerfanas = pb_blocks - bloques_fisicos_set
+                if huerfanas:
+                    deficiencias.append(f"_processed_blocks.json: {len(huerfanas)} entrada(s) huérfana(s): {sorted(huerfanas)[:5]}")
+                    _emit(TIPO_PROCESSED_BLOCKS, "",
+                          purpose="auditar.processed_blocks.huerfanas",
+                          prompt=f"_processed_blocks.json tiene {len(huerfanas)} entrada(s) huérfana(s) (bloques que ya no existen físicamente). Sincronizar el registro.",
+                          extra_ctx={"entradas_huerfanas": sorted(huerfanas)[:10]})
+            except Exception as e:
+                deficiencias.append(f"_processed_blocks.json: no se pudo parsear ({e})")
+                _emit(TIPO_PROCESSED_BLOCKS, "",
+                      purpose="auditar.processed_blocks.parse_error",
+                      prompt=f"_processed_blocks.json no se pudo parsear ({e}). Sincronizar el registro.")
+
+        # 5. Los 4 archivos de recuperación: delega a auditar_calidad y mapea.
+        calidad = AuditorWorkspace.auditar_calidad(workspace_dir)
+        for def_str in calidad["deficiencias"]:
+            deficiencias.append(def_str)
+            # Mapear la deficiencia al tipo correspondiente.
+            if def_str.startswith("00_estado"):
+                _emit(TIPO_SECCION_ESTADO, "",
+                      purpose="auditar.seccion_estado",
+                      prompt=f"Deficiencia en 00_estado_actual.md: {def_str}. Regenerar 00 vía SubprocesoArchivos (que invoca al W3 para D4/A3/A4).")
+            elif def_str.startswith("03_objetivo"):
+                _emit(TIPO_OBJETIVO_PROYECTO, "",
+                      purpose="auditar.objetivo_proyecto",
+                      prompt=f"Deficiencia en 03_objetivo_proyecto.md: {def_str}. Regenerar 03 vía SubprocesoArchivos (que invoca al W3 para objetivo).")
+            elif def_str.startswith("01_indice"):
+                _emit(TIPO_ARCHIVO_RECUPERACION_01, "",
+                      purpose="auditar.archivo_recuperacion_01",
+                      prompt=f"Deficiencia en 01_indice_recuperacion.md: {def_str}. Regenerar 01 vía SubprocesoArchivos._regenerar_indice_tras_enriquecimiento.")
+            elif def_str.startswith("02_decisiones"):
+                _emit(TIPO_ARCHIVO_RECUPERACION_02, "",
+                      purpose="auditar.archivo_recuperacion_02",
+                      prompt=f"Deficiencia en 02_decisiones_clave.md: {def_str}. Regenerar 02 vía SubprocesoArchivos._consolidar_decisiones_llm.")
+            else:
+                # Deficiencia genérica → archivo_recuperacion_00 (default).
+                _emit(TIPO_ARCHIVO_RECUPERACION_00, "",
+                      purpose="auditar.archivo_recuperacion_00",
+                      prompt=f"Deficiencia genérica en archivos de recuperación: {def_str}. Regenerar vía SubprocesoArchivos._generar_archivos_recuperacion.")
+
+        logger.info(
+            "v7.1 F6/AUD.1 auditar_workspace_completo: %d carencia(s) detectada(s), "
+            "%d pending_task(s) generadas con tipo.",
+            len(deficiencias), len(pending_tasks),
+        )
+        return {
+            "pending_tasks": pending_tasks,
+            "deficiencias": deficiencias,
+            "total_carencias": len(pending_tasks),
+        }
+
     @staticmethod
     def sincronizar_registro(workspace_dir: Path | str) -> None:
         """Sincroniza _processed_blocks.json con el estado físico.
