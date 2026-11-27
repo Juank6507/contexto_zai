@@ -81,18 +81,18 @@ $ArchivosRequeridos = @(
 
 # (b) Funcionamiento en Windows: sentencias de prueba y tests E2E (datos reales, R4/NH25)
 $SentenciasPrueba = @(
-    "cd /d $RutaLocalProyecto && python -c `"import pipeline as p; assert not hasattr(p, 'EnriquecimientoOrquestador'); print('OK A1')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from pipeline_cascada import CascadaAccesoLLM; from pipeline_w3 import CicloW3; from pipeline_d7 import CicloD7; from pipeline_archivos import SubprocesoArchivos; from pipeline_auditoria import AuditorWorkspace; print('OK A2')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from platforms.interfaces import PlatformAuth, PlatformChat, PlatformLinks, PlatformLLM; from platforms.zai.zai_llm import ZaiLLM; assert issubclass(ZaiLLM, PlatformLLM); print('OK B1')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from platforms.zai.zai_llm import ZaiLLM; llm = ZaiLLM(); assert llm.get_default_model_heavy() == 'glm-4-plus'; print('OK B5')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from coordinador.recogedor_respuestas import RecogedorRespuestas; import inspect; src = inspect.getsource(RecogedorRespuestas.limpiar); assert '_AUXILIAR_SUFFIXES' in src; print('OK D2')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from coordinador.integrador_respuestas import IntegradorRespuestas; assert hasattr(IntegradorRespuestas, '_integrar_enriquecer_bloque'); print('OK D1')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from pipeline_archivos import SubprocesoArchivos; assert hasattr(SubprocesoArchivos, '_reemplazar_placeholders_objetivo'); print('OK D4')`"",
-    "cd /d $RutaLocalProyecto && python -c `"import inspect; from pipeline_archivos import SubprocesoArchivos; src = inspect.getsource(SubprocesoArchivos._generar_archivos_recuperacion); assert 'urlopen' not in src; assert 'EstadoGenerator' in src; print('OK A5')`""
+    "cd /d $RutaLocalProyecto && python -c `"import contexto_zai.pipeline as p; assert not hasattr(p, 'EnriquecimientoOrquestador'); print('OK A1')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.pipeline_cascada import CascadaAccesoLLM; from contexto_zai.pipeline_w3 import CicloW3; from contexto_zai.pipeline_d7 import CicloD7; from contexto_zai.pipeline_archivos import SubprocesoArchivos; from contexto_zai.pipeline_auditoria import AuditorWorkspace; print('OK A2')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.platforms.interfaces import PlatformAuth, PlatformChat, PlatformLinks, PlatformLLM; from contexto_zai.platforms.zai.zai_llm import ZaiLLM; assert issubclass(ZaiLLM, PlatformLLM); print('OK B1')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.platforms.zai.zai_llm import ZaiLLM; llm = ZaiLLM(); assert llm.get_default_model_heavy() == 'glm-4-plus'; print('OK B5')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.coordinador.recogedor_respuestas import RecogedorRespuestas; import inspect; src = inspect.getsource(RecogedorRespuestas.limpiar); assert '_AUXILIAR_SUFFIXES' in src; print('OK D2')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.coordinador.integrador_respuestas import IntegradorRespuestas; assert hasattr(IntegradorRespuestas, '_integrar_enriquecer_bloque'); print('OK D1')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.pipeline_archivos import SubprocesoArchivos; assert hasattr(SubprocesoArchivos, '_reemplazar_placeholders_objetivo'); print('OK D4')`"",
+    "cd /d $RutaLocalProyecto && python -c `"import inspect; from contexto_zai.pipeline_archivos import SubprocesoArchivos; src = inspect.getsource(SubprocesoArchivos._generar_archivos_recuperacion); assert 'urlopen' not in src; assert 'EstadoGenerator' in src; print('OK A5')`""
 )
 $TestsE2E = @(
-    "cd /d $RutaLocalProyecto && python -c `"from pipeline import run, ampliar_contexto, collect_responses, query_context; print('OK API')`"",
-    "cd /d $RutaLocalProyecto && python -c `"from generation.indice_generator import IndiceGenerator; import inspect; src = inspect.getsource(IndiceGenerator._find_tokens_for_tema); assert 'n/a' in src; print('OK D5')`""
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.pipeline import run, ampliar_contexto, collect_responses, query_context; print('OK API')`"",
+    "cd /d $RutaLocalProyecto && python -c `"from contexto_zai.generation.indice_generator import IndiceGenerator; import inspect; src = inspect.getsource(IndiceGenerator._find_tokens_for_tema); assert 'n/a' in src; print('OK D5')`""
 )
 
 # (c) Condiciones previas (I.3.c): cada comando debe terminar en exit 0 para cumplir
