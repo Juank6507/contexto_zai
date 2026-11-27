@@ -221,6 +221,12 @@ function Test-Funcionamiento {
     Write-Host "  (b) Funcionamiento en Windows (I.3.b)..." -ForegroundColor White
     $fallos = @()
 
+    # v7.1 fix: PYTHONPATH al directorio padre del repo para imports contexto_zai.
+    if ($RutaLocalProyecto -and (Test-Path $RutaLocalProyecto)) {
+        $env:PYTHONPATH = Split-Path $RutaLocalProyecto -Parent
+        Write-Host "  PYTHONPATH seteado a: $env:PYTHONPATH" -ForegroundColor DarkGray
+    }
+
     if ($SkipTests) {
         Write-Check "C4" "funcionamiento OMITIDO por -SkipTests (diagnostico)" $false
         return @("C4: ejecucion con -SkipTests; el veredicto NO valida funcionamiento")
