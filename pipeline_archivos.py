@@ -842,7 +842,7 @@ class SubprocesoArchivos:
             rf"({ _re_module.escape(marker) }[^\n]*\n\n)(.*?)(?=\n## |\Z)",
             _re_module.DOTALL,
         )
-        new_content = pattern.sub(rf"\g<1>{ _re_module.escape(sintesis_text) }\n", content)
+        new_content = pattern.sub(lambda m: m.group(1) + sintesis_text + "\n", content)
 
         if new_content != content:
             estado_path.write_text(new_content, encoding="utf-8")
